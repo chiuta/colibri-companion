@@ -86,6 +86,7 @@ pub fn spawn_zip_download(python: &PythonCmd, url: &str, dest: &Path) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(windows))]
     use std::io::{BufRead, BufReader, Read};
 
     #[test]

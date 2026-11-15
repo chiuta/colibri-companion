@@ -141,6 +141,9 @@ fn disk_space(path: &Path) -> (Option<f64>, Option<f64>) {
         return (None, None);
     };
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // Windows spells a canonical path `\\?\C:\…`, which never starts with the mount point `C:\`
+    let plain = path.to_string_lossy();
+    let path = std::path::PathBuf::from(plain.strip_prefix(r"\\?\").unwrap_or(&plain));
     disks
         .iter()
         .filter(|d| path.starts_with(d.mount_point()))
