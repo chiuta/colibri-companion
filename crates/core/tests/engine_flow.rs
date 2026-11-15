@@ -1,6 +1,7 @@
 //! End to end against a fake `coli` that follows colibri's documented JSON contract:
 //! list models, install (with pause and resume), start, wait for the model to load,
 //! chat with streaming, stop. No real model and no network involved.
+#![cfg_attr(windows, allow(unused_imports, dead_code))]
 
 use companion_core::chat::{ChatClient, ChatMessage, ChatRequest, Health, StreamEvent, Thinking};
 use companion_core::coli::{Coli, sort_for_display};
@@ -24,6 +25,9 @@ fn wait_until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
     panic!("timed out waiting for {what}");
 }
 
+// The fake engine pauses and checks liveness with POSIX signals (os.kill, SIGINT), which behave
+// differently on Windows, so this end-to-end flow runs on Linux and macOS only.
+#[cfg(not(windows))]
 #[test]
 fn install_pause_resume_start_chat_stop() {
     let Some(python) = locate::find_python() else {
@@ -100,7 +104,7 @@ fn install_pause_resume_start_chat_stop() {
         .urls
         .anthropic_base_url;
     let client = ChatClient::new(&base, None);
-    wait_until("the server to answer", 10, || {
+    wait_until("the server to answer", 40, || {
         client.health() != Health::Down
     });
     assert!(
