@@ -135,19 +135,19 @@ impl CompanionApp {
             if tip(ui, "—", self.t("Linie despărțitoare", "Dash line")) {
                 self.md_wrap(&ctx, id, "\n\n---\n\n", "");
             }
-            if tip(ui, "🔗", self.t("Legătură", "Link")) {
+            if tip(ui, "[ ]( )", self.t("Legătură", "Link")) {
                 self.md_wrap(&ctx, id, "[", "](https://)");
             }
-            if tip(ui, "▦", self.t("Tabel", "Table")) {
+            if tip(ui, "|||", self.t("Tabel", "Table")) {
                 self.guide.table = !self.guide.table;
             }
             if tip(ui, "∑", self.t("Formulă matematică", "Math")) {
                 self.md_wrap(&ctx, id, "$$", "$$");
             }
-            if tip(ui, "☺", self.t("Emoji", "Emoji")) {
+            if tip(ui, ":)", self.t("Emoji", "Emoji")) {
                 self.guide.emoji = !self.guide.emoji;
             }
-            if tip(ui, "📎", self.t("Fișier", "File")) {
+            if tip(ui, "+ file", self.t("Fișier", "File")) {
                 self.guide.path_box = !self.guide.path_box;
             }
         });

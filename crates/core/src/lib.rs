@@ -18,6 +18,7 @@ pub mod npu;
 pub mod paths;
 pub mod proc;
 pub mod resources;
+pub mod sheets;
 pub mod store;
 pub mod update;
 

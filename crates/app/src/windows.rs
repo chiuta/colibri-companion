@@ -33,15 +33,26 @@ impl CompanionApp {
                         if ui.button(self.t("Resurse", "Resources")).clicked() {
                             self.set_resources_open(true);
                         }
-                        if ui.button(self.t("Legal", "Legal")).clicked() {
-                            self.guide.legal = true;
-                        }
-                        if ui.button(self.t("Sfaturi", "Tips")).clicked() {
-                            self.guide.tips = true;
-                        }
-                        if ui.button(self.t("Explorează", "Explore")).clicked() {
-                            self.guide.explore = true;
-                        }
+                        ui.menu_button(self.t("Mai multe ▾", "More ▾"), |ui| {
+                            for (label, which) in [
+                                (self.t("Programe locale", "Local programs"), 0),
+                                (self.t("Compară modele", "Compare models"), 1),
+                                (self.t("Explorează", "Explore"), 2),
+                                (self.t("Sfaturi", "Tips"), 3),
+                                (self.t("Legal", "Legal"), 4),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    match which {
+                                        0 => self.sheets.local = true,
+                                        1 => self.sheets.compare = true,
+                                        2 => self.guide.explore = true,
+                                        3 => self.guide.tips = true,
+                                        _ => self.guide.legal = true,
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        });
                         if ui.button(self.t("Despre", "About")).clicked() {
                             self.show_about = true;
                         }
@@ -184,6 +195,7 @@ impl CompanionApp {
         self.models_window(ctx);
         self.resources_window(ctx);
         self.guide_windows(ctx);
+        self.sheet_windows(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);
     }

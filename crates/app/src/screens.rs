@@ -439,6 +439,7 @@ impl CompanionApp {
                 if !m.is_chat_model() {
                     ui.label(RichText::new(self.t("Acest model generează imagini; aplicația de față este pentru conversație.", "This model makes pictures; this app is for conversation.")).color(p.muted));
                 }
+                self.sheet_panel(ui, m);
                 if can_install {
                     ui.add_space(4.0);
                     if !selected {

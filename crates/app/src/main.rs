@@ -9,6 +9,7 @@ mod i18n;
 mod models_ui;
 mod resources_ui;
 mod screens;
+mod sheets_ui;
 mod theme;
 mod widgets;
 mod windows;
