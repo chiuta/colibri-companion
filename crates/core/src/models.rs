@@ -53,6 +53,84 @@ pub fn default_models_root() -> Option<PathBuf> {
     home_dir().map(|h| h.join("colibri-models"))
 }
 
+/// A disk the person can put models on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drive {
+    pub mount: PathBuf,
+    pub free_gb: f64,
+    pub total_gb: f64,
+}
+
+impl Drive {
+    /// The folder colibri would use on this disk.
+    pub fn models_folder(&self) -> PathBuf {
+        self.mount.join("colibri-models")
+    }
+}
+
+/// Real disks big enough to matter, biggest free space first.
+pub fn drives() -> Vec<Drive> {
+    let Ok(disks) = sysinfo::Disks::new_with_refreshed_list() else {
+        return Vec::new();
+    };
+    const GB: f64 = 1_073_741_824.0;
+    let mut out: Vec<Drive> = Vec::new();
+    for d in disks.iter() {
+        let total = d.total_space() as f64 / GB;
+        let mount = d.mount_point().to_path_buf();
+        let m = mount.to_string_lossy();
+        let system_bits = [
+            "/boot",
+            "/snap",
+            "/run",
+            "/sys",
+            "/proc",
+            "/dev",
+            "/var/lib/docker",
+        ]
+        .iter()
+        .any(|x| m.starts_with(x));
+        if total < 8.0 || system_bits || out.iter().any(|o| o.mount == mount) {
+            continue;
+        }
+        out.push(Drive {
+            mount,
+            free_gb: d.available_space() as f64 / GB,
+            total_gb: total,
+        });
+    }
+    out.sort_by(|a, b| b.free_gb.total_cmp(&a.free_gb));
+    out
+}
+
+/// A `models` folder next to the running program ("portable" install).
+pub fn beside_app() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(|d| d.join("colibri-models"))
+}
+
+/// Free space in GB on the disk holding `path` (or its nearest existing parent).
+pub fn free_gb_at(path: &Path) -> Option<f64> {
+    let mut p = path;
+    while !p.exists() {
+        p = p.parent()?;
+    }
+    crate::resources::disk_space(p).0
+}
+
+/// Can files be created in `dir` (made if missing)? Checked by really trying.
+pub fn writable(dir: &Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(format!(".write-test-{}", std::process::id()));
+    let ok = fs::write(&probe, b"x").is_ok();
+    let _ = fs::remove_file(&probe);
+    ok
+}
+
 /// Every folder worth looking in, without duplicates: the one chosen in Settings, the one
 /// the active model lives in, and colibri's default.
 pub fn roots(chosen: Option<&Path>, active_model_dir: Option<&Path>) -> Vec<PathBuf> {
@@ -69,6 +147,9 @@ pub fn roots(chosen: Option<&Path>, active_model_dir: Option<&Path>) -> Vec<Path
         push(parent.to_path_buf());
     }
     if let Some(d) = default_models_root() {
+        push(d);
+    }
+    if let Some(d) = beside_app().filter(|d| d.is_dir()) {
         push(d);
     }
     // On Windows colibri puts models on another drive when the home drive is short of room.

@@ -3767,6 +3767,83 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A programot jelenlegi állapotában, garancia nélkül, az Apache-2.0 licenc alatt kapod. A modellek válaszai tévedhetnek; te felelsz a felhasználásukért.",
         ],
     ),
+    (
+        "Where models are saved",
+        [
+            "Où les modèles sont enregistrés",
+            "Dove vengono salvati i modelli",
+            "Dónde se guardan los modelos",
+            "Onde os modelos são guardados",
+            "Wo die Modelle gespeichert werden",
+            "Hová menti a program a modelleket",
+        ],
+    ),
+    (
+        "Next to this app",
+        [
+            "À côté de cette application",
+            "Accanto a questa app",
+            "Junto a esta aplicación",
+            "Junto a esta aplicação",
+            "Neben dieser App",
+            "Az alkalmazás mellett",
+        ],
+    ),
+    (
+        "In my home folder",
+        [
+            "Dans mon dossier personnel",
+            "Nella mia cartella personale",
+            "En mi carpeta personal",
+            "Na minha pasta pessoal",
+            "In meinem Benutzerordner",
+            "A saját mappámban",
+        ],
+    ),
+    (
+        "On another disk:",
+        [
+            "Sur un autre disque :",
+            "Su un altro disco:",
+            "En otro disco:",
+            "Noutro disco:",
+            "Auf einem anderen Datenträger:",
+            "Másik lemezen:",
+        ],
+    ),
+    (
+        "or any folder:",
+        [
+            "ou n'importe quel dossier :",
+            "oppure una cartella qualsiasi:",
+            "o cualquier carpeta:",
+            "ou qualquer pasta:",
+            "oder ein beliebiger Ordner:",
+            "vagy bármelyik mappa:",
+        ],
+    ),
+    (
+        "I can't write to «{}». Pick another folder or disk.",
+        [
+            "Je ne peux pas écrire dans «{}». Choisissez un autre dossier ou disque.",
+            "Non riesco a scrivere in «{}». Scegli un'altra cartella o un altro disco.",
+            "No puedo escribir en «{}». Elige otra carpeta u otro disco.",
+            "Não consigo escrever em «{}». Escolha outra pasta ou outro disco.",
+            "Ich kann nicht in «{}» schreiben. Wählen Sie einen anderen Ordner oder Datenträger.",
+            "Nem tudok írni ide: «{}». Válassz másik mappát vagy lemezt.",
+        ],
+    ),
+    (
+        "Models you already downloaded stay where they are and still show in the list. If you pick “Next to this app”, a model of tens of GB uses the disk the app is installed on.",
+        [
+            "Les modèles déjà téléchargés restent où ils sont et apparaissent toujours dans la liste. Si vous choisissez « À côté de cette application », un modèle de dizaines de Go occupe le disque où l'application est installée.",
+            "I modelli già scaricati restano dove sono e compaiono ancora nell'elenco. Se scegli «Accanto a questa app», un modello da decine di GB occupa il disco su cui è installata l'app.",
+            "Los modelos ya descargados se quedan donde están y siguen apareciendo en la lista. Si eliges «Junto a esta aplicación», un modelo de decenas de GB ocupa el disco donde está instalada la aplicación.",
+            "Os modelos já descarregados ficam onde estão e continuam na lista. Se escolher «Junto a esta aplicação», um modelo de dezenas de GB ocupa o disco onde a aplicação está instalada.",
+            "Bereits heruntergeladene Modelle bleiben, wo sie sind, und erscheinen weiter in der Liste. Wählen Sie «Neben dieser App», belegt ein Modell mit Dutzenden GB den Datenträger, auf dem die App installiert ist.",
+            "A már letöltött modellek ott maradnak, ahol vannak, és továbbra is látszanak a listában. Ha az «Az alkalmazás mellett» lehetőséget választod, a több tíz GB-os modell azt a lemezt foglalja, ahová az alkalmazás telepítve van.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

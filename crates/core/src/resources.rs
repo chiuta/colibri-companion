@@ -136,7 +136,7 @@ fn tree_use(sys: &System, label: &str, root: u32) -> Option<ProcUse> {
     })
 }
 
-fn disk_space(path: &Path) -> (Option<f64>, Option<f64>) {
+pub(crate) fn disk_space(path: &Path) -> (Option<f64>, Option<f64>) {
     let Ok(disks) = Disks::new_with_refreshed_list() else {
         return (None, None);
     };

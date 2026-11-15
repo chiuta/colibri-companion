@@ -453,6 +453,118 @@ impl CompanionApp {
             });
     }
 
+    /// Where new models are saved: next to this program, in the home folder, on any disk, or typed.
+    pub(crate) fn location_picker(&mut self, ui: &mut Ui, needed_gb: f64) {
+        let p = self.p;
+        let current = self
+            .s
+            .models_dir
+            .clone()
+            .or_else(companion_core::models::default_models_root);
+        ui.label(
+            RichText::new(self.t("Unde se salvează modelele", "Where models are saved")).semibold(),
+        );
+        if let Some(c) = &current {
+            let free = companion_core::models::free_gb_at(c);
+            let line = match free {
+                Some(f) => format!(
+                    "{} · {} {}",
+                    c.display(),
+                    fmt_gb(f),
+                    self.t("liberi", "free")
+                ),
+                None => c.display().to_string(),
+            };
+            let bad = free.is_some_and(|f| f < needed_gb * 1.05);
+            ui.label(RichText::new(line).color(if bad { p.bad } else { p.muted }));
+        }
+        let mut choose: Option<std::path::PathBuf> = None;
+        ui.horizontal_wrapped(|ui| {
+            if let Some(b) = companion_core::models::beside_app() {
+                if ui
+                    .button(self.t("Lângă aplicație", "Next to this app"))
+                    .on_hover_text(b.display().to_string())
+                    .clicked()
+                {
+                    choose = Some(b);
+                }
+            }
+            if let Some(d) = companion_core::models::default_models_root() {
+                if ui
+                    .button(self.t("În folderul meu personal", "In my home folder"))
+                    .on_hover_text(d.display().to_string())
+                    .clicked()
+                {
+                    choose = Some(d);
+                }
+            }
+        });
+        let drives = companion_core::models::drives();
+        if !drives.is_empty() {
+            ui.label(RichText::new(self.t("Pe alt disc:", "On another disk:")).color(p.muted));
+            ui.horizontal_wrapped(|ui| {
+                for d in &drives {
+                    let label = format!(
+                        "{} ({} {})",
+                        d.mount.display(),
+                        fmt_gb(d.free_gb),
+                        self.t("liberi", "free")
+                    );
+                    if ui
+                        .button(label)
+                        .on_hover_text(d.models_folder().display().to_string())
+                        .clicked()
+                    {
+                        choose = Some(d.models_folder());
+                    }
+                }
+            });
+        }
+        let mut typed = self
+            .s
+            .models_dir
+            .as_ref()
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.label(self.t("sau orice folder:", "or any folder:"));
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut typed)
+                    .desired_width(280.0)
+                    .hint_text("~/colibri-models"),
+            );
+            if r.lost_focus() && r.changed() {
+                let t = typed.trim().trim_matches('"');
+                if !t.is_empty() {
+                    choose = Some(t.into());
+                }
+            }
+        });
+        if let Some(dir) = choose {
+            if companion_core::models::writable(&dir) {
+                self.s.models_dir = Some(dir);
+                let _ = self.s.save();
+                self.refresh_engine_info();
+            } else {
+                let m = self
+                    .t(
+                        "Nu pot scrie în «{}». Alege alt folder sau alt disc.",
+                        "I can't write to «{}». Pick another folder or disk.",
+                    )
+                    .replacen("{}", &dir.display().to_string(), 1);
+                self.toast(m);
+            }
+        }
+        muted(
+            ui,
+            &p,
+            self.t(
+                "Modelele deja descărcate rămân unde sunt și apar în listă. Dacă alegi «Lângă aplicație», un model de zeci de GB ocupă discul pe care e instalată aplicația.",
+                "Models you already downloaded stay where they are and still show in the list. If you pick “Next to this app”, a model of tens of GB uses the disk the app is installed on.",
+            ),
+        );
+    }
+
     pub(crate) fn install_panel(&mut self, ui: &mut Ui, m: &ModelInfo) {
         let p = self.p;
         ui.separator();
@@ -461,19 +573,19 @@ impl CompanionApp {
             .ready()
             .map(|h| h.disk_free_gb)
             .unwrap_or(f64::MAX);
-        let dir = self
-            .s
-            .models_dir
-            .as_ref()
-            .map(|d| d.display().to_string())
-            .unwrap_or_else(|| "~/colibri-models".into());
         ui.label(format!(
-            "{} {} · {} {}",
+            "{} {}",
             self.t("Se descarcă", "Will download"),
             fmt_gb(m.download_gb),
-            self.t("în", "into"),
-            dir
         ));
+        self.location_picker(ui, m.download_gb);
+        let free = self
+            .s
+            .models_dir
+            .clone()
+            .or_else(companion_core::models::default_models_root)
+            .and_then(|d| companion_core::models::free_gb_at(&d))
+            .unwrap_or(free);
         if free < m.download_gb * 1.05 {
             ui.label(
                 RichText::new(self.t(
