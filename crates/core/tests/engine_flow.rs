@@ -61,7 +61,7 @@ fn install_pause_resume_start_chat_stop() {
 
     // install, pause quickly, resume, finish
     let log = home.join("install.log");
-    let mut child = coli.spawn_install("fake-small", None, &log).unwrap();
+    let mut child = coli.spawn_install("fake-small", None, None, &log).unwrap();
     wait_until("the download to start", 15, || {
         coli.status()
             .unwrap()
@@ -76,7 +76,7 @@ fn install_pause_resume_start_chat_stop() {
     assert!(!st.install_running());
     let done_before = st.install.unwrap().done.unwrap_or(0.0);
 
-    let mut child = coli.spawn_install("fake-small", None, &log).unwrap();
+    let mut child = coli.spawn_install("fake-small", None, None, &log).unwrap();
     wait_until("the install to finish", 30, || {
         coli.status().unwrap().setup_ready()
     });

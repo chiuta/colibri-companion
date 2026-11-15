@@ -30,6 +30,9 @@ impl CompanionApp {
                     let (text, fg, bg) = self.state_pill();
                     pill(ui, &text, fg, bg);
                     right_to_left(ui, |ui| {
+                        if ui.button(self.t("Resurse", "Resources")).clicked() {
+                            self.set_resources_open(true);
+                        }
                         if ui.button(self.t("Despre", "About")).clicked() {
                             self.show_about = true;
                         }
@@ -44,9 +47,10 @@ impl CompanionApp {
                             {
                                 self.stop_server();
                             }
-                            if ui.button(self.t("Alt model", "Another model")).clicked() {
-                                self.browse_history = false;
-                                self.show_model_picker = true;
+                            if ui.button(self.t("Modele", "Models")).clicked() {
+                                self.show_models = true;
+                                self.refresh_installed();
+                                self.refresh_engine_info();
                             }
                         }
                         if let Some(msg) = self.busy.clone() {
@@ -121,7 +125,16 @@ impl CompanionApp {
                             base
                         )
                     };
-                    ui.label(RichText::new(privacy).small().color(p.muted));
+                    if ui
+                        .link(RichText::new(format!("🔒 {privacy}")).small())
+                        .on_hover_text(self.t(
+                            "Vezi resursele folosite și dovada că nu iese nimic din calculator",
+                            "See the resources in use and the proof that nothing leaves your computer",
+                        ))
+                        .clicked()
+                    {
+                        self.set_resources_open(true);
+                    }
                     right_to_left(ui, |ui| {
                         if let Some(f) = self.facts() {
                             let mut bits = Vec::new();
@@ -161,6 +174,8 @@ impl CompanionApp {
 
     pub fn windows(&mut self, ctx: &egui::Context) {
         self.settings_window(ctx);
+        self.models_window(ctx);
+        self.resources_window(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);
     }
@@ -231,6 +246,19 @@ impl CompanionApp {
             });
             let auto = self.t("Pornește modelul automat când aplicația se deschide", "Start the model automatically when the app opens");
             ui.checkbox(&mut self.s.start_server_automatically, auto);
+            let upd = self.t(
+                "Verifică o dată pe zi dacă există versiuni noi (o cerere mică către GitHub)",
+                "Check once a day for new versions (one small request to GitHub)",
+            );
+            ui.checkbox(&mut self.s.check_updates, upd);
+            ui.horizontal(|ui| {
+                if secondary_button(ui, self.t("Verifică acum", "Check now")).clicked() {
+                    self.check_updates(true);
+                }
+                if self.upd.checking {
+                    ui.add(egui::Spinner::new());
+                }
+            });
             ui.separator();
             ui.label(RichText::new(self.t("Foldere", "Folders")).semibold());
             let mut root = self.s.colibri_root.as_ref().map(|p| p.display().to_string()).unwrap_or_default();

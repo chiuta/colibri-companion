@@ -32,6 +32,8 @@ Aplicația nu include colibri. Rulează comenzile JSON ale lui colibri (`setup -
 
 Linux (x86-64, ARM64; Wayland și X11), Windows 10/11 și macOS (Intel și Apple Silicon) — un singur cod sursă, randare OpenGL (merge și pe plăci video vechi sau în mașini virtuale). `.github/workflows/build.yml` construiește și testează toate variantele și produce arhive gata de distribuit. Pe Linux, `packaging/linux/install.sh` adaugă aplicația în meniu. Scalare HiDPI, scurtături Ctrl/⌘+N, Ctrl/⌘+, și Esc, suport pentru cititoare de ecran (AccessKit).
 
+Modele: păstrează mai multe pe calculator, trece între ele sau adaugă altele dintr-o singură fereastră (**Modele**); primul sugerat este cel mai capabil model pe care îl poate rula calculatorul tău (cele cu puțină memorie citesc experții din SSD). Viteză: CUDA pentru NVIDIA, Vulkan pentru alte cipuri grafice, altfel procesorul, alese automat. **Resurse** arată în direct procesorul, memoria, placa video și discul, plus dovada că nimic nu iese din calculator (toate conexiunile deschise ale aplicației și ale motorului, cu comanda ca să verifici singur). Dacă lipsește colibri, e descărcat pentru tine (fără git), iar o verificare zilnică (poate fi oprită) te anunță când colibri sau această aplicație au o versiune nouă.
+
 ## Limbi
 
 English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — alese din Setări, cu `--lang en|ro|fr|it|es|pt|de|hu` sau, la prima pornire, după limba sistemului. Traducerile sunt în `crates/app/src/i18n.rs` (cheia e textul englezesc); un test verifică faptul că fiecare text din interfață are toate traducerile. Au fost făcute cu ajutor AI și nu au fost revizuite de vorbitori nativi.

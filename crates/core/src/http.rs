@@ -67,7 +67,12 @@ impl Read for PollingStream {
                 return Ok(0);
             }
             match self.inner.read(buf) {
-                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
                     if self.cancel.is_none() || self.limit.is_some_and(|l| started.elapsed() >= l) {
                         return Err(e);
                     }
@@ -313,15 +318,23 @@ pub fn send(
     for addr in (host.as_str(), port).to_socket_addrs()? {
         match TcpStream::connect_timeout(&addr, opts.connect_timeout) {
             Ok(s) => {
+                crate::net::record(addr, true);
                 stream = Some(s);
                 break;
             }
-            Err(e) => last_err = e,
+            Err(e) => {
+                crate::net::record(addr, false);
+                last_err = e;
+            }
         }
     }
     let mut stream = stream.ok_or(last_err)?;
     let poll = opts.cancel.is_some();
-    stream.set_read_timeout(if poll { Some(opts.read_timeout.map_or(POLL, |l| l.min(POLL))) } else { opts.read_timeout })?;
+    stream.set_read_timeout(if poll {
+        Some(opts.read_timeout.map_or(POLL, |l| l.min(POLL)))
+    } else {
+        opts.read_timeout
+    })?;
     stream.set_nodelay(true).ok();
     if let Some(token) = opts.cancel {
         token.attach(&stream);
@@ -344,7 +357,11 @@ pub fn send(
         stream.write_all(body.as_bytes())?;
     }
     stream.flush()?;
-    read_response(PollingStream { inner: stream, cancel: opts.cancel.cloned(), limit: opts.read_timeout })
+    read_response(PollingStream {
+        inner: stream,
+        cancel: opts.cancel.cloned(),
+        limit: opts.read_timeout,
+    })
 }
 
 #[cfg(test)]

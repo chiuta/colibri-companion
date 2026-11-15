@@ -137,6 +137,30 @@ impl Style {
     }
 }
 
+/// Which engine build runs the model. `Auto` lets colibri use the best one this computer
+/// has: CUDA for an NVIDIA card, else Vulkan for another graphics chip, else the processor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Backend {
+    #[default]
+    Auto,
+    Cpu,
+    Vulkan,
+    Cuda,
+}
+
+impl Backend {
+    pub const ALL: [Backend; 4] = [Backend::Auto, Backend::Cuda, Backend::Vulkan, Backend::Cpu];
+    /// The value for `coli setup --backend`; nothing for `Auto`, which is colibri's own choice.
+    pub fn as_arg(self) -> Option<&'static str> {
+        match self {
+            Backend::Auto => None,
+            Backend::Cpu => Some("cpu"),
+            Backend::Vulkan => Some("vulkan"),
+            Backend::Cuda => Some("cuda"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
@@ -156,6 +180,11 @@ pub struct Settings {
     pub max_tokens: Option<u32>,
     pub start_server_automatically: bool,
     pub accepted_licenses: Vec<String>,
+    pub backend: Backend,
+    /// Ask GitHub (once a day) whether colibri or this app has a newer version.
+    pub check_updates: bool,
+    /// Unix seconds of the last check.
+    pub last_update_check: u64,
 }
 
 impl Default for Settings {
@@ -175,6 +204,9 @@ impl Default for Settings {
             max_tokens: None,
             start_server_automatically: true,
             accepted_licenses: Vec::new(),
+            backend: Backend::Auto,
+            check_updates: true,
+            last_update_check: 0,
         }
     }
 }

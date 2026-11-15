@@ -148,7 +148,9 @@ impl CompanionApp {
                         let chars = name.chars().count();
                         let r = ui.add_sized(
                             [ui.available_width(), 36.0],
-                            egui::TextEdit::singleline(name).id(edit_id).hint_text(new_name_hint),
+                            egui::TextEdit::singleline(name)
+                                .id(edit_id)
+                                .hint_text(new_name_hint),
                         );
                         if first {
                             // the old name starts selected, so typing replaces it
@@ -161,7 +163,8 @@ impl CompanionApp {
                                 egui::TextEdit::store_state(ui.ctx(), edit_id, st);
                             }
                         }
-                        let enter = (r.has_focus() || r.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let enter = (r.has_focus() || r.lost_focus())
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
                         if enter {
                             rename = Some((rid.clone(), name.clone()));

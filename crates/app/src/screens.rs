@@ -149,46 +149,54 @@ impl CompanionApp {
                     .semibold()
                     .size(17.0),
             );
-            if self.git_available == Some(true) {
-                ui.label(self.t(
-                    "Descarc colibri din GitHub în folderul tău personal (~/colibri). Ocupă puțin spațiu.",
-                    "I download colibri from GitHub into your home folder (~/colibri). It's small.",
-                ));
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!self.cloning, |ui| {
-                        if primary_button(
-                            ui,
-                            &p,
-                            self.t("Descarcă colibri pentru mine", "Download colibri for me"),
-                        )
-                        .clicked()
-                        {
-                            self.clone_colibri();
-                        }
-                    });
-                    if self.cloning {
-                        ui.add(Spinner::new());
+            ui.label(self.t(
+                "Descarc colibri de pe GitHub în folderul tău personal (~/colibri), fără să ai nevoie de git. Ocupă puțin spațiu.",
+                "I download colibri from GitHub into your home folder (~/colibri), no git needed. It's small.",
+            ));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!self.cloning, |ui| {
+                    if primary_button(
+                        ui,
+                        &p,
+                        self.t("Descarcă colibri pentru mine", "Download colibri for me"),
+                    )
+                    .clicked()
+                    {
+                        self.clone_colibri();
                     }
                 });
-                if let Some(last) = self.clone_lines.last() {
-                    ui.label(RichText::new(last).small().color(p.muted).monospace());
+                if self.cloning && self.fetch_progress.is_none() && !self.fetch_unpacking {
+                    ui.add(Spinner::new());
                 }
-            } else {
-                ui.label(self.t(
-                    "Nu găsesc programul «git», așa că ia arhiva ZIP din browser, dezarhiveaz-o, apoi trage folderul în această fereastră.",
-                    "I can't find the “git” program, so grab the ZIP from your browser, unzip it, then drag the folder into this window.",
-                ));
-                if primary_button(
-                    ui,
-                    &p,
-                    self.t("Deschide descărcarea ZIP", "Open the ZIP download"),
-                )
-                .clicked()
+            });
+            if self.cloning {
+                if self.fetch_unpacking {
+                    progress_bar(ui, &p, None, self.t("Dezarhivez…", "Unpacking…"));
+                } else if let Some((done, total)) = self.fetch_progress {
+                    let frac = (total > 0).then(|| (done as f64 / total as f64) as f32);
+                    let label = format!("{:.1} MB", done as f64 / 1e6);
+                    progress_bar(ui, &p, frac, &label);
+                }
+            }
+            if let Some(last) = self.clone_lines.last() {
+                ui.label(RichText::new(last).small().color(p.muted).monospace());
+            }
+            if let Some(msg) = &self.root_msg {
+                ui.label(RichText::new(msg).color(p.bad));
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(self.t("Nu merge?", "Not working?")).color(p.muted));
+                if ui
+                    .link(self.t(
+                        "Deschide descărcarea ZIP în browser",
+                        "Open the ZIP download in your browser",
+                    ))
+                    .clicked()
                 {
                     proc::open_externally(locate::COLIBRI_ZIP_URL);
                 }
-            }
+            });
         });
         ui.add_space(8.0);
         card(ui, &p, |ui| {
@@ -290,6 +298,8 @@ impl CompanionApp {
             });
         }
 
+        self.performance_panel(ui);
+        let top = self.strongest_card(ui, false);
         match self.catalog.clone() {
             Loadable::Idle | Loadable::Loading => {
                 ui.horizontal(|ui| {
@@ -314,9 +324,11 @@ impl CompanionApp {
                 }
             }
             Loadable::Ready(models) => {
-                let (fit, nofit): (Vec<_>, Vec<_>) =
-                    models.iter().partition(|m| m.fits && m.is_chat_model());
-                if fit.is_empty() {
+                let (fit, nofit): (Vec<_>, Vec<_>) = models
+                    .iter()
+                    .filter(|m| top.as_deref() != Some(m.id.as_str()))
+                    .partition(|m| m.fits && m.is_chat_model());
+                if fit.is_empty() && top.is_none() {
                     tinted(ui, p.warn_soft, p.warn, |ui| {
                         ui.label(
                             RichText::new(self.t(
@@ -375,7 +387,7 @@ impl CompanionApp {
         }
     }
 
-    fn model_card(&mut self, ui: &mut Ui, m: &ModelInfo) {
+    pub(crate) fn model_card(&mut self, ui: &mut Ui, m: &ModelInfo) {
         let p = self.p;
         let selected = self.selected_model.as_deref() == Some(m.id.as_str());
         let can_install = m.fits && m.is_chat_model();
@@ -431,7 +443,7 @@ impl CompanionApp {
             });
     }
 
-    fn install_panel(&mut self, ui: &mut Ui, m: &ModelInfo) {
+    pub(crate) fn install_panel(&mut self, ui: &mut Ui, m: &ModelInfo) {
         let p = self.p;
         ui.separator();
         let free = self
@@ -506,7 +518,10 @@ impl CompanionApp {
         });
     }
 
-    fn status_badge(&self, m: &ModelInfo) -> (&'static str, egui::Color32, egui::Color32) {
+    pub(crate) fn status_badge(
+        &self,
+        m: &ModelInfo,
+    ) -> (&'static str, egui::Color32, egui::Color32) {
         let p = self.p;
         match m.status.as_str() {
             "good" => (
@@ -537,7 +552,7 @@ impl CompanionApp {
         }
     }
 
-    fn speed_note(&self, m: &ModelInfo) -> &'static str {
+    pub(crate) fn speed_note(&self, m: &ModelInfo) -> &'static str {
         if m.streams_from_disk() {
             self.t(
                 "Citește părți din model de pe SSD: mai lent, dar foarte capabil. Un SSD rapid ajută mult.",
@@ -551,7 +566,7 @@ impl CompanionApp {
         }
     }
 
-    fn blurb(&self, m: &ModelInfo) -> String {
+    pub(crate) fn blurb(&self, m: &ModelInfo) -> String {
         match m.id.as_str() {
             "qwen36-35b" => self.t("Conversație generală, cu «gândire» și instrumente. O alegere bună pentru început.", "General conversation with thinking and tools. A good place to start.").into(),
             "qwen3-coder-30b" => self.t("Specializat în cod și instrumente, fără pasul de «gândire». Se descurcă și la întrebări obișnuite.", "Specialised in code and tools, without the “thinking” step. Handles everyday questions too.").into(),

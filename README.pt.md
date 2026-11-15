@@ -32,6 +32,8 @@ A aplicação não inclui o colibri. Executa os comandos JSON do colibri (`setup
 
 Linux (x86-64, ARM64; Wayland e X11), Windows 10/11 e macOS (Intel e Apple Silicon) — um só código-fonte, renderização OpenGL (funciona em placas gráficas antigas e em máquinas virtuais). `.github/workflows/build.yml` compila e testa todas as variantes e produz arquivos prontos a distribuir. No Linux, `packaging/linux/install.sh` acrescenta a aplicação ao menu. Escala HiDPI, atalhos Ctrl/⌘+N, Ctrl/⌘+, e Esc, e suporte para leitores de ecrã (AccessKit).
 
+Modelos: guarda vários no computador, alterna entre eles ou adiciona mais a partir de uma só janela (**Modelos**); o mais capaz que o teu computador consegue executar é sugerido primeiro (com pouca RAM, os especialistas são lidos do SSD). Velocidade: CUDA para NVIDIA, Vulkan para outros chips gráficos, senão o processador, escolhidos automaticamente. **Recursos** mostra em direto processador, memória, placa gráfica e disco, e a prova de que nada sai do teu computador (todas as ligações abertas da aplicação e do motor, com o comando para verificares tu próprio). Se o colibri faltar é descarregado por ti (sem git), e uma verificação diária (pode ser desligada) avisa quando o colibri ou esta aplicação têm uma versão nova.
+
 ## Idiomas
 
 English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — escolhidos nas Definições, com `--lang en|ro|fr|it|es|pt|de|hu`, ou pelo idioma do sistema no primeiro arranque. As traduções estão em `crates/app/src/i18n.rs` (a chave é o texto em inglês); um teste verifica que cada texto da interface tem todas as traduções. Foram feitas com ajuda de uma IA e não foram revistas por falantes nativos.

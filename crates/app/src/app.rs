@@ -12,9 +12,15 @@ use companion_core::chat::{
 use companion_core::coli::{self, Coli, Hardware, ModelInfo, StatusReport};
 use companion_core::http::CancelToken;
 use companion_core::locate::{self, PythonCmd};
+use companion_core::models::{self, InstalledModel};
+use companion_core::net::{self, Conn, LogSummary};
+use companion_core::resources::{Sampler, Snapshot};
+use companion_core::update::{self, Release, Upstream};
 use companion_core::{Conversation, ConversationStore, Lang, Settings, StoredMessage, paths, proc};
 use egui_commonmark::CommonMarkCache;
+use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -32,6 +38,20 @@ pub enum Event {
     ModelIds(Vec<String>),
     CloneLine(String),
     CloneDone(Result<PathBuf, String>),
+    FetchProgress {
+        done: u64,
+        total: u64,
+    },
+    FetchUnpacking,
+    Installed(Vec<InstalledModel>),
+    Resources(Box<ResView>),
+    UpdateChecked {
+        colibri: Option<Upstream>,
+        app: Option<Release>,
+        error: Option<String>,
+    },
+    ColibriUpdated(Result<(), String>),
+    ModelDeleted(Result<String, String>),
     InstallSpawned(Result<(), String>),
     InstallEnded(Option<i32>),
     ServerAction {
@@ -47,6 +67,35 @@ pub enum Event {
         turn: u64,
         result: Result<StreamSummary, ChatError>,
     },
+}
+
+/// One reading for the "Resources and privacy" window.
+#[derive(Clone)]
+pub struct ResView {
+    pub snap: Snapshot,
+    /// Open sockets of this app and of colibri's processes, with the name of the process.
+    pub conns: Vec<(String, Conn)>,
+    pub conns_error: Option<String>,
+    pub applog: LogSummary,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UpdateState {
+    pub checking: bool,
+    /// A newer colibri exists upstream.
+    pub colibri: Option<Upstream>,
+    /// A newer release of this app exists.
+    pub app: Option<Release>,
+    pub dismissed: bool,
+    pub updating: bool,
+    pub error: Option<String>,
+}
+
+/// A question put to the user inside the "My models" window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelAsk {
+    Install(String),
+    Delete(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +210,10 @@ pub struct CompanionApp {
     pub git_available: Option<bool>,
     pub clone_lines: Vec<String>,
     pub cloning: bool,
+    /// Bytes downloaded and expected while fetching colibri's ZIP; `unpacking` once it is whole.
+    pub fetch_progress: Option<(u64, u64)>,
+    pub fetch_unpacking: bool,
+    auto_fetch_tried: bool,
 
     // engine
     pub catalog: Loadable<Vec<ModelInfo>>,
@@ -184,12 +237,29 @@ pub struct CompanionApp {
     pub busy: Option<String>,
     pub starting_since: Option<Instant>,
     pub auto_started: bool,
+    /// Start the model as soon as a switch or an added model is ready, whatever the setting says.
+    pub force_autostart: bool,
+    /// Set when a setup ended; cleared by the next status, so the old status never starts the old model.
+    awaiting_status: bool,
+    switch_after_stop: Option<String>,
     pub browse_history: bool,
     pub demo: bool,
 
     // windows
     pub show_settings: bool,
     pub show_about: bool,
+    pub show_models: bool,
+    pub show_resources: bool,
+    pub upd: UpdateState,
+    update_after_stop: bool,
+    pub res: Option<ResView>,
+    pub cpu_hist: VecDeque<f32>,
+    pub ram_hist: VecDeque<f32>,
+    res_run: Arc<AtomicBool>,
+    res_targets: Arc<Mutex<Vec<(String, u32)>>>,
+    pub installed: Vec<InstalledModel>,
+    installed_read: Option<Instant>,
+    pub model_ask: Option<ModelAsk>,
     pub logs_view: Option<String>,
 
     pub chat: ChatState,
@@ -234,6 +304,9 @@ impl CompanionApp {
             git_available: None,
             clone_lines: Vec::new(),
             cloning: false,
+            fetch_progress: None,
+            fetch_unpacking: false,
+            auto_fetch_tried: false,
             catalog: Loadable::Idle,
             hardware: Loadable::Idle,
             status: None,
@@ -253,10 +326,25 @@ impl CompanionApp {
             busy: None,
             starting_since: None,
             auto_started: false,
+            force_autostart: false,
+            awaiting_status: false,
+            switch_after_stop: None,
             browse_history: false,
             demo,
             show_settings: false,
             show_about: false,
+            show_models: false,
+            show_resources: false,
+            upd: UpdateState::default(),
+            update_after_stop: false,
+            res: None,
+            cpu_hist: VecDeque::new(),
+            ram_hist: VecDeque::new(),
+            res_run: Arc::new(AtomicBool::new(false)),
+            res_targets: Arc::new(Mutex::new(Vec::new())),
+            installed: Vec::new(),
+            installed_read: None,
+            model_ask: None,
             logs_view: None,
             chat: ChatState {
                 conv: Conversation::new(),
@@ -441,51 +529,35 @@ impl CompanionApp {
         }
         self.cloning = true;
         self.clone_lines.clear();
-        let dest = locate::default_clone_dir();
+        self.fetch_progress = None;
+        self.fetch_unpacking = false;
+        self.root_msg = None;
+        let dest = locate::fresh_clone_dir();
+        let git = self.git_available == Some(true);
+        let python = match &self.python {
+            Probe::Found(p) => Some(p.clone()),
+            _ => None,
+        };
+        let ctx = self.ctx.clone();
         self.spawn(move |tx| {
-            use std::io::Read;
-            use std::process::{Command, Stdio};
-            let mut cmd = Command::new("git");
-            cmd.args([
-                "clone",
-                "--depth",
-                "1",
-                "--progress",
-                locate::COLIBRI_GIT_URL,
-            ])
-            .arg(&dest);
-            proc::hide_window(&mut cmd);
-            cmd.stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped());
-            let mut child = match cmd.spawn() {
-                Ok(c) => c,
-                Err(e) => return drop(tx.send(Event::CloneDone(Err(e.to_string())))),
-            };
-            let mut err = child.stderr.take().unwrap();
-            let (mut buf, mut line) = ([0u8; 512], Vec::new());
-            while let Ok(n) = err.read(&mut buf) {
-                if n == 0 {
-                    break;
-                }
-                for &b in &buf[..n] {
-                    if b == b'\n' || b == b'\r' {
-                        if !line.is_empty() {
-                            let _ = tx.send(Event::CloneLine(
-                                String::from_utf8_lossy(&line).into_owned(),
-                            ));
-                            line.clear();
-                        }
-                    } else {
-                        line.push(b);
+            let mut why = String::new();
+            if git {
+                match clone_with_git(&dest, tx) {
+                    Ok(()) => return drop(tx.send(Event::CloneDone(Ok(dest)))),
+                    Err(e) => {
+                        why = e;
+                        let _ = std::fs::remove_dir_all(&dest); // ours: `fresh_clone_dir` never exists beforehand
                     }
                 }
             }
-            let ok = child.wait().map(|s| s.success()).unwrap_or(false);
-            let _ = tx.send(Event::CloneDone(if ok {
-                Ok(dest)
-            } else {
-                Err("git clone failed".into())
+            let result = match python {
+                Some(py) => zip_with_python(&py, &dest, tx, &ctx),
+                None => Err("Python was not found".to_string()),
+            };
+            let _ = tx.send(Event::CloneDone(match result {
+                Ok(()) => Ok(dest),
+                Err(e) if why.is_empty() => Err(e),
+                Err(e) => Err(format!("{why}; {e}")),
             }));
         });
     }
@@ -532,9 +604,9 @@ impl CompanionApp {
     // ------------------------------------------------------------ install and server
 
     pub fn start_install(&mut self, model: &ModelInfo) {
-        let Some(coli) = self.coli.clone() else {
+        if self.coli.is_none() {
             return;
-        };
+        }
         if !model.license_note.is_empty() || !model.repo.is_empty() {
             let key = model.id.clone();
             if !self.s.accepted_licenses.contains(&key) {
@@ -542,18 +614,29 @@ impl CompanionApp {
                 let _ = self.s.save();
             }
         }
+        self.begin_setup(&model.id);
+    }
+
+    /// Runs colibri's own `setup --model <id>`: downloads what is missing (nothing, for a model
+    /// that is already whole) and makes it the model colibri is set up for.
+    pub fn begin_setup(&mut self, id: &str) {
+        let Some(coli) = self.coli.clone() else {
+            return;
+        };
         self.install_spawning = true;
         self.installing_since = Some(Instant::now());
         self.install_exit = None;
         self.install_log.clear();
         self.show_model_picker = false;
-        let (id, dir, log) = (
-            model.id.clone(),
+        self.show_models = false;
+        let (id, dir, backend, log) = (
+            id.to_string(),
             self.s.models_dir.clone(),
+            self.s.backend.as_arg(),
             paths::logs_dir().join("install.log"),
         );
         self.spawn(
-            move |tx| match coli.spawn_install(&id, dir.as_deref(), &log) {
+            move |tx| match coli.spawn_install(&id, dir.as_deref(), backend, &log) {
                 Ok(mut child) => {
                     let _ = tx.send(Event::InstallSpawned(Ok(())));
                     let code = child.wait().ok().and_then(|s| s.code());
@@ -564,6 +647,299 @@ impl CompanionApp {
                 }
             },
         );
+    }
+
+    /// Switch to a model that is already on this computer: stop the running one, set colibri up for
+    /// the other (quick, nothing to download), start it.
+    pub fn switch_model(&mut self, id: &str) {
+        if self.coli.is_none() || self.phase() == Phase::Installing || self.install_spawning {
+            return;
+        }
+        self.browse_history = false;
+        self.show_models = false;
+        self.force_autostart = true;
+        self.auto_started = false;
+        let running = self.server_ready()
+            || matches!(self.health, Health::Loading(_))
+            || self.starting_since.is_some();
+        if running {
+            self.switch_after_stop = Some(id.to_string());
+            self.stop_server();
+        } else {
+            self.begin_setup(id);
+        }
+    }
+
+    /// Download one more model and use it as soon as it is there. The model that runs now stays
+    /// installed; it is only stopped while the new one downloads.
+    pub fn install_additional(&mut self, model: &ModelInfo) {
+        if self.phase() == Phase::Installing || self.install_spawning {
+            return;
+        }
+        self.model_ask = None;
+        self.browse_history = false;
+        self.force_autostart = true;
+        self.auto_started = false;
+        let running = self.server_ready()
+            || matches!(self.health, Health::Loading(_))
+            || self.starting_since.is_some();
+        if !model.license_note.is_empty() || !model.repo.is_empty() {
+            let key = model.id.clone();
+            if !self.s.accepted_licenses.contains(&key) {
+                self.s.accepted_licenses.push(key);
+                let _ = self.s.save();
+            }
+        }
+        if running && !self.demo {
+            self.switch_after_stop = Some(model.id.clone());
+            self.show_models = false;
+            self.stop_server();
+        } else {
+            self.begin_setup(&model.id);
+        }
+    }
+
+    /// Opening the window starts a sampler thread; closing it (or the app) stops it, so a closed
+    /// window costs nothing.
+    pub fn set_resources_open(&mut self, open: bool) {
+        self.show_resources = open;
+        if !open {
+            self.res_run.store(false, Ordering::SeqCst);
+            return;
+        }
+        if self.res_run.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let (run, targets, tx, ctx) = (
+            self.res_run.clone(),
+            self.res_targets.clone(),
+            self.tx.clone(),
+            self.ctx.clone(),
+        );
+        let disk = self
+            .s
+            .models_dir
+            .clone()
+            .or_else(models::default_models_root)
+            .filter(|p| p.exists())
+            .or_else(|| Some(paths::data_dir()));
+        thread::spawn(move || {
+            let mut sampler = Sampler::new();
+            thread::sleep(Duration::from_millis(400));
+            while run.load(Ordering::SeqCst) {
+                let t = targets.lock().map(|t| t.clone()).unwrap_or_default();
+                let snap = sampler.sample(&t, disk.as_deref());
+                // which of our processes owns which socket
+                let mut pids: Vec<(u32, String)> = Vec::new();
+                for (label, root) in &t {
+                    for pid in sampler.tree_pids(*root) {
+                        if !pids.iter().any(|(p, _)| *p == pid) {
+                            pids.push((pid, label.clone()));
+                        }
+                    }
+                }
+                let list: Vec<u32> = pids.iter().map(|(p, _)| *p).collect();
+                let (conns, conns_error) = match net::connections_of(&list) {
+                    Ok(c) => (c, None),
+                    Err(e) => (Vec::new(), Some(e)),
+                };
+                let conns = conns
+                    .into_iter()
+                    .map(|c| {
+                        let label = pids
+                            .iter()
+                            .find(|(p, _)| *p == c.pid)
+                            .map(|(_, l)| l.clone())
+                            .unwrap_or_default();
+                        (label, c)
+                    })
+                    .collect();
+                let view = ResView {
+                    snap,
+                    conns,
+                    conns_error,
+                    applog: net::log_summary(),
+                };
+                if tx.send(Event::Resources(Box::new(view))).is_err() {
+                    return;
+                }
+                ctx.request_repaint();
+                thread::sleep(Duration::from_millis(1500));
+            }
+        });
+    }
+
+    fn sync_resource_targets(&mut self) {
+        let mut t = vec![("Colibri Companion".to_string(), std::process::id())];
+        if let Some(pid) = self
+            .status
+            .as_ref()
+            .and_then(|s| s.server.as_ref())
+            .and_then(|s| s.pid)
+        {
+            t.push((self.t("Motorul colibri", "colibri engine").to_string(), pid));
+        }
+        if let Some(pid) = self
+            .status
+            .as_ref()
+            .and_then(|s| s.install.as_ref())
+            .filter(|i| i.running)
+            .and_then(|i| i.pid)
+        {
+            t.push((
+                self.t("Instalare colibri", "colibri setup").to_string(),
+                pid,
+            ));
+        }
+        if let Ok(mut g) = self.res_targets.lock() {
+            *g = t;
+        }
+    }
+
+    /// One small request to GitHub, through Python, for colibri's latest commit and this app's
+    /// latest release. `manual` ignores the once-a-day limit.
+    pub fn check_updates(&mut self, manual: bool) {
+        let Probe::Found(py) = &self.python else {
+            return;
+        };
+        if self.upd.checking || self.demo {
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if !manual && now.saturating_sub(self.s.last_update_check) < 24 * 3600 {
+            return;
+        }
+        self.s.last_update_check = now;
+        let _ = self.s.save();
+        self.upd.checking = true;
+        self.upd.error = None;
+        let py = py.clone();
+        let root = self.coli.as_ref().map(|c| c.root.clone());
+        self.spawn(move |tx| {
+            let mut error = None;
+            let colibri = match update::http_get(&py, update::COLIBRI_COMMIT_API) {
+                Ok(text) => update::parse_commit(&text).filter(|u| {
+                    root.as_ref()
+                        .and_then(|r| update::colibri_is_outdated(r, u))
+                        .unwrap_or(false)
+                }),
+                Err(e) => {
+                    error = Some(e);
+                    None
+                }
+            };
+            let app = update::http_get(&py, update::COMPANION_RELEASES_API)
+                .ok()
+                .and_then(|t| update::parse_latest_release(&t))
+                .filter(|r| update::is_newer(&r.tag, env!("CARGO_PKG_VERSION")));
+            let _ = tx.send(Event::UpdateChecked {
+                colibri,
+                app,
+                error,
+            });
+        });
+    }
+
+    /// Bring colibri up to date: `git pull` for a git checkout, otherwise a fresh ZIP that
+    /// replaces the folder (the old one is kept next to it, renamed). The model must be stopped.
+    pub fn update_colibri(&mut self) {
+        let Some(coli) = self.coli.clone() else {
+            return;
+        };
+        if self.upd.updating {
+            return;
+        }
+        if self.server_ready() || matches!(self.health, Health::Loading(_)) {
+            self.update_after_stop = true;
+            self.stop_server();
+            return;
+        }
+        self.upd.updating = true;
+        let git = self.git_available == Some(true) && coli.root.join(".git").exists();
+        let python = match &self.python {
+            Probe::Found(p) => Some(p.clone()),
+            _ => None,
+        };
+        let ctx = self.ctx.clone();
+        self.spawn(move |tx| {
+            let root = coli.root.clone();
+            let result = if git {
+                let mut c = std::process::Command::new("git");
+                c.args(["-C"]).arg(&root).args(["pull", "--ff-only"]);
+                proc::hide_window(&mut c);
+                match proc::run_capture(c, Duration::from_secs(300)) {
+                    Ok(o) if o.status.success() => Ok(()),
+                    Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            } else if let Some(py) = python {
+                let name = root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "colibri".into());
+                let fresh = root.with_file_name(format!("{name}-update"));
+                let _ = std::fs::remove_dir_all(&fresh);
+                zip_with_python(&py, &fresh, tx, &ctx).and_then(|_| {
+                    let stamp = update::iso_now().replace([':', '-'], "");
+                    let old = root.with_file_name(format!("{name}-old-{stamp}"));
+                    std::fs::rename(&root, &old).map_err(|e| e.to_string())?;
+                    if let Err(e) = std::fs::rename(&fresh, &root) {
+                        let _ = std::fs::rename(&old, &root); // put the old one back
+                        return Err(e.to_string());
+                    }
+                    update::write_fetched_marker(&root);
+                    Ok(())
+                })
+            } else {
+                Err("Python was not found".into())
+            };
+            let _ = tx.send(Event::ColibriUpdated(result));
+        });
+    }
+
+    pub fn refresh_installed(&mut self) {
+        self.installed_read = Some(Instant::now());
+        let active = self
+            .status
+            .as_ref()
+            .and_then(|s| s.setup.as_ref())
+            .and_then(|s| s.model_dir.clone())
+            .map(PathBuf::from);
+        let roots = models::roots(self.s.models_dir.as_deref(), active.as_deref());
+        self.spawn(move |tx| {
+            let _ = tx.send(Event::Installed(models::scan(&roots)));
+        });
+    }
+
+    pub fn refresh_installed_if_stale(&mut self) {
+        if self
+            .installed_read
+            .is_none_or(|t| t.elapsed() > Duration::from_secs(4))
+        {
+            self.refresh_installed();
+        }
+    }
+
+    pub fn delete_model(&mut self, id: &str) {
+        let Some(m) = self.installed.iter().find(|m| m.id == id).cloned() else {
+            return;
+        };
+        let active = self
+            .status
+            .as_ref()
+            .and_then(|s| s.setup.as_ref())
+            .and_then(|s| s.model_dir.clone())
+            .map(PathBuf::from);
+        let roots = models::roots(self.s.models_dir.as_deref(), active.as_deref());
+        self.spawn(move |tx| {
+            let r = models::delete(&m.dir, &roots, active.as_deref())
+                .map(|_| m.id.clone())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Event::ModelDeleted(r));
+        });
     }
 
     pub fn pause_install(&mut self) {
@@ -1014,6 +1390,7 @@ impl CompanionApp {
                         // the server is up (loading or ready): the poller takes it from here
                     }
                     self.status = Some(st);
+                    self.awaiting_status = false;
                 }
                 Err(e) => self.status_error = Some(e),
             },
@@ -1059,9 +1436,81 @@ impl CompanionApp {
                     ));
                 }
             }
+            Event::FetchProgress { done, total } => {
+                self.fetch_progress = Some((done, total));
+            }
+            Event::FetchUnpacking => self.fetch_unpacking = true,
+            Event::UpdateChecked {
+                colibri,
+                app,
+                error,
+            } => {
+                self.upd.checking = false;
+                self.upd.colibri = colibri;
+                self.upd.app = app;
+                self.upd.error = error;
+                self.upd.dismissed = false;
+            }
+            Event::ColibriUpdated(r) => {
+                self.upd.updating = false;
+                match r {
+                    Ok(()) => {
+                        self.upd.colibri = None;
+                        self.toast(self.t(
+                            "colibri este la zi. Verifică lista de modele: pot fi modele noi.",
+                            "colibri is up to date. Check the model list: there may be new models.",
+                        ));
+                        self.refresh_engine_info();
+                    }
+                    Err(e) => self.toast(format!(
+                        "{}: {e}",
+                        self.t("Actualizarea nu a reușit", "The update failed")
+                    )),
+                }
+            }
+            Event::Installed(list) => self.installed = list,
+            Event::Resources(v) => {
+                for (hist, val) in [
+                    (&mut self.cpu_hist, v.snap.cpu_percent),
+                    (
+                        &mut self.ram_hist,
+                        if v.snap.ram_total_gb > 0.0 {
+                            (v.snap.ram_used_gb / v.snap.ram_total_gb * 100.0) as f32
+                        } else {
+                            0.0
+                        },
+                    ),
+                ] {
+                    hist.push_back(val);
+                    while hist.len() > 60 {
+                        hist.pop_front();
+                    }
+                }
+                self.res = Some(*v);
+            }
+            Event::ModelDeleted(r) => {
+                match r {
+                    Ok(id) => {
+                        let msg = self
+                            .t("Am șters «{}»", "Deleted “{}”")
+                            .replacen("{}", &id, 1);
+                        self.toast(msg);
+                    }
+                    Err(e) => self.toast(format!(
+                        "{}: {e}",
+                        self.t("Nu am putut șterge modelul", "Could not delete the model")
+                    )),
+                }
+                self.refresh_installed();
+            }
             Event::InstallEnded(code) => {
                 self.install_spawning = false;
+                self.awaiting_status = true;
+                if code != Some(0) {
+                    self.force_autostart = false;
+                }
                 self.install_exit = code;
+                self.refresh_installed();
                 self.refresh_install_log();
                 if let Some(coli) = self.coli.clone() {
                     self.spawn(move |tx| {
@@ -1075,6 +1524,20 @@ impl CompanionApp {
                     self.health = Health::Down;
                     self.starting_since = None;
                     self.auto_started = true; // do not undo a deliberate stop
+                    if self.update_after_stop {
+                        self.update_after_stop = false;
+                        if result.is_ok() {
+                            self.update_colibri();
+                        }
+                    }
+                    if let Some(id) = self.switch_after_stop.take() {
+                        if result.is_ok() {
+                            self.auto_started = false;
+                            self.begin_setup(&id);
+                        } else {
+                            self.force_autostart = false;
+                        }
+                    }
                 }
                 if let Err(e) = result {
                     self.starting_since = None;
@@ -1129,6 +1592,9 @@ impl CompanionApp {
             self.applied_look = Some(look);
         }
         self.sync_poller();
+        if self.show_resources {
+            self.sync_resource_targets();
+        }
         self.toasts.retain(|t| t.until > Instant::now());
 
         // A server start that never became ready should not spin forever.
@@ -1140,12 +1606,37 @@ impl CompanionApp {
         }
         // Start the model on its own, once, when everything is installed.
         if self.phase() == Phase::StartServer
-            && self.s.start_server_automatically
+            && (self.s.start_server_automatically || self.force_autostart)
             && !self.auto_started
+            && !self.awaiting_status
             && self.status.is_some()
         {
             self.auto_started = true;
+            self.force_autostart = false;
             self.start_server();
+        }
+        if self.s.check_updates
+            && self.coli.is_some()
+            && matches!(self.python, Probe::Found(_))
+            && matches!(
+                self.phase(),
+                Phase::Chat | Phase::StartServer | Phase::ChooseModel
+            )
+        {
+            self.check_updates(false);
+        }
+        // colibri was not found and Python is there: fetch it without asking, once.
+        if self.phase() == Phase::NeedColibri
+            && !self.cloning
+            && !self.auto_fetch_tried
+            && !self.demo
+            && self.git_available.is_some()
+        {
+            self.auto_fetch_tried = true;
+            self.clone_colibri();
+        }
+        if self.show_models && self.phase() == Phase::Installing {
+            self.refresh_installed_if_stale();
         }
         if self.phase() == Phase::Installing {
             self.refresh_install_log();
@@ -1162,5 +1653,101 @@ impl CompanionApp {
                 next.saturating_duration_since(Instant::now()) + Duration::from_millis(30),
             );
         }
+    }
+}
+
+fn clone_with_git(dest: &std::path::Path, tx: &Sender<Event>) -> Result<(), String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new("git");
+    cmd.args([
+        "clone",
+        "--depth",
+        "1",
+        "--progress",
+        locate::COLIBRI_GIT_URL,
+    ])
+    .arg(dest);
+    proc::hide_window(&mut cmd);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let mut err = child.stderr.take().ok_or("no output from git")?;
+    let (mut buf, mut line) = ([0u8; 512], Vec::new());
+    while let Ok(n) = err.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        for &b in &buf[..n] {
+            if b == b'\n' || b == b'\r' {
+                if !line.is_empty() {
+                    let _ = tx.send(Event::CloneLine(
+                        String::from_utf8_lossy(&line).into_owned(),
+                    ));
+                    line.clear();
+                }
+            } else {
+                line.push(b);
+            }
+        }
+    }
+    match child.wait() {
+        Ok(s) if s.success() => Ok(()),
+        _ => Err("git clone failed".into()),
+    }
+}
+
+/// Download colibri's ZIP and unpack it with Python: works without git.
+fn zip_with_python(
+    python: &PythonCmd,
+    dest: &std::path::Path,
+    tx: &Sender<Event>,
+    ctx: &egui::Context,
+) -> Result<(), String> {
+    use companion_core::fetch::{self, FetchLine};
+    use std::io::{BufRead, BufReader, Read};
+    let mut child = fetch::spawn_zip_download(python, locate::COLIBRI_ZIP_URL, dest)
+        .map_err(|e| e.to_string())?;
+    let mut stderr = child.stderr.take();
+    let reader = thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(e) = stderr.as_mut() {
+            let _ = e.read_to_string(&mut text);
+        }
+        text
+    });
+    let mut last_sent = Instant::now() - Duration::from_secs(1);
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            match fetch::parse_line(&line) {
+                Some(FetchLine::Progress { done, total }) => {
+                    if last_sent.elapsed() > Duration::from_millis(120) {
+                        last_sent = Instant::now();
+                        let _ = tx.send(Event::FetchProgress { done, total });
+                        ctx.request_repaint();
+                    }
+                }
+                Some(FetchLine::Unpacking) => {
+                    let _ = tx.send(Event::FetchUnpacking);
+                    ctx.request_repaint();
+                }
+                _ => {}
+            }
+        }
+    }
+    let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+    let err = reader.join().unwrap_or_default();
+    if ok {
+        update::write_fetched_marker(dest);
+        Ok(())
+    } else {
+        Err(err
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("the download failed")
+            .trim()
+            .to_string())
     }
 }

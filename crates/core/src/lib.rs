@@ -8,11 +8,16 @@
 pub mod attach;
 pub mod chat;
 pub mod coli;
+pub mod fetch;
 pub mod http;
 pub mod locate;
+pub mod models;
+pub mod net;
 pub mod paths;
 pub mod proc;
+pub mod resources;
 pub mod store;
+pub mod update;
 
 pub use chat::{
     ChatClient, ChatError, ChatMessage, ChatRequest, ErrorKind, Health, StreamEvent, StreamSummary,
@@ -20,4 +25,6 @@ pub use chat::{
 };
 pub use coli::{Coli, Hardware, InstallState, ModelInfo, ServerInfo, StatusReport};
 pub use locate::PythonCmd;
-pub use store::{Conversation, ConversationStore, Lang, Settings, StoredMessage, Style, Theme};
+pub use store::{
+    Backend, Conversation, ConversationStore, Lang, Settings, StoredMessage, Style, Theme,
+};

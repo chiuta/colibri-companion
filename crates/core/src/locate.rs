@@ -150,6 +150,19 @@ pub fn default_clone_dir() -> PathBuf {
         .join("colibri")
 }
 
+/// A folder name for a fresh copy of colibri that does not exist yet: `~/colibri`, or
+/// `~/colibri-2`, `~/colibri-3`… when something already sits there.
+pub fn fresh_clone_dir() -> PathBuf {
+    let base = default_clone_dir();
+    if !base.exists() {
+        return base;
+    }
+    (2..)
+        .map(|n| base.with_file_name(format!("colibri-{n}")))
+        .find(|p| !p.exists())
+        .unwrap_or(base)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

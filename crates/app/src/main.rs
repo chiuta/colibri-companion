@@ -5,6 +5,8 @@ mod app;
 mod chat_ui;
 mod demo;
 mod i18n;
+mod models_ui;
+mod resources_ui;
 mod screens;
 mod theme;
 mod widgets;
@@ -108,6 +110,7 @@ impl CompanionApp {
         self.tick();
         let phase = self.phase();
         self.top_bar(ui);
+        self.update_banner(ui);
         self.status_bar(ui);
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(self.p.bg))

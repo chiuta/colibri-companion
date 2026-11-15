@@ -9,6 +9,7 @@ description = "Engine-facing logic of Colibri Companion: discovery, setup, statu
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
 
 [dev-dependencies]
 tiny_http = "0.12"

@@ -73,6 +73,21 @@ pub fn sort_for_display(models: &mut [ModelInfo]) {
     });
 }
 
+/// The most capable chat model this computer can actually run: among the models that fit
+/// (memory, disk and a supported engine), the largest one. Bigger checkpoints are the more
+/// sophisticated ones; models that stream their experts from the SSD are what lets a
+/// computer with 8 or 16 GB of RAM and no strong graphics card run them at all.
+pub fn strongest_that_fits(models: &[ModelInfo]) -> Option<&ModelInfo> {
+    models
+        .iter()
+        .filter(|m| m.fits && m.is_chat_model() && m.status != "unsupported")
+        .max_by(|a, b| {
+            a.download_gb
+                .partial_cmp(&b.download_gb)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
 // ------------------------------------------------------------------ hardware
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -83,7 +98,38 @@ pub struct Hardware {
     pub ram_free_gb: f64,
     pub disk_free_gb: f64,
     pub gpus: Vec<String>,
+    /// NVIDIA cards (the ones CUDA can use), with their memory.
+    pub nvidia: Vec<NvidiaCard>,
+    /// A Vulkan-capable graphics chip, integrated or not.
+    pub vulkan: Option<String>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NvidiaCard {
+    pub name: String,
+    pub vram_gb: f64,
+    pub compute_cap: Option<String>,
+}
+
+/// What `Backend::Auto` will end up using on this computer, for showing in words.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Engine {
+    Cuda(String),
+    Vulkan(String),
+    Cpu,
+}
+
+impl Hardware {
+    pub fn auto_engine(&self) -> Engine {
+        if let Some(c) = self.nvidia.first() {
+            Engine::Cuda(c.name.clone())
+        } else if let Some(v) = &self.vulkan {
+            Engine::Vulkan(v.clone())
+        } else {
+            Engine::Cpu
+        }
+    }
 }
 
 impl Hardware {
@@ -113,6 +159,34 @@ impl Hardware {
                 }
             }
         }
+        let nvidia = v
+            .pointer("/gpu/nvidia")
+            .and_then(Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(|g| {
+                        Some(NvidiaCard {
+                            name: g.get("name")?.as_str()?.to_string(),
+                            vram_gb: g.get("total_bytes").and_then(Value::as_f64).unwrap_or(0.0)
+                                / GB,
+                            compute_cap: g
+                                .get("compute_cap")
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let vulkan = v
+            .pointer("/gpu/vulkan")
+            .filter(|x| x.is_object())
+            .and_then(|vk| {
+                ["name", "device_name", "deviceName"]
+                    .iter()
+                    .find_map(|k| vk.get(*k).and_then(Value::as_str))
+            })
+            .map(str::to_string);
         let warnings = v
             .pointer("/disk/warnings")
             .and_then(Value::as_array)
@@ -133,6 +207,8 @@ impl Hardware {
             ram_free_gb: num("memory.available") / GB,
             disk_free_gb: num("disk.free_bytes") / GB,
             gpus,
+            nvidia,
+            vulkan,
             warnings,
         })
     }
@@ -328,6 +404,7 @@ impl Coli {
         &self,
         model_id: &str,
         models_dir: Option<&Path>,
+        backend: Option<&str>,
         log: &Path,
     ) -> io::Result<Child> {
         if let Some(dir) = log.parent() {
@@ -345,6 +422,9 @@ impl Coli {
         ]);
         if let Some(d) = models_dir {
             c.arg("--dir").arg(d);
+        }
+        if let Some(b) = backend {
+            c.arg("--backend").arg(b);
         }
         c.stdin(Stdio::null()).stdout(out).stderr(err);
         hide_window(&mut c);
@@ -451,9 +531,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hw.cores, 4);
+        assert_eq!(hw.nvidia[0].compute_cap.as_deref(), Some("8.6"));
         assert!((hw.ram_total_gb - 8.41).abs() < 0.01);
         assert_eq!(hw.gpus, vec!["RTX 3070"]);
         assert_eq!(hw.warnings, vec!["slow disk"]);
+    }
+
+    #[test]
+    fn engine_follows_the_best_hardware_and_strongest_model_fits() {
+        let hw = Hardware::from_json(
+            r#"{"gpu":{"vulkan":{"name":"Intel UHD"},"nvidia":[{"name":"RTX 4090","total_bytes":25757220000,"compute_cap":"8.9"}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(hw.auto_engine(), Engine::Cuda("RTX 4090".into()));
+        assert!((hw.nvidia[0].vram_gb - 25.76).abs() < 0.01);
+        let igpu =
+            Hardware::from_json(r#"{"gpu":{"vulkan":{"name":"Intel UHD"},"nvidia":[]}}"#).unwrap();
+        assert_eq!(igpu.auto_engine(), Engine::Vulkan("Intel UHD".into()));
+        assert_eq!(Hardware::default().auto_engine(), Engine::Cpu);
+
+        let m = |id: &str, gb: f64, fits: bool, kind: &str| ModelInfo {
+            id: id.into(),
+            download_gb: gb,
+            fits,
+            kind: kind.into(),
+            ..Default::default()
+        };
+        let list = vec![
+            m("small", 20.0, true, "text"),
+            m("huge", 400.0, false, "text"),
+            m("big", 85.0, true, "text"),
+            m("pic", 300.0, true, "image"),
+        ];
+        assert_eq!(strongest_that_fits(&list).unwrap().id, "big");
+        assert!(strongest_that_fits(&list[1..2]).is_none());
     }
 
     #[test]
