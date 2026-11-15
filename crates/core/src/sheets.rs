@@ -44,8 +44,22 @@ pub enum Know {
     Unstated,
 }
 
+/// What a model can take in, according to the people who made it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Input {
+    Text,
+    Image,
+    Video,
+    Audio,
+}
+
 #[derive(Clone, Debug)]
 pub struct Sheet {
+    /// From the model's maker (model card or docs); colibri may use only part of it.
+    pub maker_inputs: &'static [Input],
+    pub maker_context: Option<&'static str>,
+    pub maker_license: Option<&'static str>,
+    pub maker_active: Option<&'static str>,
     pub id: &'static str,
     pub name: &'static str,
     pub params: &'static str,
@@ -93,6 +107,10 @@ const fn s(
     caps: &'static [(Cap, Know)],
 ) -> Sheet {
     Sheet {
+        maker_inputs: &[],
+        maker_context: None,
+        maker_license: None,
+        maker_active: None,
         id,
         name,
         params,
@@ -232,6 +250,10 @@ pub fn all() -> Vec<Sheet> {
                    gpus: &'static [Gpu],
                    caps: &'static [(Cap, Know)],
                    lic: Option<&'static str>| Sheet {
+        maker_inputs: &[],
+        maker_context: None,
+        maker_license: None,
+        maker_active: None,
         id: "",
         name,
         params,
@@ -343,7 +365,82 @@ pub fn all() -> Vec<Sheet> {
         &[(Decisions, Yes), (Chat, Yes)],
         None,
     ));
+    for sh in &mut v {
+        apply_maker(sh);
+    }
     v
+}
+
+const T: &[Input] = &[Input::Text];
+const TI: &[Input] = &[Input::Text, Input::Image];
+const TIV: &[Input] = &[Input::Text, Input::Image, Input::Video];
+const TIVA: &[Input] = &[Input::Text, Input::Image, Input::Video, Input::Audio];
+const TIA: &[Input] = &[Input::Text, Input::Image, Input::Audio];
+
+type Maker = (
+    &'static [Input],
+    Option<&'static str>,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
+/// Facts from each model's own card or docs (checked online in November 2026). Where sources
+/// disagreed, the field is left empty rather than picked.
+fn apply_maker(sh: &mut Sheet) {
+    let _ = TI;
+    let m: Maker = match sh.id {
+        "qwen36-35b" => (
+            TIV,
+            Some("262,144 (up to ~1M with YaRN)"),
+            Some("Apache 2.0"),
+            Some("3B"),
+        ),
+        "qwen3-coder-30b" => (
+            T,
+            Some("262,144 (up to 1M with YaRN)"),
+            Some("Apache 2.0"),
+            Some("3.3B"),
+        ),
+        "qwen-image-2.1" => (
+            T,
+            None,
+            Some("Qwen Research License (non-commercial)"),
+            None,
+        ),
+        "deepseek-v4-flash" => (T, Some("1,048,576"), Some("MIT"), Some("13B")),
+        "mimo-v2.6-flash" => (TIVA, Some("1,048,576"), Some("MIT"), Some("15B")),
+        "mimo-v2.6-pro" => (TIVA, Some("1,048,576"), Some("MIT"), Some("42B")),
+        "qwen38-flash-next" => (
+            TIV,
+            Some("262,144 (up to 1M with YaRN)"),
+            Some("Qwen Community License 1.0"),
+            Some("6B"),
+        ),
+        "glm-5.3" => (
+            T,
+            Some("1,048,576"),
+            Some("GLM-5.3 License (MIT-like, extra clause for very large hosting services)"),
+            None,
+        ),
+        "inkling" => (
+            TIA,
+            Some("up to 1,000,000"),
+            Some("Apache 2.0"),
+            Some("41B"),
+        ),
+        "kimi-k3" => (
+            TIV,
+            Some("1,048,576"),
+            Some("Kimi K3 License (MIT-style, revenue and user-count clauses)"),
+            Some("104B"),
+        ),
+        _ if sh.name == "GLM-5.3-Flash" => (TIV, None, Some("MIT"), Some("18B")),
+        _ => (&[], None, None, None),
+    };
+    sh.maker_inputs = m.0;
+    sh.maker_context = m.1;
+    sh.maker_license = m.2;
+    sh.maker_active = m.3;
 }
 
 pub fn by_id(id: &str) -> Option<Sheet> {
@@ -441,5 +538,21 @@ mod tests {
         assert_eq!(by_id("inkling").unwrap().know(Cap::Tools), Know::No);
         assert_eq!(by_id("glm-5.2").unwrap().know(Cap::Vision), Know::Unstated);
         assert!(by_id("").is_none());
+    }
+
+    #[test]
+    fn maker_facts_are_attached_and_differ_from_what_colibri_states() {
+        let q = by_id("qwen36-35b").unwrap();
+        assert!(q.maker_inputs.contains(&Input::Image));
+        assert_eq!(q.know(Cap::Vision), Know::Unstated); // colibri doesn't list it
+        assert!(by_id("deepseek-v4-flash").unwrap().maker_inputs == [Input::Text]);
+        assert!(
+            by_id("inkling")
+                .unwrap()
+                .maker_inputs
+                .contains(&Input::Audio)
+        );
+        assert_eq!(by_id("inkling").unwrap().know(Cap::Tools), Know::No);
+        assert!(by_id("glm-5.2").unwrap().maker_inputs.is_empty());
     }
 }

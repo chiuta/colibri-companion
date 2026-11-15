@@ -50,7 +50,7 @@ use std::process::Command;
 use std::time::Duration;
 
 /// Text sent to the model is cut here (about 50k tokens), with a note, rather than refused.
-pub const MAX_CHARS: usize = 200_000;
+pub const MAX_CHARS: usize = 3_000_000;
 /// Pictures larger than this are refused: they would only slow every later message down.
 pub const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 /// Office and PDF files are unpacked by a helper; bigger than this is not tried.
@@ -326,7 +326,7 @@ pub fn extract_text(python: Option<&PythonCmd>, path: &Path) -> Result<Extracted
     let kind = kind_of(path);
     let big = match kind {
         Kind::Pdf | Kind::Office => MAX_DOC_BYTES,
-        _ => 8 * 1024 * 1024,
+        _ => 64 * 1024 * 1024,
     };
     if meta.len() > big {
         return Err(AttachError::TooLarge);
@@ -354,6 +354,123 @@ pub fn extract_text(python: Option<&PythonCmd>, path: &Path) -> Result<Extracted
         return Err(AttachError::Failed("no text found in the file".into()));
     }
     Ok(limit(text))
+}
+
+// ------------------------------------------------------------------ folders and big files
+
+/// Folders that only hold generated or foreign files.
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".cache",
+    ".idea",
+    ".vscode",
+];
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Collected {
+    pub files: Vec<std::path::PathBuf>,
+    /// Hidden files and folders and well-known junk folders that were left out.
+    pub skipped: usize,
+    /// Stopped at the limit: there were more files.
+    pub too_many: bool,
+}
+
+/// The files behind a list of dropped paths: files as they are, folders walked recursively
+/// (sorted, hidden and junk skipped, symbolic links never followed), at most `max` files.
+pub fn collect(roots: &[std::path::PathBuf], max: usize) -> Collected {
+    let mut out = Collected::default();
+    fn walk(dir: &Path, max: usize, out: &mut Collected, depth: usize) {
+        let Ok(rd) = fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            if out.too_many {
+                return;
+            }
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Ok(ft) = e.file_type() else {
+                continue;
+            };
+            if ft.is_symlink() || name.starts_with('.') {
+                out.skipped += 1;
+                continue;
+            }
+            let path = e.path();
+            if ft.is_dir() {
+                if SKIP_DIRS.contains(&name.as_str()) || depth >= 12 {
+                    out.skipped += 1;
+                } else {
+                    walk(&path, max, out, depth + 1);
+                }
+            } else if ft.is_file() {
+                if out.files.len() >= max {
+                    out.too_many = true;
+                    return;
+                }
+                out.files.push(path);
+            }
+        }
+    }
+    for r in roots {
+        if out.too_many {
+            break;
+        }
+        match fs::symlink_metadata(r) {
+            Ok(m) if m.is_dir() => walk(r, max, &mut out, 0),
+            Ok(m) if m.is_file() => {
+                if out.files.len() >= max {
+                    out.too_many = true;
+                } else {
+                    out.files.push(r.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Cuts `text` into pieces of at most `max_chars`, at line breaks where possible, so a big
+/// file can be sent over several messages.
+pub fn split_chunks(text: &str, max_chars: usize) -> Vec<String> {
+    let max_chars = max_chars.max(1000);
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut cur_chars = 0usize;
+    for line in text.split_inclusive('\n') {
+        let n = line.chars().count();
+        if n > max_chars {
+            // one enormous line: hard cut
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+                cur_chars = 0;
+            }
+            let chars: Vec<char> = line.chars().collect();
+            for part in chars.chunks(max_chars) {
+                out.push(part.iter().collect());
+            }
+            continue;
+        }
+        if cur_chars + n > max_chars && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+            cur_chars = 0;
+        }
+        cur.push_str(line);
+        cur_chars += n;
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -496,5 +613,57 @@ z.close()
             extract_text(None, &dir.join("a.docx")).unwrap_err(),
             AttachError::NeedsTool("Python")
         );
+    }
+
+    #[test]
+    fn folders_are_walked_and_junk_skipped() {
+        let dir = std::env::temp_dir().join(format!("cc-collect-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        for d in ["a", "a/b", ".git", "node_modules", "z"] {
+            fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        for f in [
+            "a/1.txt",
+            "a/b/2.md",
+            "z/3.pdf",
+            ".git/x",
+            "node_modules/y.js",
+            ".hidden",
+            "top.csv",
+        ] {
+            fs::write(dir.join(f), b"x").unwrap();
+        }
+        let c = collect(std::slice::from_ref(&dir), 100);
+        let names: Vec<String> = c
+            .files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(names, ["a/1.txt", "a/b/2.md", "top.csv", "z/3.pdf"]);
+        assert!(c.skipped >= 3 && !c.too_many);
+        let few = collect(std::slice::from_ref(&dir), 2);
+        assert!(few.too_many && few.files.len() == 2);
+        let mixed = collect(&[dir.join("top.csv"), dir.join("a")], 10);
+        assert_eq!(mixed.files.len(), 3);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn big_text_is_split_at_lines_and_loses_nothing() {
+        let text: String = (0..500).map(|i| format!("line number {i}\n")).collect();
+        let parts = split_chunks(&text, 1500);
+        assert!(parts.len() > 3);
+        assert!(parts.iter().all(|p| p.chars().count() <= 1500));
+        assert_eq!(parts.concat(), text);
+        let one_line = "x".repeat(4500);
+        let p2 = split_chunks(&one_line, 2000);
+        assert_eq!(p2.concat(), one_line);
+        assert_eq!(p2.len(), 3);
+        assert!(split_chunks("", 2000).is_empty());
     }
 }

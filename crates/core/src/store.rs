@@ -249,6 +249,8 @@ pub struct StoredMessage {
     pub stopped: bool,
     /// Pictures sent with this message, as `data:` URLs.
     pub images: Vec<String>,
+    /// What the person sees in their own bubble when the sent text includes attached files.
+    pub display: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

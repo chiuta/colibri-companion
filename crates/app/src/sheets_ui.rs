@@ -97,6 +97,32 @@ impl CompanionApp {
                 if let Some(l) = sh.license {
                     ui.label(format!("{} {l}", self.t("Licență:", "Licence:")));
                 }
+                if !sh.maker_inputs.is_empty() || sh.maker_context.is_some() || sh.maker_license.is_some() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(self.t("Ce spune producătorul modelului", "What the model's maker says")).semibold());
+                    if !sh.maker_inputs.is_empty() {
+                        let ins: Vec<&str> = sh.maker_inputs.iter().map(|i| match i {
+                            sheets::Input::Text => self.t("text", "text"),
+                            sheets::Input::Image => self.t("imagini", "pictures"),
+                            sheets::Input::Video => self.t("video", "video"),
+                            sheets::Input::Audio => self.t("audio", "audio"),
+                        }).collect();
+                        ui.label(format!("{} {}", self.t("Primește:", "Takes in:"), ins.join(", ")));
+                    }
+                    if let Some(c) = sh.maker_context {
+                        ui.label(format!("{} {c}", self.t("Context maxim (tokeni):", "Maximum context (tokens):")));
+                    }
+                    if let Some(a) = sh.maker_active {
+                        ui.label(format!("{} {a}", self.t("Parametri activi la fiecare cuvânt:", "Parameters active per token:")));
+                    }
+                    if let Some(l) = sh.maker_license {
+                        ui.label(format!("{} {l}", self.t("Licență (producător):", "Licence (maker):")));
+                    }
+                    muted(ui, &p, self.t(
+                        "Atenție: modelul poate mai mult decât folosește colibri acum. Aici contează ce arată bifele de mai sus (din pagina colibri); ce spune producătorul arată doar potențialul. Date căutate online în noiembrie 2026; verifică pe pagina modelului.",
+                        "Note: the model may be able to do more than colibri uses today. What counts here is the ticks above (from the colibri page); the maker's claims show only the potential. Data looked up online in November 2026; check the model's own page.",
+                    ));
+                }
                 ui.add_space(4.0);
                 if ui.button(self.t("Compară cu AI-urile online", "Compare with online AIs")).clicked() {
                     self.sheets.compare = true;

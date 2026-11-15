@@ -4394,6 +4394,95 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Modellek összehasonlítása",
         ],
     ),
+    (
+        "What the model's maker says",
+        [
+            "Ce que dit le créateur du modèle",
+            "Cosa dice il creatore del modello",
+            "Lo que dice el creador del modelo",
+            "O que diz o criador do modelo",
+            "Was der Hersteller des Modells sagt",
+            "Amit a modell készítője állít",
+        ],
+    ),
+    (
+        "text",
+        ["texte", "testo", "texto", "texto", "Text", "szöveg"],
+    ),
+    (
+        "pictures",
+        [
+            "images",
+            "immagini",
+            "imágenes",
+            "imagens",
+            "Bilder",
+            "képek",
+        ],
+    ),
+    (
+        "video",
+        ["vidéo", "video", "vídeo", "vídeo", "Video", "videó"],
+    ),
+    (
+        "audio",
+        ["audio", "audio", "audio", "áudio", "Audio", "hang"],
+    ),
+    (
+        "Takes in:",
+        [
+            "Accepte :",
+            "Accetta:",
+            "Acepta:",
+            "Aceita:",
+            "Nimmt auf:",
+            "Fogad:",
+        ],
+    ),
+    (
+        "Maximum context (tokens):",
+        [
+            "Contexte maximal (jetons) :",
+            "Contesto massimo (token):",
+            "Contexto máximo (tokens):",
+            "Contexto máximo (tokens):",
+            "Maximaler Kontext (Token):",
+            "Maximális kontextus (token):",
+        ],
+    ),
+    (
+        "Parameters active per token:",
+        [
+            "Paramètres actifs par jeton :",
+            "Parametri attivi per token:",
+            "Parámetros activos por token:",
+            "Parâmetros ativos por token:",
+            "Aktive Parameter pro Token:",
+            "Aktív paraméterek tokenenként:",
+        ],
+    ),
+    (
+        "Licence (maker):",
+        [
+            "Licence (créateur) :",
+            "Licenza (creatore):",
+            "Licencia (creador):",
+            "Licença (criador):",
+            "Lizenz (Hersteller):",
+            "Licenc (készítő):",
+        ],
+    ),
+    (
+        "Note: the model may be able to do more than colibri uses today. What counts here is the ticks above (from the colibri page); the maker's claims show only the potential. Data looked up online in November 2026; check the model's own page.",
+        [
+            "Remarque : le modèle peut faire plus que ce que colibri utilise aujourd'hui. Ce qui compte ici, ce sont les coches ci-dessus (issues de la page colibri) ; les affirmations du créateur n'indiquent que le potentiel. Données cherchées en ligne en novembre 2026 ; vérifiez la page du modèle.",
+            "Nota: il modello potrebbe fare più di quanto colibri usa oggi. Qui contano le spunte sopra (dalla pagina di colibri); le affermazioni del creatore mostrano solo il potenziale. Dati cercati online a novembre 2026; controlla la pagina del modello.",
+            "Nota: el modelo puede hacer más de lo que colibri usa hoy. Aquí cuentan las marcas de arriba (de la página de colibri); lo que dice el creador solo muestra el potencial. Datos buscados en línea en noviembre de 2026; revisa la página del modelo.",
+            "Nota: o modelo pode fazer mais do que o colibri usa hoje. Aqui contam as marcas acima (da página do colibri); o que diz o criador mostra apenas o potencial. Dados pesquisados online em novembro de 2026; confira a página do modelo.",
+            "Hinweis: Das Modell kann womöglich mehr, als colibri heute nutzt. Hier zählen die Häkchen oben (von der colibri-Seite); die Angaben des Herstellers zeigen nur das Potenzial. Daten im November 2026 online recherchiert; prüfe die Seite des Modells.",
+            "Megjegyzés: a modell többre lehet képes, mint amit a colibri ma használ. Itt a fenti pipák számítanak (a colibri oldaláról); a készítő állításai csak a lehetőséget mutatják. Az adatok 2026 novemberében online keresve; ellenőrizd a modell oldalát.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
