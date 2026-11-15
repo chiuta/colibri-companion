@@ -260,6 +260,7 @@ pub struct CompanionApp {
     pub show_settings: bool,
     pub show_about: bool,
     pub guide: crate::guide_ui::GuideState,
+    pub existing_path: String,
     pub show_models: bool,
     pub show_resources: bool,
     /// The dedicated AI chip, when there is one.
@@ -349,6 +350,7 @@ impl CompanionApp {
             show_settings: false,
             show_about: false,
             guide: Default::default(),
+            existing_path: String::new(),
             show_models: false,
             show_resources: false,
             npu: None,
@@ -669,6 +671,88 @@ impl CompanionApp {
                 }
             },
         );
+    }
+
+    /// A model the person already downloaded: a split GGUF (give the first part) is converted
+    /// with `coli import`, a ready model folder is used as it is; then colibri is set up for it.
+    pub fn use_existing_model(&mut self, path: std::path::PathBuf) {
+        use companion_core::coli::{imported_dir, is_first_gguf, missing_gguf_parts};
+        let Some(coli) = self.coli.clone() else {
+            return;
+        };
+        if self.phase() == Phase::Installing || self.install_spawning {
+            return;
+        }
+        if path.is_file() {
+            if !is_first_gguf(&path) {
+                self.toast(self.t(
+                    "Alege primul fișier (cel cu «-00001-of-…» în nume) sau un fișier .gguf întreg.",
+                    "Pick the first file (the one with “-00001-of-…” in its name) or a single .gguf file.",
+                ));
+                return;
+            }
+            let missing = missing_gguf_parts(&path);
+            if !missing.is_empty() {
+                let m = self
+                    .t(
+                        "Lipsesc din același folder: {}",
+                        "Missing from the same folder: {}",
+                    )
+                    .replacen("{}", &missing.join(", "), 1);
+                self.toast(m);
+                return;
+            }
+        } else if !path.join("config.json").is_file() {
+            self.toast(self.t(
+                "Folderul nu pare un model colibri (lipsește config.json).",
+                "That folder doesn't look like a colibri model (config.json is missing).",
+            ));
+            return;
+        }
+        self.install_spawning = true;
+        self.installing_since = Some(Instant::now());
+        self.install_exit = None;
+        self.install_log.clear();
+        self.show_models = false;
+        self.force_autostart = true;
+        self.auto_started = false;
+        let (backend, log) = (
+            self.s.backend.as_arg(),
+            paths::logs_dir().join("install.log"),
+        );
+        self.spawn(move |tx| {
+            let started = std::time::SystemTime::now() - Duration::from_secs(2);
+            let mut dir = path.clone();
+            if path.is_file() {
+                match coli.spawn_import(&path, &log) {
+                    Ok(mut child) => {
+                        let _ = tx.send(Event::InstallSpawned(Ok(())));
+                        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+                        match imported_dir(&path, started).filter(|_| ok) {
+                            Some(d) => dir = d,
+                            None => {
+                                let _ = tx.send(Event::InstallEnded(Some(1)));
+                                return;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::InstallSpawned(Err(e.to_string())));
+                        return;
+                    }
+                }
+            }
+            match coli.spawn_use_dir(&dir, backend, &log) {
+                Ok(mut child) => {
+                    let _ = tx.send(Event::InstallSpawned(Ok(())));
+                    let code = child.wait().ok().and_then(|s| s.code());
+                    let _ = tx.send(Event::InstallEnded(code));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::InstallSpawned(Err(e.to_string())));
+                }
+            }
+        });
     }
 
     /// Switch to a model that is already on this computer: stop the running one, set colibri up for
@@ -1258,6 +1342,18 @@ impl CompanionApp {
     /// background and their text lands in the message box.
     pub fn attach_files(&mut self, paths: &[std::path::PathBuf]) {
         use companion_core::attach::{self, AttachError, Kind};
+        if let Some(g) = paths.iter().find(|p| {
+            p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("gguf"))
+        }) {
+            self.existing_path = g.display().to_string();
+            self.show_models = true;
+            self.toast(self.t(
+                "Fișier de model găsit. Apasă «Folosește acest model» în fereastra Modele.",
+                "Model file found. Press “Use this model” in the Models window.",
+            ));
+            return;
+        }
         for path in paths {
             let name = path
                 .file_name()

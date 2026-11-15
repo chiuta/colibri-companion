@@ -3844,6 +3844,94 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A már letöltött modellek ott maradnak, ahol vannak, és továbbra is látszanak a listában. Ha az «Az alkalmazás mellett» lehetőséget választod, a több tíz GB-os modell azt a lemezt foglalja, ahová az alkalmazás telepítve van.",
         ],
     ),
+    (
+        "Pick the first file (the one with “-00001-of-…” in its name) or a single .gguf file.",
+        [
+            "Choisissez le premier fichier (celui avec « -00001-of-… » dans son nom) ou un fichier .gguf unique.",
+            "Scegli il primo file (quello con «-00001-of-…» nel nome) oppure un singolo file .gguf.",
+            "Elige el primer archivo (el que lleva «-00001-of-…» en el nombre) o un único archivo .gguf.",
+            "Escolha o primeiro ficheiro (o que tem «-00001-of-…» no nome) ou um único ficheiro .gguf.",
+            "Wählen Sie die erste Datei (die mit «-00001-of-…» im Namen) oder eine einzelne .gguf-Datei.",
+            "Válaszd az első fájlt (amelynek a nevében «-00001-of-…» szerepel) vagy egyetlen .gguf fájlt.",
+        ],
+    ),
+    (
+        "Missing from the same folder: {}",
+        [
+            "Absents du même dossier : {}",
+            "Mancanti nella stessa cartella: {}",
+            "Faltan en la misma carpeta: {}",
+            "Em falta na mesma pasta: {}",
+            "Fehlen im selben Ordner: {}",
+            "Hiányzik ugyanabból a mappából: {}",
+        ],
+    ),
+    (
+        "That folder doesn't look like a colibri model (config.json is missing).",
+        [
+            "Ce dossier ne ressemble pas à un modèle colibri (config.json est introuvable).",
+            "Questa cartella non sembra un modello colibri (manca config.json).",
+            "Esa carpeta no parece un modelo colibri (falta config.json).",
+            "Esta pasta não parece um modelo colibri (falta o config.json).",
+            "Dieser Ordner sieht nicht wie ein colibri-Modell aus (config.json fehlt).",
+            "Ez a mappa nem tűnik colibri modellnek (hiányzik a config.json).",
+        ],
+    ),
+    (
+        "Model file found. Press “Use this model” in the Models window.",
+        [
+            "Fichier de modèle trouvé. Appuyez sur « Utiliser ce modèle » dans la fenêtre Modèles.",
+            "File del modello trovato. Premi «Usa questo modello» nella finestra Modelli.",
+            "Archivo de modelo encontrado. Pulsa «Usar este modelo» en la ventana Modelos.",
+            "Ficheiro de modelo encontrado. Prima «Usar este modelo» na janela Modelos.",
+            "Modelldatei gefunden. Drücken Sie im Fenster Modelle auf «Dieses Modell verwenden».",
+            "Modellfájl megtalálva. Nyomd meg a «Modell használata» gombot a Modellek ablakban.",
+        ],
+    ),
+    (
+        "I already have a model downloaded",
+        [
+            "J'ai déjà un modèle téléchargé",
+            "Ho già un modello scaricato",
+            "Ya tengo un modelo descargado",
+            "Já tenho um modelo descarregado",
+            "Ich habe bereits ein Modell heruntergeladen",
+            "Már van letöltött modellem",
+        ],
+    ),
+    (
+        "If you have .gguf files (for example “…-00001-of-00008.gguf”), pick the first file; the other parts must be in the same folder. colibri converts them into a model folder beside them (this can take a while and needs extra space), then I start it. You can also pick a ready-made colibri model folder.",
+        [
+            "Si vous avez des fichiers .gguf (par exemple « …-00001-of-00008.gguf »), choisissez le premier ; les autres parties doivent être dans le même dossier. colibri les convertit en un dossier de modèle à côté (cela peut prendre du temps et demande de la place en plus), puis je le démarre. Vous pouvez aussi choisir un dossier de modèle colibri déjà prêt.",
+            "Se hai file .gguf (ad esempio «…-00001-of-00008.gguf»), scegli il primo; le altre parti devono stare nella stessa cartella. colibri li converte in una cartella di modello accanto (può richiedere tempo e spazio extra), poi lo avvio. Puoi anche scegliere una cartella di modello colibri già pronta.",
+            "Si tienes archivos .gguf (por ejemplo «…-00001-of-00008.gguf»), elige el primero; las demás partes deben estar en la misma carpeta. colibri los convierte en una carpeta de modelo a su lado (puede tardar y necesita espacio extra) y luego lo arranco. También puedes elegir una carpeta de modelo colibri ya preparada.",
+            "Se tem ficheiros .gguf (por exemplo «…-00001-of-00008.gguf»), escolha o primeiro; as outras partes têm de estar na mesma pasta. O colibri converte-os numa pasta de modelo ao lado (pode demorar e precisa de espaço extra) e depois arranco-o. Também pode escolher uma pasta de modelo colibri já pronta.",
+            "Wenn Sie .gguf-Dateien haben (zum Beispiel «…-00001-of-00008.gguf»), wählen Sie die erste; die übrigen Teile müssen im selben Ordner liegen. colibri wandelt sie in einen Modellordner daneben um (das kann dauern und braucht zusätzlichen Platz), danach starte ich es. Sie können auch einen fertigen colibri-Modellordner wählen.",
+            "Ha vannak .gguf fájljaid (például «…-00001-of-00008.gguf»), válaszd ki az elsőt; a többi résznek ugyanabban a mappában kell lennie. A colibri mellé egy modellmappává alakítja őket (ez sokáig tarthat és plusz helyet igényel), aztán elindítom. Választhatsz kész colibri modellmappát is.",
+        ],
+    ),
+    (
+        "Path of the first .gguf file or of the folder",
+        [
+            "Chemin du premier fichier .gguf ou du dossier",
+            "Percorso del primo file .gguf o della cartella",
+            "Ruta del primer archivo .gguf o de la carpeta",
+            "Caminho do primeiro ficheiro .gguf ou da pasta",
+            "Pfad der ersten .gguf-Datei oder des Ordners",
+            "Az első .gguf fájl vagy a mappa útvonala",
+        ],
+    ),
+    (
+        "You can also drag the file onto the app window.",
+        [
+            "Vous pouvez aussi glisser le fichier sur la fenêtre de l'application.",
+            "Puoi anche trascinare il file sulla finestra dell'app.",
+            "También puedes arrastrar el archivo a la ventana de la aplicación.",
+            "Também pode arrastar o ficheiro para a janela da aplicação.",
+            "Sie können die Datei auch auf das App-Fenster ziehen.",
+            "A fájlt az alkalmazás ablakára is ráhúzhatod.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

@@ -39,6 +39,46 @@ impl CompanionApp {
             "You can keep several models on this computer and switch between them any time. Only one runs at a time, so memory isn't overloaded.",
         ));
         ui.add_space(6.0);
+        egui::CollapsingHeader::new(
+            RichText::new(self.t("Am deja un model descărcat", "I already have a model downloaded"))
+                .semibold(),
+        )
+        .show(ui, |ui| {
+            muted(
+                ui,
+                &p,
+                self.t(
+                    "Dacă ai fișiere .gguf (de ex. «…-00001-of-00008.gguf»), alege primul fișier; celelalte părți trebuie să fie în același folder. colibri le convertește într-un folder de model lângă ele (poate dura și ocupă loc în plus), apoi îl pornesc. Poți alege și un folder de model colibri deja gata.",
+                    "If you have .gguf files (for example “…-00001-of-00008.gguf”), pick the first file; the other parts must be in the same folder. colibri converts them into a model folder beside them (this can take a while and needs extra space), then I start it. You can also pick a ready-made colibri model folder.",
+                ),
+            );
+            let hint = self.t(
+                "Calea primului fișier .gguf sau a folderului",
+                "Path of the first .gguf file or of the folder",
+            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.existing_path)
+                        .desired_width(340.0)
+                        .hint_text(hint),
+                );
+                ui.add_enabled_ui(!busy && !self.existing_path.trim().is_empty(), |ui| {
+                    if ui.button(self.t("Folosește acest model", "Use this model")).clicked() {
+                        let path = self.existing_path.trim().trim_matches('"').into();
+                        self.use_existing_model(path);
+                    }
+                });
+            });
+            muted(
+                ui,
+                &p,
+                self.t(
+                    "Poți și să tragi fișierul în fereastra aplicației.",
+                    "You can also drag the file onto the app window.",
+                ),
+            );
+        });
+        ui.add_space(6.0);
         if busy {
             tinted(ui, p.warn_soft, p.warn, |ui| {
                 ui.label(

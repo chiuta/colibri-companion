@@ -455,6 +455,51 @@ impl Coli {
         interrupt_pid(pid)
     }
 
+    /// `coli import FIRST.gguf`: converts a GGUF you already have (other parts beside it) into a
+    /// model folder written next to it. Output goes to `log`; the child is returned to wait on.
+    pub fn spawn_import(&self, first_gguf: &Path, log: &Path) -> io::Result<Child> {
+        if let Some(dir) = log.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let out = fs::File::create(log)?;
+        let err = out.try_clone()?;
+        let mut c = self.coli_cmd(&["import"]);
+        c.arg(first_gguf)
+            .stdin(Stdio::null())
+            .stdout(out)
+            .stderr(err);
+        hide_window(&mut c);
+        c.spawn()
+    }
+
+    /// `coli setup --model-dir DIR`: use a model folder that is already on this computer.
+    pub fn spawn_use_dir(
+        &self,
+        model_dir: &Path,
+        backend: Option<&str>,
+        log: &Path,
+    ) -> io::Result<Child> {
+        if let Some(dir) = log.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let out = fs::OpenOptions::new().create(true).append(true).open(log)?;
+        let err = out.try_clone()?;
+        let mut c = self.coli_cmd(&[
+            "setup",
+            "--yes",
+            "--no-start",
+            "--no-browser",
+            "--model-dir",
+        ]);
+        c.arg(model_dir);
+        if let Some(b) = backend {
+            c.arg("--backend").arg(b);
+        }
+        c.stdin(Stdio::null()).stdout(out).stderr(err);
+        hide_window(&mut c);
+        c.spawn()
+    }
+
     pub fn start_server(&self) -> Result<String, String> {
         self.run(
             &["start", "--background", "--no-browser"],
@@ -479,6 +524,62 @@ impl Coli {
 pub fn last_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// Is this the first part of a split GGUF (`name-00001-of-0000N.gguf`), or a lone `.gguf`?
+pub fn is_first_gguf(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if !name.ends_with(".gguf") {
+        return false;
+    }
+    match name.find("-of-") {
+        Some(i) => name[..i].ends_with("-00001"),
+        None => true,
+    }
+}
+
+/// Every part listed by a split GGUF's first file name that is missing beside it.
+pub fn missing_gguf_parts(first: &Path) -> Vec<String> {
+    let name = first
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let Some(i) = name.find("-of-") else {
+        return Vec::new();
+    };
+    let (head, tail) = (&name[..i], &name[i + 4..]);
+    let Some(stem) = head.strip_suffix("-00001") else {
+        return Vec::new();
+    };
+    let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    let Ok(total) = digits.parse::<u32>() else {
+        return Vec::new();
+    };
+    let rest = &tail[digits.len()..];
+    let dir = first.parent().unwrap_or(Path::new("."));
+    (1..=total)
+        .map(|n| format!("{stem}-{n:05}-of-{digits}{rest}"))
+        .filter(|f| !dir.join(f).is_file())
+        .collect()
+}
+
+/// The model folder `coli import` wrote beside the GGUF: the newest folder there that holds a
+/// `config.json`, changed since `after`.
+pub fn imported_dir(first: &Path, after: std::time::SystemTime) -> Option<PathBuf> {
+    let parent = first.parent()?;
+    fs::read_dir(parent)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().join("config.json").is_file())
+        .filter_map(|e| {
+            let t = e.metadata().ok()?.modified().ok()?;
+            (t >= after).then_some((t, e.path()))
+        })
+        .max_by_key(|(t, _)| *t)
+        .map(|(_, p)| p)
 }
 
 #[cfg(test)]
@@ -592,5 +693,34 @@ mod tests {
             Some("sudo apt install libvulkan-dev glslc")
         );
         assert_eq!(find_package_hint("nothing"), None);
+    }
+
+    #[test]
+    fn split_gguf_parts_are_checked() {
+        assert!(is_first_gguf(Path::new(
+            "GLM-5.3-Flash-Q8_0-00001-of-00008.gguf"
+        )));
+        assert!(!is_first_gguf(Path::new(
+            "GLM-5.3-Flash-Q8_0-00002-of-00008.gguf"
+        )));
+        assert!(is_first_gguf(Path::new("Flint-UD-Q4_K_XL.gguf")));
+        assert!(!is_first_gguf(Path::new("model.safetensors")));
+        let dir = std::env::temp_dir().join(format!("cc-gguf-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for n in [1, 2, 3, 5] {
+            fs::write(dir.join(format!("M-Q8_0-{n:05}-of-00005.gguf")), b"x").unwrap();
+        }
+        let first = dir.join("M-Q8_0-00001-of-00005.gguf");
+        assert_eq!(
+            missing_gguf_parts(&first),
+            vec!["M-Q8_0-00004-of-00005.gguf"]
+        );
+        let before = std::time::SystemTime::now() - Duration::from_secs(5);
+        assert!(imported_dir(&first, before).is_none());
+        fs::create_dir_all(dir.join("M.colibri")).unwrap();
+        fs::write(dir.join("M.colibri/config.json"), b"{}").unwrap();
+        assert_eq!(imported_dir(&first, before), Some(dir.join("M.colibri")));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
