@@ -33,6 +33,15 @@ impl CompanionApp {
                         if ui.button(self.t("Resurse", "Resources")).clicked() {
                             self.set_resources_open(true);
                         }
+                        if ui.button(self.t("Legal", "Legal")).clicked() {
+                            self.guide.legal = true;
+                        }
+                        if ui.button(self.t("Sfaturi", "Tips")).clicked() {
+                            self.guide.tips = true;
+                        }
+                        if ui.button(self.t("Explorează", "Explore")).clicked() {
+                            self.guide.explore = true;
+                        }
                         if ui.button(self.t("Despre", "About")).clicked() {
                             self.show_about = true;
                         }
@@ -174,6 +183,7 @@ impl CompanionApp {
         self.settings_window(ctx);
         self.models_window(ctx);
         self.resources_window(ctx);
+        self.guide_windows(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);
     }

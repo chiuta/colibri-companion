@@ -3312,6 +3312,461 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Az imént ellenőrizve: {} folyamat (az alkalmazás és a colibri motor), {} nyitott socket.",
         ],
     ),
+    (
+        "Legal",
+        [
+            "Mentions légales",
+            "Note legali",
+            "Legal",
+            "Legal",
+            "Rechtliches",
+            "Jogi tudnivalók",
+        ],
+    ),
+    (
+        "Tips",
+        [
+            "Conseils", "Consigli", "Consejos", "Dicas", "Tipps", "Tippek",
+        ],
+    ),
+    (
+        "Explore",
+        [
+            "Explorer",
+            "Esplora",
+            "Explorar",
+            "Explorar",
+            "Entdecken",
+            "Felfedezés",
+        ],
+    ),
+    (
+        "Bold",
+        [
+            "Gras",
+            "Grassetto",
+            "Negrita",
+            "Negrito",
+            "Fett",
+            "Félkövér",
+        ],
+    ),
+    (
+        "Italic",
+        [
+            "Italique", "Corsivo", "Cursiva", "Itálico", "Kursiv", "Dőlt",
+        ],
+    ),
+    (
+        "Superscript",
+        [
+            "Exposant",
+            "Apice",
+            "Superíndice",
+            "Expoente",
+            "Hochgestellt",
+            "Felső index",
+        ],
+    ),
+    (
+        "Subscript",
+        [
+            "Indice",
+            "Pedice",
+            "Subíndice",
+            "Índice inferior",
+            "Tiefgestellt",
+            "Alsó index",
+        ],
+    ),
+    (
+        "Inline code",
+        [
+            "Code en ligne",
+            "Codice in linea",
+            "Código en línea",
+            "Código em linha",
+            "Inline-Code",
+            "Soron belüli kód",
+        ],
+    ),
+    (
+        "Code block",
+        [
+            "Bloc de code",
+            "Blocco di codice",
+            "Bloque de código",
+            "Bloco de código",
+            "Codeblock",
+            "Kódblokk",
+        ],
+    ),
+    (
+        "Heading 1",
+        [
+            "Titre 1",
+            "Titolo 1",
+            "Título 1",
+            "Título 1",
+            "Überschrift 1",
+            "1. címsor",
+        ],
+    ),
+    (
+        "Heading 2",
+        [
+            "Titre 2",
+            "Titolo 2",
+            "Título 2",
+            "Título 2",
+            "Überschrift 2",
+            "2. címsor",
+        ],
+    ),
+    (
+        "Heading 3",
+        [
+            "Titre 3",
+            "Titolo 3",
+            "Título 3",
+            "Título 3",
+            "Überschrift 3",
+            "3. címsor",
+        ],
+    ),
+    (
+        "Bulleted list",
+        [
+            "Liste à puces",
+            "Elenco puntato",
+            "Lista con viñetas",
+            "Lista com marcadores",
+            "Aufzählung",
+            "Felsorolás",
+        ],
+    ),
+    (
+        "Numbered list",
+        [
+            "Liste numérotée",
+            "Elenco numerato",
+            "Lista numerada",
+            "Lista numerada",
+            "Nummerierte Liste",
+            "Számozott lista",
+        ],
+    ),
+    (
+        "Checkbox list",
+        [
+            "Liste à cocher",
+            "Elenco con caselle",
+            "Lista de casillas",
+            "Lista de verificação",
+            "Checkliste",
+            "Jelölőnégyzetes lista",
+        ],
+    ),
+    (
+        "Quote",
+        [
+            "Citation",
+            "Citazione",
+            "Cita",
+            "Citação",
+            "Zitat",
+            "Idézet",
+        ],
+    ),
+    (
+        "Dash line",
+        [
+            "Ligne de séparation",
+            "Linea di separazione",
+            "Línea separadora",
+            "Linha separadora",
+            "Trennlinie",
+            "Elválasztó vonal",
+        ],
+    ),
+    (
+        "Link",
+        [
+            "Lien",
+            "Collegamento",
+            "Enlace",
+            "Ligação",
+            "Link",
+            "Hivatkozás",
+        ],
+    ),
+    (
+        "Table",
+        [
+            "Tableau",
+            "Tabella",
+            "Tabla",
+            "Tabela",
+            "Tabelle",
+            "Táblázat",
+        ],
+    ),
+    (
+        "Math",
+        [
+            "Formule mathématique",
+            "Formula matematica",
+            "Fórmula matemática",
+            "Fórmula matemática",
+            "Mathe-Formel",
+            "Matematikai képlet",
+        ],
+    ),
+    (
+        "Emoji",
+        ["Émoji", "Emoji", "Emoji", "Emoji", "Emoji", "Emoji"],
+    ),
+    (
+        "File",
+        ["Fichier", "File", "Archivo", "Ficheiro", "Datei", "Fájl"],
+    ),
+    (
+        "Table size:",
+        [
+            "Taille du tableau :",
+            "Dimensione tabella:",
+            "Tamaño de la tabla:",
+            "Tamanho da tabela:",
+            "Tabellengröße:",
+            "Táblázat mérete:",
+        ],
+    ),
+    (
+        "Drop a file on the window, or type its path:",
+        [
+            "Déposez un fichier sur la fenêtre ou saisissez son chemin :",
+            "Trascina un file sulla finestra o scrivi il suo percorso:",
+            "Suelta un archivo en la ventana o escribe su ruta:",
+            "Largue um ficheiro na janela ou escreva o seu caminho:",
+            "Ziehen Sie eine Datei auf das Fenster oder geben Sie ihren Pfad ein:",
+            "Húzz egy fájlt az ablakra, vagy írd be az útvonalát:",
+        ],
+    ),
+    (
+        "Add",
+        [
+            "Ajouter",
+            "Aggiungi",
+            "Añadir",
+            "Adicionar",
+            "Hinzufügen",
+            "Hozzáadás",
+        ],
+    ),
+    (
+        "AI models can make mistakes. For medical, legal or financial matters, ask a specialist.",
+        [
+            "Les modèles d'IA peuvent se tromper. Pour les questions médicales, juridiques ou financières, consultez un spécialiste.",
+            "I modelli di IA possono sbagliare. Per questioni mediche, legali o finanziarie, rivolgiti a uno specialista.",
+            "Los modelos de IA pueden equivocarse. Para temas médicos, legales o financieros, consulta a un especialista.",
+            "Os modelos de IA podem errar. Em assuntos médicos, jurídicos ou financeiros, consulte um especialista.",
+            "KI-Modelle können Fehler machen. Bei medizinischen, rechtlichen oder finanziellen Fragen fragen Sie eine Fachperson.",
+            "Az MI-modellek tévedhetnek. Orvosi, jogi vagy pénzügyi kérdésekben fordulj szakemberhez.",
+        ],
+    ),
+    (
+        "Other free programs that run AI on your own computer, like colibri. They open in your browser only when you click. Check each site yourself; this is not a complete catalogue.",
+        [
+            "D'autres programmes gratuits qui font tourner l'IA sur votre ordinateur, comme colibri. Ils s'ouvrent dans votre navigateur seulement si vous cliquez. Vérifiez chaque site vous-même ; ce n'est pas un catalogue complet.",
+            "Altri programmi gratuiti che eseguono l'IA sul tuo computer, come colibri. Si aprono nel browser solo quando fai clic. Controlla tu stesso ogni sito; non è un catalogo completo.",
+            "Otros programas gratuitos que ejecutan IA en tu propio ordenador, como colibri. Se abren en el navegador solo cuando haces clic. Revisa cada sitio tú mismo; no es un catálogo completo.",
+            "Outros programas gratuitos que executam IA no seu próprio computador, como o colibri. Só abrem no navegador quando clica. Verifique cada site por si; não é um catálogo completo.",
+            "Weitere kostenlose Programme, die KI auf Ihrem eigenen Computer ausführen, wie colibri. Sie öffnen sich im Browser nur auf Klick. Prüfen Sie jede Seite selbst; dies ist kein vollständiger Katalog.",
+            "További ingyenes programok, amelyek a saját gépeden futtatnak MI-t, mint a colibri. Csak kattintásra nyílnak meg a böngészőben. Ellenőrizd magad az oldalakat; ez nem teljes katalógus.",
+        ],
+    ),
+    (
+        "Shortcuts",
+        [
+            "Raccourcis",
+            "Scorciatoie",
+            "Atajos",
+            "Atalhos",
+            "Tastenkürzel",
+            "Gyorsbillentyűk",
+        ],
+    ),
+    (
+        "Privacy and terms",
+        [
+            "Confidentialité et conditions",
+            "Privacy e condizioni",
+            "Privacidad y condiciones",
+            "Privacidade e condições",
+            "Datenschutz und Bedingungen",
+            "Adatvédelem és feltételek",
+        ],
+    ),
+    (
+        "Be specific: say what you want, for whom, and in what form.",
+        [
+            "Soyez précis : dites ce que vous voulez, pour qui et sous quelle forme.",
+            "Sii preciso: di' cosa vuoi, per chi e in quale forma.",
+            "Sé específico: di qué quieres, para quién y en qué forma.",
+            "Seja específico: diga o que quer, para quem e em que formato.",
+            "Seien Sie konkret: sagen Sie, was Sie wollen, für wen und in welcher Form.",
+            "Légy pontos: mondd meg, mit szeretnél, kinek és milyen formában.",
+        ],
+    ),
+    (
+        "Ask for rewrites: “shorter”, “simpler”, “warmer”.",
+        [
+            "Demandez des reformulations : « plus court », « plus simple », « plus chaleureux ».",
+            "Chiedi riscritture: «più breve», «più semplice», «più caldo».",
+            "Pide reescrituras: «más corto», «más simple», «más cálido».",
+            "Peça reescritas: «mais curto», «mais simples», «mais caloroso».",
+            "Bitten Sie um Umformulierungen: „kürzer“, „einfacher“, „wärmer“.",
+            "Kérj átírást: „rövidebben”, „egyszerűbben”, „melegebben”.",
+        ],
+    ),
+    (
+        "Give it a role: “you are a history teacher explaining to a student”.",
+        [
+            "Donnez-lui un rôle : « tu es un professeur d'histoire qui explique à un élève ».",
+            "Dagli un ruolo: «sei un insegnante di storia che spiega a uno studente».",
+            "Dale un papel: «eres un profesor de historia que explica a un alumno».",
+            "Dê-lhe um papel: «és um professor de história a explicar a um aluno».",
+            "Geben Sie ihm eine Rolle: „Du bist ein Geschichtslehrer, der einem Schüler etwas erklärt“.",
+            "Adj neki szerepet: „történelemtanár vagy, aki egy diáknak magyaráz”.",
+        ],
+    ),
+    (
+        "Check important facts: a local model can be wrong.",
+        [
+            "Vérifiez les informations importantes : un modèle local peut se tromper.",
+            "Verifica le informazioni importanti: un modello locale può sbagliare.",
+            "Comprueba los datos importantes: un modelo local puede equivocarse.",
+            "Verifique as informações importantes: um modelo local pode errar.",
+            "Prüfen Sie wichtige Angaben: Auch ein lokales Modell kann sich irren.",
+            "Ellenőrizd a fontos információkat: egy helyi modell is tévedhet.",
+        ],
+    ),
+    (
+        "Compare models: install two from the Models window and try the same question on both.",
+        [
+            "Comparez les modèles : installez-en deux depuis la fenêtre Modèles et posez-leur la même question.",
+            "Confronta i modelli: installane due dalla finestra Modelli e prova la stessa domanda su entrambi.",
+            "Compara modelos: instala dos desde la ventana Modelos y prueba la misma pregunta en ambos.",
+            "Compare modelos: instale dois na janela Modelos e experimente a mesma pergunta nos dois.",
+            "Vergleichen Sie Modelle: Installieren Sie zwei im Modelle-Fenster und stellen Sie beiden dieselbe Frage.",
+            "Hasonlíts össze modelleket: telepíts kettőt a Modellek ablakból, és tedd fel mindkettőnek ugyanazt a kérdést.",
+        ],
+    ),
+    (
+        "send the message",
+        [
+            "envoyer le message",
+            "invia il messaggio",
+            "enviar el mensaje",
+            "enviar a mensagem",
+            "Nachricht senden",
+            "üzenet elküldése",
+        ],
+    ),
+    (
+        "new line",
+        [
+            "nouvelle ligne",
+            "nuova riga",
+            "nueva línea",
+            "nova linha",
+            "neue Zeile",
+            "új sor",
+        ],
+    ),
+    (
+        "new conversation",
+        [
+            "nouvelle conversation",
+            "nuova conversazione",
+            "nueva conversación",
+            "nova conversa",
+            "neue Unterhaltung",
+            "új beszélgetés",
+        ],
+    ),
+    (
+        "settings",
+        [
+            "réglages",
+            "impostazioni",
+            "ajustes",
+            "definições",
+            "Einstellungen",
+            "beállítások",
+        ],
+    ),
+    (
+        "Privacy / GDPR",
+        [
+            "Confidentialité / RGPD",
+            "Privacy / GDPR",
+            "Privacidad / RGPD",
+            "Privacidade / RGPD",
+            "Datenschutz / DSGVO",
+            "Adatvédelem / GDPR",
+        ],
+    ),
+    (
+        "Cookies",
+        [
+            "Cookies", "Cookie", "Cookies", "Cookies", "Cookies", "Sütik",
+        ],
+    ),
+    (
+        "Terms",
+        [
+            "Conditions",
+            "Condizioni",
+            "Condiciones",
+            "Condições",
+            "Bedingungen",
+            "Feltételek",
+        ],
+    ),
+    (
+        "The app has no accounts, sends no telemetry and calls no outside AI servers. Conversations stay in the app's data folder on your computer. The only optional internet connection is the update check on GitHub, which you can switch off in Settings; the Resources window shows the evidence of connections.",
+        [
+            "L'application n'a pas de comptes, n'envoie aucune télémétrie et n'appelle aucun serveur d'IA extérieur. Les conversations restent dans le dossier de données de l'application, sur votre ordinateur. La seule connexion internet facultative est la vérification des mises à jour sur GitHub, que vous pouvez désactiver dans les Réglages ; la fenêtre Ressources montre la preuve des connexions.",
+            "L'app non ha account, non invia telemetria e non chiama server di IA esterni. Le conversazioni restano nella cartella dati dell'app, sul tuo computer. L'unica connessione a internet facoltativa è il controllo degli aggiornamenti su GitHub, che puoi disattivare nelle Impostazioni; la finestra Risorse mostra la prova delle connessioni.",
+            "La aplicación no tiene cuentas, no envía telemetría y no llama a servidores de IA externos. Las conversaciones se quedan en la carpeta de datos de la aplicación, en tu ordenador. La única conexión a internet opcional es la comprobación de actualizaciones en GitHub, que puedes desactivar en Ajustes; la ventana Recursos muestra la prueba de las conexiones.",
+            "A aplicação não tem contas, não envia telemetria e não chama servidores de IA externos. As conversas ficam na pasta de dados da aplicação, no seu computador. A única ligação opcional à internet é a verificação de atualizações no GitHub, que pode desativar nas Definições; a janela Recursos mostra a prova das ligações.",
+            "Die App hat keine Konten, sendet keine Telemetrie und ruft keine externen KI-Server auf. Unterhaltungen bleiben im Datenordner der App auf Ihrem Computer. Die einzige optionale Internetverbindung ist die Update-Prüfung auf GitHub, die Sie in den Einstellungen abschalten können; das Fenster Ressourcen zeigt den Nachweis der Verbindungen.",
+            "Az alkalmazásnak nincsenek fiókjai, nem küld telemetriát, és nem hív külső MI-szervereket. A beszélgetések az alkalmazás adatmappájában maradnak, a te gépeden. Az egyetlen választható internetkapcsolat a GitHubon végzett frissítésellenőrzés, amelyet a Beállításokban kikapcsolhatsz; az Erőforrások ablak mutatja a kapcsolatok bizonyítékát.",
+        ],
+    ),
+    (
+        "The desktop app uses no cookies.",
+        [
+            "L'application de bureau n'utilise aucun cookie.",
+            "L'app desktop non usa cookie.",
+            "La aplicación de escritorio no usa cookies.",
+            "A aplicação de ambiente de trabalho não usa cookies.",
+            "Die Desktop-App verwendet keine Cookies.",
+            "Az asztali alkalmazás nem használ sütiket.",
+        ],
+    ),
+    (
+        "The program is provided as is, without warranty, under the Apache-2.0 licence. Model answers can be wrong; you are responsible for how you use them.",
+        [
+            "Le programme est fourni tel quel, sans garantie, sous licence Apache-2.0. Les réponses des modèles peuvent être fausses ; vous êtes responsable de leur usage.",
+            "Il programma è fornito così com'è, senza garanzie, con licenza Apache-2.0. Le risposte dei modelli possono essere sbagliate; sei responsabile di come le usi.",
+            "El programa se ofrece tal cual, sin garantías, bajo la licencia Apache-2.0. Las respuestas de los modelos pueden ser erróneas; eres responsable de cómo las uses.",
+            "O programa é fornecido tal como está, sem garantias, sob a licença Apache-2.0. As respostas dos modelos podem estar erradas; é responsável pela forma como as usa.",
+            "Das Programm wird wie besehen, ohne Gewähr, unter der Apache-2.0-Lizenz bereitgestellt. Antworten der Modelle können falsch sein; Sie sind für ihre Verwendung verantwortlich.",
+            "A programot jelenlegi állapotában, garancia nélkül, az Apache-2.0 licenc alatt kapod. A modellek válaszai tévedhetnek; te felelsz a felhasználásukért.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
@@ -3650,6 +4105,7 @@ mod tests {
             include_str!("windows.rs"),
             include_str!("models_ui.rs"),
             include_str!("resources_ui.rs"),
+            include_str!("guide_ui.rs"),
         ];
         let (mut checked, mut missing) = (0, Vec::new());
         for src in sources {

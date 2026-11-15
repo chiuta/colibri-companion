@@ -259,6 +259,7 @@ pub struct CompanionApp {
     // windows
     pub show_settings: bool,
     pub show_about: bool,
+    pub guide: crate::guide_ui::GuideState,
     pub show_models: bool,
     pub show_resources: bool,
     /// The dedicated AI chip, when there is one.
@@ -347,6 +348,7 @@ impl CompanionApp {
             demo,
             show_settings: false,
             show_about: false,
+            guide: Default::default(),
             show_models: false,
             show_resources: false,
             npu: None,

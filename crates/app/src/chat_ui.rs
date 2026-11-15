@@ -606,6 +606,9 @@ impl CompanionApp {
             ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
             send = true;
         }
+        if can_type {
+            self.format_toolbar(ui, id);
+        }
         ui.horizontal(|ui| {
             let w = ui.available_width() - 120.0;
             let hint = if can_type {
