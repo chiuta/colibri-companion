@@ -256,7 +256,7 @@ elif "content.xml" in names:
     out.append(text_of(z.read("content.xml").decode("utf-8", "replace")))
 else:
     sys.exit("not a document this reader knows")
-sys.stdout.write("\n".join(out))
+sys.stdout.buffer.write("\n".join(out).encode("utf-8"))
 "#;
 
 const PDF_SCRIPT: &str = r#"
@@ -266,7 +266,7 @@ try:
 except ImportError:
     sys.exit(3)
 r = PdfReader(sys.argv[1])
-sys.stdout.write("\n\n".join((p.extract_text() or "") for p in r.pages))
+sys.stdout.buffer.write("\n\n".join((p.extract_text() or "") for p in r.pages).encode("utf-8"))
 "#;
 
 fn pdf_text(python: Option<&PythonCmd>, path: &Path) -> Result<String, AttachError> {
@@ -459,7 +459,7 @@ mod tests {
 import sys, zipfile
 d = sys.argv[1]
 z = zipfile.ZipFile(d + "/a.docx", "w")
-z.writestr("word/document.xml", "<w:document><w:body><w:p><w:r><w:t>Salut lume</w:t></w:r></w:p><w:p><w:r><w:t>A doua &amp; ultima</w:t></w:r></w:p></w:body></w:document>")
+z.writestr("word/document.xml", "<w:document><w:body><w:p><w:r><w:t>Salut lume ăîșț</w:t></w:r></w:p><w:p><w:r><w:t>A doua &amp; ultima</w:t></w:r></w:p></w:body></w:document>")
 z.close()
 z = zipfile.ZipFile(d + "/b.xlsx", "w")
 z.writestr("xl/workbook.xml", "<workbook/>")
@@ -474,7 +474,7 @@ z.close()
         c.args(["-c", make]).arg(&dir);
         assert!(c.status().unwrap().success());
         let doc = extract_text(Some(&py), &dir.join("a.docx")).unwrap().text;
-        assert!(doc.contains("Salut lume\nA doua & ultima"), "{doc:?}");
+        assert!(doc.contains("Salut lume ăîșț\nA doua & ultima"), "{doc:?}");
         let sheet = extract_text(Some(&py), &dir.join("b.xlsx")).unwrap().text;
         assert!(
             sheet.contains("Nume\t42") && sheet.contains("Ana\t7"),

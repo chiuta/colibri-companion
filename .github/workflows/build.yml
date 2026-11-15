@@ -6,12 +6,14 @@ on:
     inputs:
       release_tag: { description: "Version to publish as a draft pre-release (e.g. v0.1.0-alpha.1); leave empty for a plain build", required: false }
 permissions: { contents: read }
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   licenses:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
         with: { command: check licenses }
 
@@ -21,14 +23,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  name: linux-x86_64 }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: linux-aarch64 }
+          - { os: ubuntu-26.04,  target: x86_64-unknown-linux-gnu,  name: linux-x86_64 }
+          - { os: ubuntu-26.04-arm, target: aarch64-unknown-linux-gnu, name: linux-aarch64 }
           - { os: windows-latest, target: x86_64-pc-windows-msvc,   name: windows-x86_64 }
           - { os: macos-15-intel,       target: x86_64-apple-darwin,      name: macos-intel }
           - { os: macos-latest,   target: aarch64-apple-darwin,     name: macos-apple-silicon }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "${{ matrix.target }}", components: clippy }
       - uses: Swatinem/rust-cache@v2
@@ -46,7 +48,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/colibri-companion$ext" "$d"/
           if [ "${{ runner.os }}" = "Linux" ]; then cp -r packaging "$d"/; fi
           if [ "${{ runner.os }}" = "Windows" ]; then 7z a "$d.zip" "$d"; else tar czf "$d.tar.gz" "$d"; fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: colibri-companion-${{ matrix.name }}
           path: colibri-companion-${{ matrix.name }}.*
@@ -55,10 +57,10 @@ jobs:
     # Only for version tags: attaches every platform's archive to a draft pre-release.
     if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: { contents: write }
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with: { path: dist, merge-multiple: true }
       - name: Draft pre-release
         env: { GH_TOKEN: "${{ github.token }}" }
