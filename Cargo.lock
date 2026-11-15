@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "colibri-companion"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "companion-core",
  "eframe",
@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "companion-core"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "serde",
  "serde_json",

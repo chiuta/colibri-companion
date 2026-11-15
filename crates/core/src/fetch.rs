@@ -19,16 +19,27 @@ work = tempfile.mkdtemp(prefix=".colibri-fetch-", dir=parent)
 try:
     archive = os.path.join(work, "colibri.zip")
     req = urllib.request.Request(url, headers={"User-Agent": "colibri-companion"})
-    with urllib.request.urlopen(req, timeout=60) as r, open(archive, "wb") as out:
-        total = int(r.headers.get("Content-Length") or 0)
-        done = 0
-        while True:
-            chunk = r.read(262144)
-            if not chunk:
-                break
-            out.write(chunk)
-            done += len(chunk)
-            print("P", done, total, flush=True)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r, open(archive, "wb") as out:
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                chunk = r.read(262144)
+                if not chunk:
+                    break
+                out.write(chunk)
+                done += len(chunk)
+                print("P", done, total, flush=True)
+    except Exception as first:
+        # Some Python installs (python.org on macOS) have no certificates: curl uses the system's.
+        curl = shutil.which("curl")
+        if not curl or url.startswith("file:"):
+            raise
+        import subprocess
+        print("P", 0, 0, flush=True)
+        r = subprocess.run([curl, "-fsSL", "--retry", "2", "-o", archive, url])
+        if r.returncode != 0:
+            raise RuntimeError("%s (curl also failed: %d)" % (first, r.returncode))
     print("U", flush=True)
     with zipfile.ZipFile(archive) as z:
         bad = z.testzip()

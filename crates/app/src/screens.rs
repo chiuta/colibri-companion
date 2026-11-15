@@ -153,6 +153,16 @@ impl CompanionApp {
                 "Descarc colibri de pe GitHub în folderul tău personal (~/colibri), fără să ai nevoie de git. Ocupă puțin spațiu.",
                 "I download colibri from GitHub into your home folder (~/colibri), no git needed. It's small.",
             ));
+            if self.cloning {
+                ui.label(
+                    RichText::new(self.t(
+                        "Nu am găsit colibri pe acest calculator, așa că îl descarc acum.",
+                        "I couldn't find colibri on this computer, so I'm downloading it now.",
+                    ))
+                    .color(p.accent)
+                    .semibold(),
+                );
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!self.cloning, |ui| {

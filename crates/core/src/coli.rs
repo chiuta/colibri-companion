@@ -117,11 +117,16 @@ pub struct NvidiaCard {
 pub enum Engine {
     Cuda(String),
     Vulkan(String),
+    /// The unified-memory GPU of an Apple Silicon Mac, through colibri's opt-in Metal backend.
+    Metal,
     Cpu,
 }
 
 impl Hardware {
     pub fn auto_engine(&self) -> Engine {
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            return Engine::Metal;
+        }
         if let Some(c) = self.nvidia.first() {
             Engine::Cuda(c.name.clone())
         } else if let Some(v) = &self.vulkan {
@@ -317,6 +322,8 @@ impl StatusReport {
 pub struct Coli {
     pub root: PathBuf,
     pub python: PythonCmd,
+    /// Extra environment for every `coli` run (the switches that turn on Metal or the NPU).
+    pub env: Vec<(String, String)>,
 }
 
 /// Something the user can copy and run themselves. The app never runs `sudo`,
@@ -336,7 +343,11 @@ pub fn find_package_hint(log: &str) -> Option<String> {
 
 impl Coli {
     pub fn new(root: PathBuf, python: PythonCmd) -> Self {
-        Self { root, python }
+        Self {
+            root,
+            python,
+            env: Vec::new(),
+        }
     }
 
     fn script(&self) -> PathBuf {
@@ -349,6 +360,9 @@ impl Coli {
             .env("PYTHONIOENCODING", "utf-8")
             .env("PYTHONUTF8", "1")
             .env("PYTHONUNBUFFERED", "1");
+        for (k, v) in &self.env {
+            c.env(k, v);
+        }
         c
     }
 
@@ -543,6 +557,9 @@ mod tests {
             r#"{"gpu":{"vulkan":{"name":"Intel UHD"},"nvidia":[{"name":"RTX 4090","total_bytes":25757220000,"compute_cap":"8.9"}]}}"#,
         )
         .unwrap();
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            return;
+        }
         assert_eq!(hw.auto_engine(), Engine::Cuda("RTX 4090".into()));
         assert!((hw.nvidia[0].vram_gb - 25.76).abs() < 0.01);
         let igpu =

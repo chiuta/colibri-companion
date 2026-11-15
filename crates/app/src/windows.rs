@@ -109,9 +109,7 @@ impl CompanionApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let base = self.base();
-                    let local = ["127.0.0.1", "localhost", "[::1]", "::1"]
-                        .iter()
-                        .any(|h| base.contains(h));
+                    let local = companion_core::net::is_local_base(&base);
                     let privacy = if local {
                         self.t(
                             "Totul rămâne pe acest calculator",

@@ -155,11 +155,8 @@ pub fn fmt_rate(bytes_per_s: f64) -> String {
 pub fn fmt_duration(secs: f64, ro: bool) -> String {
     let s = secs.max(0.0) as u64;
     let (h, m) = (s / 3600, (s % 3600) / 60);
-    let (hu, mu, su) = if ro {
-        ("h", "min", "s")
-    } else {
-        ("h", "min", "s")
-    };
+    let _ = ro; // the unit symbols are the same in every language the app speaks
+    let (hu, mu, su) = ("h", "min", "s");
     if h > 0 {
         format!("{h} {hu} {m} {mu}")
     } else if m > 0 {

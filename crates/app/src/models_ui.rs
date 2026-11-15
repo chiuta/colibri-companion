@@ -400,6 +400,14 @@ impl CompanionApp {
                 ),
                 true,
             ),
+            Engine::Metal => (
+                self.t(
+                    "Mac cu Apple Silicon: folosesc cipul grafic al Mac-ului prin Metal (memorie unificată).",
+                    "Apple Silicon Mac: I use the Mac's graphics chip through Metal (unified memory).",
+                )
+                .to_string(),
+                true,
+            ),
             Engine::Cpu => (
                 self.t(
                     "Nu am găsit o placă video cu suport de calcul: modelul rulează pe procesor. Merge și așa, doar mai încet.",
@@ -443,14 +451,56 @@ impl CompanionApp {
                     "“Automatic” picks CUDA for an NVIDIA card, otherwise Vulkan, otherwise the processor, and rebuilds the engine if you add a graphics card later. A change applies the next time you install or switch a model.",
                 ),
             );
-            muted(
-                ui,
-                &p,
-                self.t(
-                    "Cipurile dedicate de AI (NPU) sunt susținute de colibri doar experimental și rămân oprite; aplicația nu le pornește pe ascuns.",
-                    "Dedicated AI chips (NPUs) are only experimental in colibri and stay off; this app doesn't switch them on behind your back.",
+            if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+                let label = self.t(
+                    "Folosește cipul grafic al Mac-ului (Metal, experimental în colibri)",
+                    "Use the Mac's graphics chip (Metal, experimental in colibri)",
+                );
+                ui.checkbox(&mut self.s.apple_gpu, label);
+            }
+            match self.npu.clone() {
+                Some(name) if companion_core::npu::colibri_can_use(&name) => {
+                    ui.label(format!(
+                        "{} {name}",
+                        self.t("Cip de AI găsit:", "AI chip found:")
+                    ));
+                    let label = self.t(
+                        "Folosește cipul de AI (NPU), experimental: precizie redusă, răspunsurile pot diferi",
+                        "Use the AI chip (NPU), experimental: reduced precision, answers may differ",
+                    );
+                    ui.checkbox(&mut self.s.use_npu, label);
+                    muted(
+                        ui,
+                        &p,
+                        self.t(
+                            "Funcționează doar cu modele GLM și cere pachetul XDNA al lui colibri; dacă nu e utilizabil, colibri continuă pe calea obișnuită.",
+                            "It only works with GLM models and needs colibri's XDNA package; if it isn't usable, colibri carries on the normal way.",
+                        ),
+                    );
+                }
+                Some(name) => {
+                    ui.label(format!(
+                        "{} {name}",
+                        self.t("Cip de AI găsit:", "AI chip found:")
+                    ));
+                    muted(
+                        ui,
+                        &p,
+                        self.t(
+                            "colibri nu poate folosi încă acest cip; modelul rulează pe procesor sau pe placa video.",
+                            "colibri can't use this chip yet; the model runs on the processor or the graphics card.",
+                        ),
+                    );
+                }
+                None => muted(
+                    ui,
+                    &p,
+                    self.t(
+                        "Nu am găsit un cip dedicat de AI (NPU). Dacă există unul, colibri îl poate folosi doar experimental, iar aplicația nu îl pornește pe ascuns.",
+                        "No dedicated AI chip (NPU) found. If there is one, colibri only supports it experimentally, and this app doesn't switch it on behind your back.",
+                    ),
                 ),
-            );
+            }
             let active = self
                 .status
                 .as_ref()

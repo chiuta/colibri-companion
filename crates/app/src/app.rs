@@ -14,13 +14,14 @@ use companion_core::http::CancelToken;
 use companion_core::locate::{self, PythonCmd};
 use companion_core::models::{self, InstalledModel};
 use companion_core::net::{self, Conn, LogSummary};
+use companion_core::npu;
 use companion_core::resources::{Sampler, Snapshot};
 use companion_core::update::{self, Release, Upstream};
 use companion_core::{Conversation, ConversationStore, Lang, Settings, StoredMessage, paths, proc};
 use egui_commonmark::CommonMarkCache;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -28,6 +29,7 @@ use std::time::{Duration, Instant};
 
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8000";
 
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     Python(Option<PythonCmd>),
     Root(Option<PathBuf>),
@@ -43,8 +45,13 @@ pub enum Event {
         total: u64,
     },
     FetchUnpacking,
+    Attached {
+        name: String,
+        result: Result<companion_core::attach::Extracted, companion_core::attach::AttachError>,
+    },
     Installed(Vec<InstalledModel>),
     Resources(Box<ResView>),
+    Npu(Option<String>),
     UpdateChecked {
         colibri: Option<Upstream>,
         app: Option<Release>,
@@ -159,7 +166,11 @@ pub struct ChatState {
     /// Measured height of each message (and what it was measured for), so off-screen ones are skipped.
     pub heights: Vec<Option<(HeightKey, f32)>>,
     pub heights_for: String,
+    /// (message, block) whose active preview (HTML/SVG) awaits the user's confirmation.
+    pub preview_ask: Option<(usize, usize)>,
     pub focus_input: bool,
+    /// Pictures waiting to go with the next message: (file name, data URL, bytes).
+    pub pending_images: Vec<(String, String, usize)>,
     pub confirm_delete: Option<String>,
     /// Sidebar search text, and the conversation being renamed (id + new name).
     pub search: String,
@@ -250,12 +261,15 @@ pub struct CompanionApp {
     pub show_about: bool,
     pub show_models: bool,
     pub show_resources: bool,
+    /// The dedicated AI chip, when there is one.
+    pub npu: Option<String>,
     pub upd: UpdateState,
     update_after_stop: bool,
     pub res: Option<ResView>,
     pub cpu_hist: VecDeque<f32>,
     pub ram_hist: VecDeque<f32>,
-    res_run: Arc<AtomicBool>,
+    /// Generation of the resource sampler: a thread runs only while it is still the newest.
+    res_gen: Arc<AtomicU64>,
     res_targets: Arc<Mutex<Vec<(String, u32)>>>,
     pub installed: Vec<InstalledModel>,
     installed_read: Option<Instant>,
@@ -335,12 +349,13 @@ impl CompanionApp {
             show_about: false,
             show_models: false,
             show_resources: false,
+            npu: None,
             upd: UpdateState::default(),
             update_after_stop: false,
             res: None,
             cpu_hist: VecDeque::new(),
             ram_hist: VecDeque::new(),
-            res_run: Arc::new(AtomicBool::new(false)),
+            res_gen: Arc::new(AtomicU64::new(0)),
             res_targets: Arc::new(Mutex::new(Vec::new())),
             installed: Vec::new(),
             installed_read: None,
@@ -356,7 +371,9 @@ impl CompanionApp {
                 cache: CommonMarkCache::default(),
                 heights: Vec::new(),
                 heights_for: String::new(),
+                preview_ask: None,
                 focus_input: true,
+                pending_images: Vec::new(),
                 confirm_delete: None,
                 search: String::new(),
                 focus_search: false,
@@ -520,6 +537,9 @@ impl CompanionApp {
         });
         self.spawn(move |tx| {
             let _ = tx.send(Event::Hardware(c2.hardware(dir.as_deref())));
+        });
+        self.spawn(|tx| {
+            let _ = tx.send(Event::Npu(npu::detect()));
         });
     }
 
@@ -703,15 +723,12 @@ impl CompanionApp {
     /// window costs nothing.
     pub fn set_resources_open(&mut self, open: bool) {
         self.show_resources = open;
+        let mine = self.res_gen.fetch_add(1, Ordering::SeqCst) + 1;
         if !open {
-            self.res_run.store(false, Ordering::SeqCst);
-            return;
-        }
-        if self.res_run.swap(true, Ordering::SeqCst) {
-            return;
+            return; // the newer generation makes the running thread stop
         }
         let (run, targets, tx, ctx) = (
-            self.res_run.clone(),
+            self.res_gen.clone(),
             self.res_targets.clone(),
             self.tx.clone(),
             self.ctx.clone(),
@@ -726,7 +743,7 @@ impl CompanionApp {
         thread::spawn(move || {
             let mut sampler = Sampler::new();
             thread::sleep(Duration::from_millis(400));
-            while run.load(Ordering::SeqCst) {
+            while run.load(Ordering::SeqCst) == mine {
                 let t = targets.lock().map(|t| t.clone()).unwrap_or_default();
                 let snap = sampler.sample(&t, disk.as_deref());
                 // which of our processes owns which socket
@@ -957,10 +974,26 @@ impl CompanionApp {
         }
     }
 
+    /// The switches that turn on colibri's Metal backend (Apple Silicon) or its experimental NPU
+    /// path (AMD, Windows). Both are colibri's own opt-ins, passed as it documents.
+    pub fn accel_env(&self) -> Vec<(String, String)> {
+        let mut env = Vec::new();
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) && self.s.apple_gpu {
+            env.push(("COLI_METAL".to_string(), "1".to_string()));
+            env.push(("K3_METAL".to_string(), "1".to_string()));
+        }
+        if cfg!(windows) && self.s.use_npu && self.npu.as_deref().is_some_and(npu::colibri_can_use)
+        {
+            env.push(("COLI_XDNA".to_string(), "1".to_string()));
+        }
+        env
+    }
+
     pub fn start_server(&mut self) {
-        let Some(coli) = self.coli.clone() else {
+        let Some(mut coli) = self.coli.clone() else {
             return;
         };
+        coli.env = self.accel_env();
         if self.starting_since.is_some() {
             return;
         }
@@ -1142,9 +1175,14 @@ impl CompanionApp {
         }
         self.chat.input.clear();
         self.chat.error = None;
+        let images = std::mem::take(&mut self.chat.pending_images)
+            .into_iter()
+            .map(|(_, url, _)| url)
+            .collect();
         self.chat.conv.messages.push(StoredMessage {
             role: "user".into(),
             content: text,
+            images,
             ..Default::default()
         });
         self.chat.conv.messages.push(StoredMessage {
@@ -1170,8 +1208,14 @@ impl CompanionApp {
             return;
         };
         let text = self.chat.conv.messages[pos].content.clone();
+        let images = self.chat.conv.messages[pos].images.clone();
         self.chat.conv.messages.truncate(pos);
         self.chat.input = text;
+        self.chat.pending_images = images
+            .into_iter()
+            .enumerate()
+            .map(|(i, u)| (format!("#{}", i + 1), u.clone(), u.len() * 3 / 4))
+            .collect();
         self.chat.error = None;
         self.chat.focus_input = true;
         if self.chat.conv.messages.is_empty() {
@@ -1208,37 +1252,156 @@ impl CompanionApp {
         self.chat.list = self.store.summaries();
     }
 
-    /// Appends dropped text files to the composer; says why when one can't be used.
+    /// Files dropped or chosen: pictures wait beside the composer, documents are read in the
+    /// background and their text lands in the message box.
     pub fn attach_files(&mut self, paths: &[std::path::PathBuf]) {
+        use companion_core::attach::{self, AttachError, Kind};
         for path in paths {
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            match companion_core::attach::read_text_file(path) {
-                Some(text) => {
-                    if !self.chat.input.is_empty() && !self.chat.input.ends_with('\n') {
-                        self.chat.input.push('\n');
+            if attach::kind_of(path) == Kind::Image {
+                if self.chat.pending_images.len() >= 3 {
+                    self.toast(self.t("Cel mult 3 imagini odată", "At most 3 pictures at a time"));
+                    continue;
+                }
+                match attach::read_image(path) {
+                    Ok((mime, bytes)) => {
+                        let size = bytes.len();
+                        self.chat.pending_images.push((
+                            name.clone(),
+                            attach::data_url(mime, &bytes),
+                            size,
+                        ));
+                        self.chat.focus_input = true;
+                        self.toast(
+                            self.t(
+                                "Imaginea «{}» pleacă odată cu mesajul. Merge doar cu modele care văd imagini.",
+                                "Picture «{}» goes with your message. It only works with models that can see pictures.",
+                            )
+                            .replacen("{}", &name, 1),
+                        );
                     }
-                    self.chat
-                        .input
-                        .push_str(&companion_core::attach::fenced(&name, &text));
-                    self.chat.focus_input = true;
-                    let msg = self
-                        .t("Am adăugat fișierul «{}»", "Added file «{}»")
-                        .replacen("{}", &name, 1);
-                    self.toast(msg);
+                    Err(e) => {
+                        let m = self.attach_error(&name, &e);
+                        self.toast(m);
+                    }
                 }
-                None => {
-                    let msg = self
-                        .t(
-                            "«{}» nu este un fișier text sau e prea mare (max. 256 KB)",
-                            "«{}» is not a text file or is too large (max 256 KB)",
-                        )
-                        .replacen("{}", &name, 1);
-                    self.toast(msg);
-                }
+                continue;
             }
+            let python = match &self.python {
+                Probe::Found(p) => Some(p.clone()),
+                _ => None,
+            };
+            let (p2, n2) = (path.clone(), name.clone());
+            self.toast(
+                self.t("Citesc «{}»…", "Reading «{}»…")
+                    .replacen("{}", &name, 1),
+            );
+            self.spawn(move |tx| {
+                let result = attach::extract_text(python.as_ref(), &p2);
+                let _ = tx.send(Event::Attached { name: n2, result });
+            });
+            let _ = AttachError::Unreadable;
+        }
+    }
+
+    fn attach_error(&self, name: &str, e: &companion_core::attach::AttachError) -> String {
+        use companion_core::attach::AttachError as E;
+        let why = match e {
+            E::Unreadable => self
+                .t("nu pot citi fișierul", "I can't read the file")
+                .to_string(),
+            E::TooLarge => self.t("este prea mare", "it is too large").to_string(),
+            E::NotText => self
+                .t(
+                    "nu este text sau imagine pe care o știu citi",
+                    "it is not text or a picture I can read",
+                )
+                .to_string(),
+            E::NeedsTool(what) => self
+                .t("îmi trebuie {} ca să-l citesc", "I need {} to read it")
+                .replacen("{}", what, 1),
+            E::Failed(m) => format!("{}: {m}", self.t("nu a mers", "it failed")),
+        };
+        format!("«{name}»: {why}")
+    }
+
+    fn attached(
+        &mut self,
+        name: String,
+        result: Result<companion_core::attach::Extracted, companion_core::attach::AttachError>,
+    ) {
+        match result {
+            Ok(ex) => {
+                if !self.chat.input.is_empty() && !self.chat.input.ends_with('\n') {
+                    self.chat.input.push('\n');
+                }
+                self.chat
+                    .input
+                    .push_str(&companion_core::attach::fenced(&name, &ex.text));
+                self.chat.focus_input = true;
+                let msg = if ex.truncated {
+                    self.t(
+                        "Am adăugat «{}» (textul lung a fost tăiat)",
+                        "Added «{}» (the long text was cut)",
+                    )
+                } else {
+                    self.t("Am adăugat fișierul «{}»", "Added file «{}»")
+                }
+                .replacen("{}", &name, 1);
+                self.toast(msg);
+            }
+            Err(e) => {
+                let m = self.attach_error(&name, &e);
+                self.toast(m);
+            }
+        }
+    }
+
+    /// Saves a code block from an answer into the downloads folder, never over another file.
+    pub fn save_block(&mut self, b: &companion_core::blocks::Block) {
+        let dir = companion_core::paths::downloads_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let ext = b.extension();
+        let mut path = dir.join(format!("colibri.{ext}"));
+        let mut n = 2;
+        while path.exists() {
+            path = dir.join(format!("colibri-{n}.{ext}"));
+            n += 1;
+        }
+        match std::fs::write(&path, &b.code) {
+            Ok(()) => {
+                let msg = self.t("Salvat în {}", "Saved to {}").replacen(
+                    "{}",
+                    &path.display().to_string(),
+                    1,
+                );
+                self.toast(msg);
+                companion_core::proc::open_externally(&dir.display().to_string());
+            }
+            Err(e) => self.toast(format!(
+                "{}: {e}",
+                self.t("Nu am putut salva fișierul", "Could not save the file")
+            )),
+        }
+    }
+
+    /// Shows a block in the system's own viewer (browser for HTML/SVG/Markdown).
+    pub fn preview_block(&mut self, b: &companion_core::blocks::Block) {
+        let dir = companion_core::paths::data_dir().join("preview");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("preview.{}", b.extension()));
+        match std::fs::write(&path, &b.code) {
+            Ok(()) => companion_core::proc::open_externally(&path.display().to_string()),
+            Err(e) => self.toast(format!(
+                "{}: {e}",
+                self.t(
+                    "Nu am putut deschide previzualizarea",
+                    "Could not open the preview"
+                )
+            )),
         }
     }
 
@@ -1305,11 +1468,11 @@ impl CompanionApp {
             messages.push(ChatMessage::new("system", self.s.system_prompt.trim()));
         }
         let n = self.chat.conv.messages.len().saturating_sub(1); // all but the empty placeholder
-        messages.extend(
-            self.chat.conv.messages[..n]
-                .iter()
-                .map(|m| ChatMessage::new(&m.role, m.content.clone())),
-        );
+        messages.extend(self.chat.conv.messages[..n].iter().map(|m| {
+            let mut c = ChatMessage::new(&m.role, m.content.clone());
+            c.images = m.images.clone();
+            c
+        }));
         let req = ChatRequest {
             model: self.model_id.clone().unwrap_or_else(|| "colibri".into()),
             messages,
@@ -1392,7 +1555,10 @@ impl CompanionApp {
                     self.status = Some(st);
                     self.awaiting_status = false;
                 }
-                Err(e) => self.status_error = Some(e),
+                Err(e) => {
+                    self.status_error = Some(e);
+                    self.awaiting_status = false;
+                }
             },
             Event::Health(h) => {
                 if matches!(h, Health::Ready(_)) {
@@ -1469,6 +1635,8 @@ impl CompanionApp {
                 }
             }
             Event::Installed(list) => self.installed = list,
+            Event::Npu(n) => self.npu = n,
+            Event::Attached { name, result } => self.attached(name, result),
             Event::Resources(v) => {
                 for (hist, val) in [
                     (&mut self.cpu_hist, v.snap.cpu_percent),

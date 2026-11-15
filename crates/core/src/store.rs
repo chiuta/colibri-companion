@@ -183,6 +183,10 @@ pub struct Settings {
     pub backend: Backend,
     /// Ask GitHub (once a day) whether colibri or this app has a newer version.
     pub check_updates: bool,
+    /// Apple Silicon: run on the Mac's GPU through colibri's Metal backend.
+    pub apple_gpu: bool,
+    /// AMD Ryzen AI NPU through colibri's experimental XDNA path (Windows). Off unless asked for.
+    pub use_npu: bool,
     /// Unix seconds of the last check.
     pub last_update_check: u64,
 }
@@ -206,6 +210,8 @@ impl Default for Settings {
             accepted_licenses: Vec::new(),
             backend: Backend::Auto,
             check_updates: true,
+            apple_gpu: true,
+            use_npu: false,
             last_update_check: 0,
         }
     }
@@ -241,6 +247,8 @@ pub struct StoredMessage {
     pub completion_tokens: Option<u64>,
     /// Set when the user pressed Stop before the answer was finished.
     pub stopped: bool,
+    /// Pictures sent with this message, as `data:` URLs.
+    pub images: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

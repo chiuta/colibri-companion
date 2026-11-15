@@ -71,6 +71,14 @@ pub fn roots(chosen: Option<&Path>, active_model_dir: Option<&Path>) -> Vec<Path
     if let Some(d) = default_models_root() {
         push(d);
     }
+    // On Windows colibri puts models on another drive when the home drive is short of room.
+    #[cfg(windows)]
+    for letter in 'C'..='Z' {
+        let p = PathBuf::from(format!("{letter}:\\colibri-models"));
+        if p.is_dir() {
+            push(p);
+        }
+    }
     out
 }
 

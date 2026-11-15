@@ -193,12 +193,7 @@ impl CompanionApp {
             .filter(|(_, c)| c.exposed_listener())
             .collect();
         let expected = self.phase() == Phase::Installing || self.install_spawning || self.cloning;
-        let remote_server = {
-            let base = self.base();
-            !["127.0.0.1", "localhost", "[::1]", "::1"]
-                .iter()
-                .any(|h| base.contains(h))
-        };
+        let remote_server = !net::is_local_base(&self.base());
 
         if let Some(err) = &view.conns_error {
             tinted(ui, p.warn_soft, p.warn, |ui| {
@@ -302,6 +297,18 @@ impl CompanionApp {
         }
 
         ui.add_space(6.0);
+        let inspected: usize = view.snap.procs.iter().map(|p| p.processes).sum();
+        ui.label(
+            RichText::new(
+                self.t(
+                    "Verificat acum: {} procese (aplicația și motorul colibri), {} socket-uri deschise.",
+                    "Checked just now: {} processes (the app and the colibri engine), {} open sockets.",
+                )
+                .replacen("{}", &inspected.to_string(), 1)
+                .replacen("{}", &view.conns.len().to_string(), 1),
+            )
+            .color(p.muted),
+        );
         // what the app itself opened
         let log = &view.applog;
         if log.external.is_empty() {

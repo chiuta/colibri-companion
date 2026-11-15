@@ -6,10 +6,33 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// Pictures as `data:` URLs; sent in the OpenAI "content parts" form.
+    #[serde(default)]
+    pub images: Vec<String>,
+}
+
+impl Serialize for ChatMessage {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut m = ser.serialize_map(Some(2))?;
+        m.serialize_entry("role", &self.role)?;
+        if self.images.is_empty() {
+            m.serialize_entry("content", &self.content)?;
+        } else {
+            let mut parts = vec![json!({ "type": "text", "text": self.content })];
+            parts.extend(
+                self.images
+                    .iter()
+                    .map(|u| json!({ "type": "image_url", "image_url": { "url": u } })),
+            );
+            m.serialize_entry("content", &parts)?;
+        }
+        m.end()
+    }
 }
 
 impl ChatMessage {
@@ -17,6 +40,7 @@ impl ChatMessage {
         Self {
             role: role.to_string(),
             content: content.into(),
+            images: Vec::new(),
         }
     }
 }
@@ -751,5 +775,22 @@ mod tests {
             other => panic!("{other:?}"),
         }
         h.join().unwrap();
+    }
+
+    #[test]
+    fn pictures_go_out_as_content_parts() {
+        let plain = serde_json::to_value(ChatMessage::new("user", "salut")).unwrap();
+        assert_eq!(plain, json!({"role": "user", "content": "salut"}));
+        let mut m = ChatMessage::new("user", "ce e asta?");
+        m.images.push("data:image/png;base64,AAAA".into());
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(
+            v["content"][0],
+            json!({"type": "text", "text": "ce e asta?"})
+        );
+        assert_eq!(
+            v["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AAAA"
+        );
     }
 }

@@ -15,6 +15,10 @@ enum MsgAction {
     Copy(String),
     Regenerate,
     Edit,
+    SaveBlock(companion_core::blocks::Block),
+    Preview(companion_core::blocks::Block),
+    Ask(usize, usize),
+    CancelAsk,
 }
 
 impl CompanionApp {
@@ -307,6 +311,15 @@ impl CompanionApp {
             self.t("Cum s-a gândit", "How it thought"),
         );
         let w_reading = self.t("Citesc întrebarea… {} s", "Reading your message… {} s");
+        let w_block = self.t("Cod", "Code");
+        let w_save = self.t("Salvează ca fișier", "Save as file");
+        let w_preview = self.t("Previzualizare", "Preview");
+        let w_ask = self.t(
+            "Pagina se deschide în browser și poate rula scripturi scrise de model. Deschid doar dacă ai încredere în ce vezi mai sus.",
+            "The page opens in your browser and may run scripts the model wrote. Open it only if you trust what you see above.",
+        );
+        let w_open_anyway = self.t("Deschide oricum", "Open anyway");
+        let w_cancel = self.t("Renunță", "Cancel");
         let (w_stopped, w_copy, w_regen) = (
             self.t("(oprit înainte de final)", "(stopped before the end)"),
             self.t("Copiază", "Copy"),
@@ -365,6 +378,11 @@ impl CompanionApp {
                         .inner_margin(Margin::symmetric(14, 10))
                         .show(ui, |ui| {
                             ui.set_max_width(ui.available_width() * 0.82);
+                            if !m.images.is_empty() {
+                                ui.label(
+                                    RichText::new(format!("🖼 × {}", m.images.len())).color(p.muted),
+                                );
+                            }
                             ui.add(
                                 egui::Label::new(RichText::new(&m.content).size(16.0))
                                     .selectable(true),
@@ -417,6 +435,45 @@ impl CompanionApp {
                         if m.stopped && !streaming {
                             ui.label(RichText::new(w_stopped).small().color(p.muted));
                         }
+                        if !streaming && (m.content.contains("```") || m.content.contains("~~~")) {
+                            let blocks = companion_core::blocks::extract(&m.content);
+                            for (bi, b) in blocks.iter().enumerate() {
+                                ui.horizontal_wrapped(|ui| {
+                                    let name = if b.lang.is_empty() { "text" } else { &b.lang };
+                                    ui.label(
+                                        RichText::new(format!("{} {}", w_block, bi + 1))
+                                            .color(p.muted),
+                                    );
+                                    ui.label(RichText::new(name).monospace().color(p.muted));
+                                    if ui.small_button(w_copy).clicked() {
+                                        action = Some(MsgAction::Copy(b.code.clone()));
+                                    }
+                                    if ui.small_button(w_save).clicked() {
+                                        action = Some(MsgAction::SaveBlock(b.clone()));
+                                    }
+                                    if b.is_previewable() && ui.small_button(w_preview).clicked() {
+                                        action = Some(if b.is_active() {
+                                            MsgAction::Ask(i, bi)
+                                        } else {
+                                            MsgAction::Preview(b.clone())
+                                        });
+                                    }
+                                });
+                                if self.chat.preview_ask == Some((i, bi)) {
+                                    tinted(ui, p.bad_soft, p.bad, |ui| {
+                                        ui.label(RichText::new(w_ask).color(p.bad));
+                                        ui.horizontal(|ui| {
+                                            if ui.button(w_open_anyway).clicked() {
+                                                action = Some(MsgAction::Preview(b.clone()));
+                                            }
+                                            if ui.button(w_cancel).clicked() {
+                                                action = Some(MsgAction::CancelAsk);
+                                            }
+                                        });
+                                    });
+                                }
+                            }
+                        }
                         if !streaming && !m.content.is_empty() {
                             ui.horizontal(|ui| {
                                 if ui.small_button(w_copy).clicked() {
@@ -445,6 +502,13 @@ impl CompanionApp {
             }
             Some(MsgAction::Regenerate) => self.regenerate(),
             Some(MsgAction::Edit) => self.edit_last_message(),
+            Some(MsgAction::SaveBlock(b)) => self.save_block(&b),
+            Some(MsgAction::Preview(b)) => {
+                self.chat.preview_ask = None;
+                self.preview_block(&b);
+            }
+            Some(MsgAction::Ask(i, bi)) => self.chat.preview_ask = Some((i, bi)),
+            Some(MsgAction::CancelAsk) => self.chat.preview_ask = None,
             None => {}
         }
     }
@@ -509,6 +573,22 @@ impl CompanionApp {
             ui.add_space(6.0);
         }
 
+        if !self.chat.pending_images.is_empty() {
+            let mut remove = None;
+            ui.horizontal_wrapped(|ui| {
+                for (i, (name, _, size)) in self.chat.pending_images.iter().enumerate() {
+                    ui.label(
+                        RichText::new(format!("🖼 {name} ({} KB)", size / 1024 + 1)).color(p.accent),
+                    );
+                    if ui.small_button("✕").clicked() {
+                        remove = Some(i);
+                    }
+                }
+            });
+            if let Some(i) = remove {
+                self.chat.pending_images.remove(i);
+            }
+        }
         let id = egui::Id::unique("composer-text");
         let generating = self.chat.generating.is_some();
         let can_type = self.server_ready();

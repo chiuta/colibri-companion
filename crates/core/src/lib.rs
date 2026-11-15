@@ -6,6 +6,7 @@
 //! independent, each under its own licence.
 
 pub mod attach;
+pub mod blocks;
 pub mod chat;
 pub mod coli;
 pub mod fetch;
@@ -13,6 +14,7 @@ pub mod http;
 pub mod locate;
 pub mod models;
 pub mod net;
+pub mod npu;
 pub mod paths;
 pub mod proc;
 pub mod resources;

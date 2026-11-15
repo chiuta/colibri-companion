@@ -82,6 +82,26 @@ pub fn is_local_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// Is a server address one that stays on this computer (`localhost` or a loopback address)?
+/// A look at the parsed host, not a substring search, so `http://evil.example/127.0.0.1` is not local.
+pub fn is_local_base(base: &str) -> bool {
+    match crate::http::parse_authority(base) {
+        Ok((host, _)) => {
+            host.eq_ignore_ascii_case("localhost")
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| match ip {
+                        IpAddr::V4(v4) => v4.is_loopback(),
+                        IpAddr::V6(v6) => {
+                            v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v| v.is_loopback())
+                        }
+                    })
+        }
+        Err(_) => false,
+    }
+}
+
 // ------------------------------------------------------------------ the operating system's view
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -397,6 +417,18 @@ mod tests {
     }
 
     #[test]
+    fn only_a_real_loopback_host_counts_as_local() {
+        assert!(is_local_base("http://127.0.0.1:8000"));
+        assert!(is_local_base("http://localhost:8000/v1"));
+        assert!(is_local_base("http://[::1]:8000"));
+        assert!(!is_local_base("http://evil.example/127.0.0.1"));
+        assert!(!is_local_base("http://127.0.0.1.evil.example:8000"));
+        assert!(!is_local_base("http://192.168.1.5:8000"));
+        assert!(!is_local_base("https://127.0.0.1:8000"));
+        assert!(!is_local_base(""));
+    }
+
+    #[test]
     fn the_app_log_is_summarised() {
         let at = SystemTime::now();
         let mk = |a: &str| Outbound {
@@ -485,5 +517,43 @@ python3 4242 me    8u  IPv6 0xabf      0t0  TCP [::1]:9000 (LISTEN)\n";
                 && !c.exposed_listener()),
             "{conns:?}"
         );
+    }
+
+    /// The adversarial case: a connection to this very computer's *network* address is still a
+    /// connection that goes out through the network stack, and a listener bound to every
+    /// interface is reachable from the network. Both must be flagged. Skipped when the machine
+    /// has no non-loopback address.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn flags_traffic_to_a_network_address_and_open_listeners() {
+        // the address the kernel would use to reach the outside, found without sending anything
+        let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+        if probe.connect("192.0.2.1:9").is_err() {
+            eprintln!("no route: skipping");
+            return;
+        }
+        let ip = probe.local_addr().unwrap().ip();
+        if is_local_ip(ip) {
+            eprintln!("no network address: skipping");
+            return;
+        }
+        let open = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let port = open.local_addr().unwrap().port();
+        let client = std::net::TcpStream::connect((ip, port)).unwrap();
+        let (_peer, _) = open.accept().unwrap();
+        let conns = connections_of(&[std::process::id()]).unwrap();
+        assert!(
+            conns
+                .iter()
+                .any(|c| c.exposed_listener() && c.local.port() == port),
+            "{conns:?}"
+        );
+        assert!(
+            conns
+                .iter()
+                .any(|c| c.leaves_computer() && c.remote.is_some_and(|r| r.port() == port)),
+            "{conns:?}"
+        );
+        drop(client);
     }
 }
