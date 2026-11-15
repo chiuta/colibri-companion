@@ -4372,6 +4372,28 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A programok csak addig működnek, amíg itt fut egy modell. Az alkalmazás nem ígérheti, hogy minden külső program működik: a colibri hivatalosan az OpenAI és az Anthropic SDK-kat tesztelte; a többi ugyanazt a protokollt használja.",
         ],
     ),
+    (
+        "More ▾",
+        [
+            "Plus ▾",
+            "Altro ▾",
+            "Más ▾",
+            "Mais ▾",
+            "Mehr ▾",
+            "Továbbiak ▾",
+        ],
+    ),
+    (
+        "Compare models",
+        [
+            "Comparer les modèles",
+            "Confronta i modelli",
+            "Comparar modelos",
+            "Comparar modelos",
+            "Modelle vergleichen",
+            "Modellek összehasonlítása",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
