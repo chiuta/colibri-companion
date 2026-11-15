@@ -1,6 +1,6 @@
 name: build
 on:
-  push: { branches: [main] }
+  push: { branches: [main], tags: ['v*'] }
   pull_request:
   workflow_dispatch:
 permissions: { contents: read }
@@ -48,3 +48,19 @@ jobs:
         with:
           name: colibri-companion-${{ matrix.name }}
           path: colibri-companion-${{ matrix.name }}.*
+
+  release:
+    # Only for version tags: attaches every platform's archive to a draft pre-release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Draft pre-release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" \
+            --draft --prerelease --title "Colibri Companion ${{ github.ref_name }}" \
+            --notes "First public alpha. Friendly desktop interface for colibri in 8 languages: guided setup, chat with Markdown and reasoning, conversation search / rename / export, text-file drop. Windows and macOS builds come from CI and are not yet tested by hand. Apache-2.0. Does not bundle colibri."
