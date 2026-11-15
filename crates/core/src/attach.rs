@@ -473,6 +473,47 @@ pub fn split_chunks(text: &str, max_chars: usize) -> Vec<String> {
     out
 }
 
+/// What to send for a question plus attached documents: one message when everything fits in
+/// `budget` characters, otherwise the documents in numbered parts (each asking only for "OK")
+/// followed by the question.
+pub fn plan_parts(question: &str, docs: &[(String, String)], budget: usize) -> Vec<String> {
+    let body: String = docs
+        .iter()
+        .map(|(n, t)| fenced(n, t))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let q = question.trim();
+    let whole = if body.is_empty() {
+        q.to_string()
+    } else if q.is_empty() {
+        body.clone()
+    } else {
+        format!("{body}\n{q}")
+    };
+    if whole.chars().count() <= budget || body.is_empty() {
+        return vec![whole];
+    }
+    let room = budget.saturating_sub(300).max(2000);
+    let chunks = split_chunks(&body, room);
+    let n = chunks.len();
+    let mut out: Vec<String> = chunks
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| {
+            format!(
+                "[Part {}/{n} of the attached files. Do not answer yet: reply only with OK.]\n{c}",
+                i + 1
+            )
+        })
+        .collect();
+    out.push(if q.is_empty() {
+        format!("That was all {n} parts of the files. Summarise them.")
+    } else {
+        format!("That was all {n} parts of the files. Now answer: {q}")
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -665,5 +706,22 @@ z.close()
         assert_eq!(p2.concat(), one_line);
         assert_eq!(p2.len(), 3);
         assert!(split_chunks("", 2000).is_empty());
+    }
+
+    #[test]
+    fn small_input_is_one_message_and_big_input_is_numbered_parts() {
+        let docs = vec![("a.txt".to_string(), "hello\n".to_string())];
+        assert_eq!(plan_parts("what?", &docs, 10_000).len(), 1);
+        assert_eq!(plan_parts("only text", &[], 10).len(), 1);
+        let big = vec![("b.txt".to_string(), "line of text\n".repeat(2000))];
+        let parts = plan_parts("summarise", &big, 5000);
+        assert!(parts.len() > 3);
+        assert!(parts[0].contains("Part 1/"));
+        assert!(parts.last().unwrap().ends_with("summarise"));
+        assert!(
+            parts[..parts.len() - 1]
+                .iter()
+                .all(|p| p.chars().count() <= 5000)
+        );
     }
 }

@@ -4483,6 +4483,83 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Megjegyzés: a modell többre lehet képes, mint amit a colibri ma használ. Itt a fenti pipák számítanak (a colibri oldaláról); a készítő állításai csak a lehetőséget mutatják. Az adatok 2026 novemberében online keresve; ellenőrizd a modell oldalát.",
         ],
     ),
+    (
+        "The files are big: sending them in {} parts, one after another.",
+        [
+            "Les fichiers sont gros : je les envoie en {} parties, l'une après l'autre.",
+            "I file sono grandi: li invio in {} parti, una dopo l'altra.",
+            "Los archivos son grandes: los envío en {} partes, una tras otra.",
+            "Os arquivos são grandes: envio em {} partes, uma após a outra.",
+            "Die Dateien sind groß: Ich sende sie in {} Teilen nacheinander.",
+            "A fájlok nagyok: {} részletben küldöm el őket, egymás után.",
+        ],
+    ),
+    (
+        "No files to read were found",
+        [
+            "Aucun fichier à lire trouvé",
+            "Nessun file da leggere trovato",
+            "No encontré archivos que leer",
+            "Não encontrei arquivos para ler",
+            "Keine lesbaren Dateien gefunden",
+            "Nem találtam olvasható fájlt",
+        ],
+    ),
+    (
+        "Reading {} files",
+        [
+            "Lecture de {} fichiers",
+            "Leggo {} file",
+            "Leyendo {} archivos",
+            "Lendo {} arquivos",
+            "Lese {} Dateien",
+            "{} fájl olvasása",
+        ],
+    ),
+    (
+        " (only the first ones; there are more)",
+        [
+            " (seulement les premiers ; il y en a plus)",
+            " (solo i primi; ce ne sono altri)",
+            " (solo los primeros; hay más)",
+            " (apenas os primeiros; há mais)",
+            " (nur die ersten; es gibt mehr)",
+            " (csak az első néhány; több van)",
+        ],
+    ),
+    (
+        "Remove all",
+        [
+            "Tout retirer",
+            "Rimuovi tutto",
+            "Quitar todo",
+            "Remover tudo",
+            "Alle entfernen",
+            "Összes eltávolítása",
+        ],
+    ),
+    (
+        "files,",
+        [
+            "fichiers,",
+            "file,",
+            "archivos,",
+            "arquivos,",
+            "Dateien,",
+            "fájl,",
+        ],
+    ),
+    (
+        "thousand characters",
+        [
+            "mille caractères",
+            "mila caratteri",
+            "mil caracteres",
+            "mil caracteres",
+            "tausend Zeichen",
+            "ezer karakter",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

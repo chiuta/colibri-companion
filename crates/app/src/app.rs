@@ -171,6 +171,10 @@ pub struct ChatState {
     pub focus_input: bool,
     /// Pictures waiting to go with the next message: (file name, data URL, bytes).
     pub pending_images: Vec<(String, String, usize)>,
+    /// Documents read and waiting to go with the next message: (file name, text).
+    pub pending_docs: Vec<(String, String)>,
+    /// Further parts of a big message, last one first; sent as each answer finishes.
+    pub send_queue: Vec<String>,
     pub confirm_delete: Option<String>,
     /// Sidebar search text, and the conversation being renamed (id + new name).
     pub search: String,
@@ -380,6 +384,8 @@ impl CompanionApp {
                 preview_ask: None,
                 focus_input: true,
                 pending_images: Vec::new(),
+                pending_docs: Vec::new(),
+                send_queue: Vec::new(),
                 confirm_delete: None,
                 search: String::new(),
                 focus_search: false,
@@ -1258,7 +1264,10 @@ impl CompanionApp {
 
     pub fn send_message(&mut self) {
         let text = self.chat.input.trim().to_string();
-        if text.is_empty() || self.chat.generating.is_some() || !self.server_ready() {
+        if (text.is_empty() && self.chat.pending_docs.is_empty())
+            || self.chat.generating.is_some()
+            || !self.server_ready()
+        {
             return;
         }
         self.chat.input.clear();
@@ -1267,9 +1276,32 @@ impl CompanionApp {
             .into_iter()
             .map(|(_, url, _)| url)
             .collect();
+        let docs = std::mem::take(&mut self.chat.pending_docs);
+        let budget = self
+            .facts()
+            .and_then(|f| f.context_tokens)
+            .map_or(24_000, |c| (c as usize).saturating_mul(3) / 2)
+            .clamp(6_000, 3_000_000);
+        let mut parts = companion_core::attach::plan_parts(&text, &docs, budget);
+        if parts.len() > 1 {
+            self.toast(
+                self.t(
+                    "Fișierele sunt mari: le trimit în {} părți, pe rând.",
+                    "The files are big: sending them in {} parts, one after another.",
+                )
+                .replacen("{}", &parts.len().to_string(), 1),
+            );
+        }
+        let first = parts.remove(0);
+        parts.reverse();
+        self.chat.send_queue = parts;
+        self.push_user_turn(first, images);
+    }
+
+    fn push_user_turn(&mut self, content: String, images: Vec<String>) {
         self.chat.conv.messages.push(StoredMessage {
             role: "user".into(),
-            content: text,
+            content,
             images,
             ..Default::default()
         });
@@ -1356,7 +1388,29 @@ impl CompanionApp {
             ));
             return;
         }
-        for path in paths {
+        let found = attach::collect(paths, 300);
+        if found.files.is_empty() {
+            self.toast(self.t(
+                "Nu am găsit fișiere de citit",
+                "No files to read were found",
+            ));
+            return;
+        }
+        if found.files.len() > 1 || found.skipped > 0 || found.too_many {
+            let mut m = self.t("Citesc {} fișiere", "Reading {} files").replacen(
+                "{}",
+                &found.files.len().to_string(),
+                1,
+            );
+            if found.too_many {
+                m.push_str(self.t(
+                    " (doar primele; sunt mai multe)",
+                    " (only the first ones; there are more)",
+                ));
+            }
+            self.toast(m);
+        }
+        for path in &found.files {
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -1435,12 +1489,7 @@ impl CompanionApp {
     ) {
         match result {
             Ok(ex) => {
-                if !self.chat.input.is_empty() && !self.chat.input.ends_with('\n') {
-                    self.chat.input.push('\n');
-                }
-                self.chat
-                    .input
-                    .push_str(&companion_core::attach::fenced(&name, &ex.text));
+                self.chat.pending_docs.push((name.clone(), ex.text));
                 self.chat.focus_input = true;
                 let msg = if ex.truncated {
                     self.t(
@@ -1842,6 +1891,20 @@ impl CompanionApp {
                         }
                     }
                     self.finish_assistant_message();
+                    if self.chat.error.is_some()
+                        || self
+                            .chat
+                            .conv
+                            .messages
+                            .iter()
+                            .rev()
+                            .nth(0)
+                            .is_some_and(|m| m.stopped)
+                    {
+                        self.chat.send_queue.clear();
+                    } else if let Some(next) = self.chat.send_queue.pop() {
+                        self.push_user_turn(next, Vec::new());
+                    }
                 }
             }
         }

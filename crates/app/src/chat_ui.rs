@@ -589,6 +589,51 @@ impl CompanionApp {
                 self.chat.pending_images.remove(i);
             }
         }
+        if !self.chat.pending_docs.is_empty() {
+            let mut remove = None;
+            let total: usize = self
+                .chat
+                .pending_docs
+                .iter()
+                .map(|(_, t)| t.chars().count())
+                .sum();
+            ui.horizontal_wrapped(|ui| {
+                for (i, (name, text)) in self.chat.pending_docs.iter().enumerate() {
+                    ui.label(
+                        RichText::new(format!("📄 {name} ({} KB)", text.len() / 1024 + 1))
+                            .color(p.accent),
+                    );
+                    if ui.small_button("✕").clicked() {
+                        remove = Some(i);
+                    }
+                }
+                if self.chat.pending_docs.len() > 1
+                    && ui
+                        .small_button(self.t("Șterge toate", "Remove all"))
+                        .clicked()
+                {
+                    remove = Some(usize::MAX);
+                }
+            });
+            ui.label(
+                RichText::new(format!(
+                    "{} {} {} {}",
+                    self.chat.pending_docs.len(),
+                    self.t("fișiere,", "files,"),
+                    total / 1000,
+                    self.t("mii de caractere", "thousand characters")
+                ))
+                .small()
+                .color(p.muted),
+            );
+            match remove {
+                Some(usize::MAX) => self.chat.pending_docs.clear(),
+                Some(i) => {
+                    self.chat.pending_docs.remove(i);
+                }
+                None => {}
+            }
+        }
         let id = egui::Id::unique("composer-text");
         let generating = self.chat.generating.is_some();
         let can_type = self.server_ready();
@@ -649,7 +694,8 @@ impl CompanionApp {
                     self.stop_generation();
                 }
             } else {
-                let enabled = can_type && !self.chat.input.trim().is_empty();
+                let enabled = can_type
+                    && (!self.chat.input.trim().is_empty() || !self.chat.pending_docs.is_empty());
                 ui.add_enabled_ui(enabled, |ui| {
                     if ui
                         .add(
@@ -668,7 +714,7 @@ impl CompanionApp {
                 });
             }
         });
-        if send && !self.chat.input.trim().is_empty() {
+        if send && (!self.chat.input.trim().is_empty() || !self.chat.pending_docs.is_empty()) {
             self.send_message();
             self.chat.focus_input = true;
         }
