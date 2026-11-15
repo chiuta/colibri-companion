@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Fake `coli` for tests: same JSON contract as the real launcher, no real work."""
+import json, os, signal, subprocess, sys, time
+
+HOME = os.environ.get("COLI_SETUP_HOME") or os.path.expanduser("~/.local/share/colibri-fake")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SPEED = float(os.environ.get("FAKE_COLI_SPEED", "1e9"))        # bytes per second
+LOAD = os.environ.get("FAKE_COLI_LOAD_SECONDS", "4")
+PORT = int(os.environ.get("FAKE_COLI_PORT", "18765"))
+TOTAL = 20e9
+os.makedirs(HOME, exist_ok=True)
+P = lambda n: os.path.join(HOME, n)
+
+CATALOG = [
+    dict(id="fake-small", name="Fake Small 7B", family="fake", repo="fake/small", download_gb=20.0, ram_min_gb=8, ram_good_gb=16,
+         dense_gb=3.0, kind="text", runs="from RAM", summary="a small fake model", status="good", fits=True,
+         reason="fits", recommended=True, license_note="", doc=""),
+    dict(id="fake-huge", name="Fake Huge 1T", family="fake", repo="fake/huge", download_gb=900.0, ram_min_gb=64, ram_good_gb=128,
+         dense_gb=40.0, kind="text", runs="streams experts from the SSD", summary="a huge fake model", status="needs-ram", fits=False,
+         reason="needs 64 GB of RAM; this machine has 32 GB", recommended=False, license_note="", doc=""),
+    dict(id="fake-image", name="Fake Image", family="fake", repo="fake/image", download_gb=30.0, ram_min_gb=8, ram_good_gb=16,
+         dense_gb=5.0, kind="image", runs="from RAM", summary="pictures", status="good", fits=True,
+         reason="fits", recommended=False, license_note="Research licence: non-commercial use only", doc=""),
+]
+
+def read(name):
+    try:
+        with open(P(name), encoding="utf-8") as f: return json.load(f)
+    except Exception: return None
+
+def write(name, obj):
+    tmp = P(name) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f: json.dump(obj, f)
+    os.replace(tmp, P(name))
+
+def alive(pid):
+    if not pid: return False
+    try: os.kill(pid, 0)
+    except OSError: return False
+    # a zombie child of ours still answers kill(0); check /proc when we can
+    try:
+        with open(f"/proc/{pid}/stat") as f: return f.read().split(")")[-1].split()[0] != "Z"
+    except OSError: return True
+
+def urls():
+    b = f"http://127.0.0.1:{PORT}"
+    return {"browser": b + "/", "openai_base_url": b + "/v1", "anthropic_base_url": b}
+
+def server_state():
+    import urllib.request
+    pid = None
+    try: pid = int(open(P("server.pid")).read().split()[0])
+    except Exception: pass
+    up = alive(pid)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/health", timeout=1) as r:
+            ok = json.load(r).get("status") == "ok"
+    except Exception: ok = False
+    state = "ready" if ok else ("loading" if up else "stopped")
+    return {"state": state, "pid": pid if up else None, "urls": urls(), "model": "Fake Small 7B", "backend": "cpu",
+            "model_id": "fake-model" if ok else None, "tokens_per_second": None}
+
+def status():
+    cfg = read("setup.json"); st = read("install-state.json")
+    rep = {"configured": bool(cfg), "config_path": P("setup.json"), "setup": None, "server": None, "install": None}
+    if cfg:
+        rep["setup"] = {"status": cfg.get("status"), "model": cfg.get("model"), "model_dir": cfg.get("model_dir"),
+                        "backend": "cpu", "engine": "fake", "env": {}, "ready": cfg.get("status") == "ready"}
+        rep["server"] = server_state()
+    if st:
+        st = dict(st); st["running"] = alive(st.get("pid")) and st.get("phase") not in ("ready", "error", "done", "started", "interrupted")
+        rep["install"] = st
+    return rep
+
+def do_setup(args):
+    model = args[args.index("--model") + 1] if "--model" in args else "fake-small"
+    entry = next(m for m in CATALOG if m["id"] == model)
+    prev = read("install-state.json") or {}
+    done = prev.get("done", 0.0) if prev.get("model") == model else 0.0
+    def on_int(*_):
+        write("install-state.json", dict(phase="interrupted", pid=os.getpid(), model=model, done=done, total=TOTAL, updated=time.time()))
+        print("interrupted. Run the same command again to continue where it stopped.", file=sys.stderr); sys.exit(130)
+    signal.signal(signal.SIGINT, on_int)
+    write("install-state.json", dict(phase="build", pid=os.getpid(), model=model, updated=time.time()))
+    print("Engine: fake with CPU"); print("  to use the GPU through VULKAN, first run:  sudo apt install libvulkan-dev glslc", flush=True)
+    time.sleep(1.5)
+    t = time.time()
+    while done < TOTAL:
+        time.sleep(0.25); now = time.time(); done = min(TOTAL, done + SPEED * (now - t)); t = now
+        write("install-state.json", dict(phase="download", pid=os.getpid(), model=model, done=done, total=TOTAL, rate=SPEED, updated=now))
+        print(f"  downloading {done / TOTAL * 100:.1f}%", flush=True)
+    write("setup.json", dict(status="ready", model=dict(id=entry["id"], name=entry["name"]), model_dir="/fake/" + entry["id"], port=PORT))
+    write("install-state.json", dict(phase="ready", pid=os.getpid(), model=model, updated=time.time()))
+    print("ready")
+
+def do_start():
+    if server_state()["state"] != "stopped": return
+    log = open(P("serve.log"), "ab")
+    p = subprocess.Popen([sys.executable, os.path.join(HERE, "fake_server.py"), str(PORT), LOAD], stdout=log, stderr=log,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    open(P("server.pid"), "w").write(str(p.pid)); time.sleep(0.5)
+
+def do_stop():
+    try: pid = int(open(P("server.pid")).read().split()[0]); os.kill(pid, signal.SIGTERM)
+    except Exception: pass
+    for _ in range(20):
+        if not server_state()["pid"]: break
+        time.sleep(0.1)
+
+a = sys.argv[1:]
+if a[:1] == ["--version"]: print("colibri fake 0.0")
+elif a[:2] == ["setup", "--list"]: print(json.dumps(CATALOG))
+elif a[:1] == ["status"]: print(json.dumps(status()))
+elif a[:1] == ["setup"]: do_setup(a)
+elif a[:1] == ["start"]: do_start()
+elif a[:1] == ["stop"]: do_stop()
+elif a[:1] == ["logs"]:
+    try: print(open(P("serve.log"), errors="replace").read()[-2000:])
+    except Exception: print("no log yet")
+else: print("unknown command", a, file=sys.stderr); sys.exit(2)

@@ -1,0 +1,46 @@
+# Colibri Companion
+
+[English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · **Italiano** · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · [Magyar](README.hu.md)
+
+Un'app desktop amichevole per [colibri](https://github.com/JustVugg/colibri): scegli un modello adatto al tuo computer, scaricalo con un clic, poi chatta — tutto in locale, senza account e senza cloud.
+
+## Avvio
+
+```bash
+cargo run --release -p colibri-companion            # l'app vera
+cargo run --release -p colibri-companion -- --demo  # demo, senza colibri
+# opzioni: --lang en|ro|fr|it|es|pt|de|hu   --version   --help
+```
+
+### I quattro passi
+
+(1) trova Python e colibri (e propone di scaricare colibri se manca), (2) ti fa scegliere un modello (quelli che non stanno nella RAM sono nascosti; quello consigliato è segnato), (3) scarica e installa con avanzamento, pausa e ripresa, (4) avvia il server e apre la chat.
+
+Chat: risposte in streaming, Stop immediato, Markdown, ragionamento comprimibile, conversazioni salvate, stile (Preciso / Equilibrato / Creativo), copia e rigenera. Temi: chiaro, scuro, alto contrasto.
+
+## Come funziona
+
+L'app non include colibri. Esegue i comandi JSON di colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) e dialoga con il suo gateway compatibile OpenAI su `127.0.0.1`. Non installa mai pacchetti di sistema: se manca qualcosa, ti mostra il comando da copiare. I tuoi dati (impostazioni, conversazioni) restano in locale nella cartella dati dell'utente; `COLIBRI_COMPANION_HOME` può cambiarla.
+
+## Licenze
+
+- Questo progetto: Apache-2.0 (`LICENSE`, `NOTICE`), come colibri.
+- Dipendenze: solo licenze permissive, verificate con `cargo deny check licenses` (`deny.toml`); elenco completo in `THIRD_PARTY_LICENSES.md`. Caratteri: Inter e JetBrains Mono (SIL OFL 1.1, in `licenses/`).
+- I modelli hanno licenze proprie; l'app le mostra e chiede conferma prima del download.
+
+## Piattaforme
+
+Linux (x86-64, ARM64; Wayland e X11), Windows 10/11 e macOS (Intel e Apple Silicon) — un solo codice sorgente, rendering OpenGL (funziona anche su vecchie schede grafiche e in macchine virtuali). `.github/workflows/build.yml` compila e testa ogni variante e produce archivi pronti da distribuire. Su Linux, `packaging/linux/install.sh` aggiunge l'app al menu. Scalatura HiDPI, scorciatoie Ctrl/⌘+N, Ctrl/⌘+, ed Esc, supporto per lettori di schermo (AccessKit).
+
+## Lingue
+
+English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — scelte dalle Impostazioni, con `--lang en|ro|fr|it|es|pt|de|hu`, o in base alla lingua del sistema al primo avvio. Le traduzioni sono in `crates/app/src/i18n.rs` (la chiave è il testo inglese); un test verifica che ogni testo dell'interfaccia abbia tutte le traduzioni. Sono state fatte con l'aiuto di un'IA e non sono state riviste da madrelingua.
+
+## Sviluppo
+
+```bash
+cargo test --workspace   # include un test end-to-end con un `coli` finto (tests/fixtures/fake_colibri)
+cargo clippy --workspace --all-targets
+```
+
+Nuovo: ricerca nelle conversazioni (Ctrl/⌘+K), rinomina (clic destro), modifica dell'ultimo messaggio, file di testo trascinati nel messaggio e salvataggio in .md.

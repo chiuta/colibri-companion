@@ -1,0 +1,46 @@
+# Colibri Companion
+
+[English](README.md) · **Română** · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · [Magyar](README.hu.md)
+
+O aplicație desktop simplă pentru [colibri](https://github.com/JustVugg/colibri): alegi un model potrivit calculatorului tău, îl descarci cu un clic, iar apoi conversezi — totul local, fără cont și fără cloud.
+
+## Pornire
+
+```bash
+cargo run --release -p colibri-companion            # aplicația reală
+cargo run --release -p colibri-companion -- --demo  # demo, fără colibri
+# opțiuni: --lang en|ro|fr|it|es|pt|de|hu   --version   --help
+```
+
+### Cei patru pași
+
+(1) găsește Python și colibri (și îți propune să descarce colibri dacă lipsește), (2) alegi modelul (cele care nu încap în RAM sunt ascunse; cel recomandat e marcat), (3) descarcă și instalează cu progres, pauză și reluare, (4) pornește serverul și deschide chatul.
+
+Chat: răspunsuri în flux, Stop instant, Markdown, raționament pliabil, conversații salvate, stil (Precis / Echilibrat / Creativ), copiere și regenerare. Teme: deschisă, închisă, contrast ridicat.
+
+## Cum funcționează
+
+Aplicația nu include colibri. Rulează comenzile JSON ale lui colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) și vorbește cu gateway-ul OpenAI-compatibil de pe `127.0.0.1`. Nu instalează niciodată pachete de sistem: dacă lipsește ceva, îți arată comanda de copiat. Datele (setări, conversații) stau local în folderul de date al utilizatorului; `COLIBRI_COMPANION_HOME` îl poate schimba.
+
+## Licențe
+
+- Proiectul: Apache-2.0 (`LICENSE`, `NOTICE`), la fel ca colibri.
+- Dependențe: doar licențe permisive, verificate cu `cargo deny check licenses` (`deny.toml`); lista completă în `THIRD_PARTY_LICENSES.md`. Fonturi: Inter și JetBrains Mono (SIL OFL 1.1, în `licenses/`).
+- Modelele au licențe proprii; aplicația le arată și cere confirmarea înainte de descărcare.
+
+## Platforme
+
+Linux (x86-64, ARM64; Wayland și X11), Windows 10/11 și macOS (Intel și Apple Silicon) — un singur cod sursă, randare OpenGL (merge și pe plăci video vechi sau în mașini virtuale). `.github/workflows/build.yml` construiește și testează toate variantele și produce arhive gata de distribuit. Pe Linux, `packaging/linux/install.sh` adaugă aplicația în meniu. Scalare HiDPI, scurtături Ctrl/⌘+N, Ctrl/⌘+, și Esc, suport pentru cititoare de ecran (AccessKit).
+
+## Limbi
+
+English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — alese din Setări, cu `--lang en|ro|fr|it|es|pt|de|hu` sau, la prima pornire, după limba sistemului. Traducerile sunt în `crates/app/src/i18n.rs` (cheia e textul englezesc); un test verifică faptul că fiecare text din interfață are toate traducerile. Au fost făcute cu ajutor AI și nu au fost revizuite de vorbitori nativi.
+
+## Dezvoltare
+
+```bash
+cargo test --workspace   # include un test cap-coadă cu un `coli` fals (tests/fixtures/fake_colibri)
+cargo clippy --workspace --all-targets
+```
+
+Nou: căutare în conversații (Ctrl/⌘+K), redenumire (clic dreapta), editarea ultimului mesaj, fișiere text trase în mesaj și salvarea conversației ca fișier .md.

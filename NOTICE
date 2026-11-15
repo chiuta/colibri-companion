@@ -1,0 +1,18 @@
+Colibri Companion
+Copyright 2026 the Colibri Companion contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product is a graphical front-end for colibri
+(https://github.com/JustVugg/colibri, Apache License 2.0). It does not
+contain colibri source code or binaries; it runs a separate colibri checkout
+that the user installs, and talks to it through its documented `coli` JSON
+commands and its OpenAI-compatible HTTP API.
+
+Language models are downloaded by colibri from their publishers (for example
+on Hugging Face) and are covered by their own licences, shown by this
+application before any download.
+
+Third-party Rust crates and fonts are listed in THIRD_PARTY_LICENSES.md.
+
+Embedded fonts: Inter and JetBrains Mono (SIL Open Font License 1.1, see licenses/).

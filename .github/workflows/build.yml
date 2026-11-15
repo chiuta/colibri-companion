@@ -1,0 +1,50 @@
+name: build
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+permissions: { contents: read }
+
+jobs:
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with: { command: check licenses }
+
+  build:
+    needs: licenses
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  name: linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: linux-aarch64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,   name: windows-x86_64 }
+          - { os: macos-13,       target: x86_64-apple-darwin,      name: macos-intel }
+          - { os: macos-latest,   target: aarch64-apple-darwin,     name: macos-apple-silicon }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}", components: clippy }
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux system libraries
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+      - run: cargo test --workspace --locked
+      - run: cargo build --release --locked -p colibri-companion --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          d=colibri-companion-${{ matrix.name }}; mkdir "$d"
+          cp LICENSE NOTICE README*.md THIRD_PARTY_LICENSES.md "$d"/ && cp -r licenses "$d"/
+          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          cp "target/${{ matrix.target }}/release/colibri-companion$ext" "$d"/
+          if [ "${{ runner.os }}" = "Linux" ]; then cp -r packaging "$d"/; fi
+          if [ "${{ runner.os }}" = "Windows" ]; then 7z a "$d.zip" "$d"; else tar czf "$d.tar.gz" "$d"; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: colibri-companion-${{ matrix.name }}
+          path: colibri-companion-${{ matrix.name }}.*

@@ -1,0 +1,17 @@
+[package]
+name = "colibri-companion"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+
+[dependencies]
+companion-core = { path = "../core" }
+# OpenGL renderer (works on old GPUs and in virtual machines); AccessKit is on for screen readers.
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit", "clipboard", "default_fonts", "system_fonts", "links", "wayland", "x11", "glow",
+] }
+egui = { version = "0.37", default-features = false }
+egui_commonmark = { version = "0.26", default-features = false, features = ["pulldown_cmark"] }
+serde_json.workspace = true

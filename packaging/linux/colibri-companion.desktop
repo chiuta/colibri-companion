@@ -1,0 +1,25 @@
+[Desktop Entry]
+Type=Application
+Name=Colibri Companion
+GenericName=Local AI chat
+Comment=Friendly interface for the colibri local inference engine
+Comment[ro]=Interfață prietenoasă pentru motorul local colibri
+Comment[fr]=Interface conviviale pour le moteur local colibri
+Comment[it]=Interfaccia amichevole per il motore locale colibri
+Comment[es]=Interfaz amigable para el motor local colibri
+Comment[pt]=Interface amigável para o motor local colibri
+Comment[de]=Freundliche Oberfläche für die lokale colibri-Engine
+Comment[hu]=Barátságos felület a helyi colibri motorhoz
+GenericName[ro]=Chat AI local
+GenericName[fr]=Chat IA local
+GenericName[it]=Chat IA locale
+GenericName[es]=Chat de IA local
+GenericName[pt]=Chat de IA local
+GenericName[de]=Lokaler KI-Chat
+GenericName[hu]=Helyi MI-csevegés
+Exec=colibri-companion
+Icon=colibri-companion
+Terminal=false
+Categories=Utility;Education;
+Keywords=AI;LLM;chat;colibri;
+StartupWMClass=colibri-companion
