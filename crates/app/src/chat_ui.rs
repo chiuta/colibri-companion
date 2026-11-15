@@ -143,12 +143,25 @@ impl CompanionApp {
                     if let Some((rid, name)) =
                         self.chat.renaming.as_mut().filter(|(rid, _)| rid == id)
                     {
+                        let edit_id = egui::Id::unique(("rename", rid.as_str()));
+                        let first = !ui.ctx().memory(|m| m.has_focus(edit_id));
+                        let chars = name.chars().count();
                         let r = ui.add_sized(
                             [ui.available_width(), 36.0],
-                            egui::TextEdit::singleline(name).hint_text(new_name_hint),
+                            egui::TextEdit::singleline(name).id(edit_id).hint_text(new_name_hint),
                         );
-                        r.request_focus();
-                        let enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if first {
+                            // the old name starts selected, so typing replaces it
+                            r.request_focus();
+                            if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
+                                st.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(0),
+                                    egui::text::CCursor::new(chars),
+                                )));
+                                egui::TextEdit::store_state(ui.ctx(), edit_id, st);
+                            }
+                        }
+                        let enter = (r.has_focus() || r.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
                         if enter {
                             rename = Some((rid.clone(), name.clone()));

@@ -284,6 +284,7 @@ impl Conversation {
             .chars()
             .take(40)
             .collect();
+        let slug = slug.trim_end_matches('-').to_string();
         let slug = if slug.is_empty() {
             "conversation".to_string()
         } else {
@@ -664,6 +665,9 @@ mod lang_tests {
                 || b.export_file_name().starts_with("Explică-mi-Rust-")
         );
         assert!(b.export_file_name().ends_with(".md"));
+        let mut long = Conversation::new();
+        long.title = "Help me write a polite email asking for a deadline extension".into();
+        assert!(!long.export_file_name().contains("--"));
         assert_eq!(
             Conversation::new().export_file_name().split('-').next(),
             Some("conversation")
