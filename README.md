@@ -2,6 +2,8 @@
 
 **English** · [Română](README.ro.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · [Magyar](README.hu.md)
 
+**Website: https://colibri-companion.chiuta.ro** — download, video tutorials, help.
+
 A friendly desktop app for [colibri](https://github.com/JustVugg/colibri): pick a model that fits your computer, download it in one click, then chat — all local, no account, no cloud.
 
 ## Run
