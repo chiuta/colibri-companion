@@ -45,6 +45,39 @@ impl CancelToken {
     }
 }
 
+/// A socket whose reads wake up regularly to look at the cancel flag.
+///
+/// Shutting a socket down from another thread is not enough on Windows: a read that is
+/// already waiting may keep waiting. Polling every 150 ms works the same everywhere, and
+/// `cancel()` still closes the socket so the server notices and stops.
+pub struct PollingStream {
+    inner: TcpStream,
+    cancel: Option<CancelToken>,
+    /// The caller's own timeout (`None`: wait for as long as it takes).
+    limit: Option<Duration>,
+}
+
+const POLL: Duration = Duration::from_millis(150);
+
+impl Read for PollingStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let started = std::time::Instant::now();
+        loop {
+            if self.cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
+                return Ok(0);
+            }
+            match self.inner.read(buf) {
+                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+                    if self.cancel.is_none() || self.limit.is_some_and(|l| started.elapsed() >= l) {
+                        return Err(e);
+                    }
+                }
+                other => return other,
+            }
+        }
+    }
+}
+
 /// `http://host:port` -> (host, port). Only plain HTTP.
 pub fn parse_authority(base: &str) -> Result<(String, u16), String> {
     if base.starts_with("https://") {
@@ -272,7 +305,7 @@ pub fn send(
     path: &str,
     json_body: Option<&str>,
     opts: &RequestOptions<'_>,
-) -> io::Result<Response<TcpStream>> {
+) -> io::Result<Response<PollingStream>> {
     let (host, port) =
         parse_authority(base).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     let mut last_err = io::Error::new(io::ErrorKind::NotFound, "no address");
@@ -287,7 +320,8 @@ pub fn send(
         }
     }
     let mut stream = stream.ok_or(last_err)?;
-    stream.set_read_timeout(opts.read_timeout)?;
+    let poll = opts.cancel.is_some();
+    stream.set_read_timeout(if poll { Some(opts.read_timeout.map_or(POLL, |l| l.min(POLL))) } else { opts.read_timeout })?;
     stream.set_nodelay(true).ok();
     if let Some(token) = opts.cancel {
         token.attach(&stream);
@@ -310,7 +344,7 @@ pub fn send(
         stream.write_all(body.as_bytes())?;
     }
     stream.flush()?;
-    read_response(stream)
+    read_response(PollingStream { inner: stream, cancel: opts.cancel.cloned(), limit: opts.read_timeout })
 }
 
 #[cfg(test)]
