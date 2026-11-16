@@ -21,12 +21,32 @@ pub fn hide_window(cmd: &mut Command) {
 }
 
 /// Run `cmd` to completion, killing it when `timeout` passes. Output is captured.
-pub fn run_capture(mut cmd: Command, timeout: Duration) -> io::Result<Output> {
+pub fn run_capture(cmd: Command, timeout: Duration) -> io::Result<Output> {
+    run_capture_input(cmd, None, timeout)
+}
+
+/// Like `run_capture`, and feeds `input` to the program's standard input (from a separate
+/// thread, so a program that does not read it cannot block this one).
+pub fn run_capture_input(
+    mut cmd: Command,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+) -> io::Result<Output> {
     hide_window(&mut cmd);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdin(if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
+    if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
+        thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&data);
+        });
+    }
     let mut out = child.stdout.take();
     let mut err = child.stderr.take();
     let t_out = thread::spawn(move || {

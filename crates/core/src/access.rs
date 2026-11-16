@@ -285,6 +285,9 @@ pub fn speech_plan(
             stop: None,
         }),
         "windows" => {
+            // An environment variable holds at most about 32,000 characters on Windows.
+            let text: String = text.chars().take(30_000).collect();
+            let text = text.as_str();
             let script = format!(
                 "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
                  try {{ $s.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::NotSet, [System.Speech.Synthesis.VoiceAge]::NotSet, 0, [System.Globalization.CultureInfo]::new('{code}')) }} catch {{}}; \

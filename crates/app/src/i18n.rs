@@ -6305,6 +6305,17 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Rendszersúgó: Windows Narrátor Win+Ctrl+Enter, Nagyító Win+Plusz; macOS VoiceOver Cmd+F5, Nagyítás Option+Cmd+8; Linux Orca Super+Alt+S.",
         ],
     ),
+    (
+        "The server address is not valid: only http:// servers on this computer or your own network work here.",
+        [
+            "L'adresse du serveur n'est pas valide : seuls les serveurs http:// de cet ordinateur ou de votre réseau fonctionnent ici.",
+            "L'indirizzo del server non è valido: qui funzionano solo server http:// di questo computer o della tua rete.",
+            "La dirección del servidor no es válida: aquí solo funcionan servidores http:// de este ordenador o de tu red.",
+            "O endereço do servidor não é válido: aqui só funcionam servidores http:// deste computador ou da sua rede.",
+            "Die Serveradresse ist ungültig: Hier funktionieren nur http://-Server auf diesem Computer oder in deinem Netz.",
+            "A szervercím érvénytelen: itt csak ezen a számítógépen vagy a saját hálózaton lévő http:// szerverek működnek.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

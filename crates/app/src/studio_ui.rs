@@ -56,11 +56,18 @@ impl CompanionApp {
 
     fn make_picture(&mut self) {
         let endpoint = companion_core::chat::normalize_base(&self.studio.endpoint);
-        if companion_core::connect::check_url(&endpoint).is_err() {
+        // Only this computer or this network: the picture request is sent in plain http.
+        let local = companion_core::net::is_local_base(&endpoint)
+            || companion_core::connect::check_url(&endpoint).is_ok()
+                && companion_core::http::parse_authority(&endpoint).is_ok_and(|(h, _)| {
+                    h.parse::<std::net::Ipv4Addr>()
+                        .is_ok_and(|ip| ip.is_private())
+                });
+        if !local {
             self.studio.result = self
                 .t(
-                    "Adresa serverului nu e bună (https://, sau http:// doar în rețeaua ta).",
-                    "The server address is not valid (https://, or http:// on your own network only).",
+                    "Adresa serverului nu e bună: aici merg doar servere http:// de pe acest calculator sau din rețeaua ta.",
+                    "The server address is not valid: only http:// servers on this computer or your own network work here.",
                 )
                 .into();
             return;

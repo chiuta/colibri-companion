@@ -12,7 +12,6 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::process::Stdio;
 
 pub const MAX_BODY: usize = 8 * 1024 * 1024;
 
@@ -136,10 +135,17 @@ pub fn percent_encode(s: &str) -> String {
     out
 }
 
-/// Like `percent_encode`, but keeps `/` so a path stays a path.
+/// Like `percent_encode`, but keeps `/` so a path stays a path. `.` and `..` steps are encoded
+/// too, so a typed path cannot climb out of the repository.
 fn encode_path(s: &str) -> String {
     s.split('/')
-        .map(percent_encode)
+        .map(|p| {
+            if p == "." || p == ".." {
+                p.replace('.', "%2E")
+            } else {
+                percent_encode(p)
+            }
+        })
         .collect::<Vec<_>>()
         .join("/")
 }
@@ -188,6 +194,9 @@ pub enum Op<'a> {
 
 pub fn build(kind: Kind, base: &str, token: &str, op: &Op) -> Request {
     let base = base.trim().trim_end_matches('/');
+    // `owner/name` goes into the address: each part is encoded so a typed name cannot add a
+    // query, a fragment or a `..` step.
+    let enc_repo = |r: &str| encode_path(r.trim_matches('/'));
     let mut headers = auth_headers(kind, token);
     let url = match (kind, op) {
         (_, Op::Whoami) => format!("{base}/user"),
@@ -201,9 +210,9 @@ pub fn build(kind: Kind, base: &str, token: &str, op: &Op) -> Request {
             // No trailing slash for the top folder: some gateways refuse it.
             let p = encode_path(path.trim_matches('/'));
             if p.is_empty() {
-                format!("{base}/repos/{repo}/contents")
+                format!("{base}/repos/{}/contents", enc_repo(repo))
             } else {
-                format!("{base}/repos/{repo}/contents/{p}")
+                format!("{base}/repos/{}/contents/{p}", enc_repo(repo))
             }
         }
         (Kind::Gitlab, Op::Tree { repo, path }) => format!(
@@ -214,10 +223,14 @@ pub fn build(kind: Kind, base: &str, token: &str, op: &Op) -> Request {
         (Kind::Github, Op::File { repo, path }) => {
             headers.retain(|(k, _)| k != "Accept");
             headers.push(("Accept".into(), "application/vnd.github.raw+json".into()));
-            format!("{base}/repos/{repo}/contents/{}", encode_path(path))
+            format!(
+                "{base}/repos/{}/contents/{}",
+                enc_repo(repo),
+                encode_path(path)
+            )
         }
         (Kind::Gitea, Op::File { repo, path }) => {
-            format!("{base}/repos/{repo}/raw/{}", encode_path(path))
+            format!("{base}/repos/{}/raw/{}", enc_repo(repo), encode_path(path))
         }
         (Kind::Gitlab, Op::File { repo, path }) => format!(
             "{base}/projects/{}/repository/files/{}/raw?ref=HEAD",
@@ -225,7 +238,10 @@ pub fn build(kind: Kind, base: &str, token: &str, op: &Op) -> Request {
             percent_encode(path)
         ),
         (Kind::Github | Kind::Gitea, Op::Issues { repo }) => {
-            format!("{base}/repos/{repo}/issues?state=open&per_page=30")
+            format!(
+                "{base}/repos/{}/issues?state=open&per_page=30",
+                enc_repo(repo)
+            )
         }
         (Kind::Gitlab, Op::Issues { repo }) => format!(
             "{base}/projects/{}/issues?state=opened&per_page=30",
@@ -271,8 +287,18 @@ pub fn webhook(url: &str, json_body: &str) -> Request {
 
 const SCRIPT: &str = r#"
 import os, sys, json, ssl, urllib.request, urllib.error, urllib.parse
-req = json.loads(os.environ["CC_REQUEST"])
+req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 limit = int(os.environ["CC_LIMIT"])
+import ipaddress
+def inner(url):
+    h = urllib.parse.urlsplit(url).hostname or ""
+    if h.lower() == "localhost" or h.lower().endswith(".localhost"):
+        return True
+    try:
+        a = ipaddress.ip_address(h)
+    except ValueError:
+        return False
+    return a.is_loopback or a.is_private or a.is_link_local or a.is_unspecified or a.is_reserved
 class Same(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, r, fp, code, msg, headers, newurl):
         n = urllib.request.HTTPRedirectHandler.redirect_request(self, r, fp, code, msg, headers, newurl)
@@ -286,6 +312,9 @@ class Same(urllib.request.HTTPRedirectHandler):
             for k in list(n.unredirected_hdrs):
                 del n.unredirected_hdrs[k]
         if not newurl.startswith("https://") and not r.full_url.startswith("http://"):
+            return None
+        # A public page must not send the program to this computer or this network.
+        if inner(newurl) and not inner(r.full_url):
             return None
         return n
 data = req["body"].encode("utf-8") if req.get("body") else None
@@ -305,6 +334,32 @@ except Exception as e:
     sys.exit(3)
 "#;
 
+/// A header with a line break in it would split the request in two.
+fn clean_headers(req: &Request) -> Result<(), ConnectError> {
+    for (k, v) in &req.headers {
+        if k.chars().chain(v.chars()).any(char::is_control) {
+            return Err(ConnectError::BadUrl(
+                "a header (the token?) contains a line break or control character",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Takes secrets out of an error message before it is shown.
+fn redact(mut text: String, req: &Request) -> String {
+    for (k, v) in &req.headers {
+        let kl = k.to_ascii_lowercase();
+        if matches!(kl.as_str(), "authorization" | "private-token") {
+            let secret = v.rsplit(' ').next().unwrap_or(v);
+            if secret.len() >= 4 {
+                text = text.replace(secret, "…");
+            }
+        }
+    }
+    text
+}
+
 fn request_json(req: &Request) -> String {
     serde_json::json!({
         "method": req.method,
@@ -319,26 +374,27 @@ fn request_json(req: &Request) -> String {
 /// callers check that; this only validates the address.
 pub fn send(python: Option<&PythonCmd>, req: &Request) -> Result<Vec<u8>, ConnectError> {
     check_url(&req.url)?;
+    clean_headers(req)?;
     let python = python.ok_or(ConnectError::NeedsPython)?;
     let mut cmd = python.command();
     cmd.arg("-I")
         .arg("-c")
         .arg(SCRIPT)
-        .env("CC_REQUEST", request_json(req))
-        .env("CC_LIMIT", MAX_BODY.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let out = cmd
-        .output()
-        .map_err(|e| ConnectError::Network(e.to_string()))?;
+        .env("CC_LIMIT", MAX_BODY.to_string());
+    // On standard input, not in the environment: no size limit, and never visible to other programs.
+    let out = crate::proc::run_capture_input(
+        cmd,
+        Some(request_json(req).into_bytes()),
+        std::time::Duration::from_secs(120),
+    )
+    .map_err(|e| ConnectError::Network(redact(e.to_string(), req)))?;
     if out.status.success() {
         if out.stdout.len() > MAX_BODY {
             return Err(ConnectError::TooBig);
         }
         return Ok(out.stdout);
     }
-    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let err = redact(String::from_utf8_lossy(&out.stderr).trim().to_string(), req);
     if let Some(rest) = err.strip_prefix("HTTP ") {
         let code = rest
             .split_whitespace()
@@ -758,5 +814,48 @@ mod tests {
         let ok = page("https://example.com", "");
         assert_eq!(send(None, &ok), Err(ConnectError::NeedsPython));
         assert!(explain(&ConnectError::Http(401, "x".into()), true).contains("token"));
+    }
+
+    #[test]
+    fn typed_names_cannot_climb_or_add_a_query() {
+        let r = build(
+            Kind::Github,
+            "https://api.github.com",
+            "",
+            &Op::File {
+                repo: "a/b?x=1#y",
+                path: "../../etc/passwd",
+            },
+        );
+        assert!(!r.url.contains('?') && !r.url.contains('#'), "{}", r.url);
+        assert!(!r.url.contains("/../"), "{}", r.url);
+        assert!(r.url.contains("%2E%2E"));
+    }
+
+    #[test]
+    fn a_header_with_a_line_break_is_refused_and_secrets_are_hidden() {
+        let r = build(
+            Kind::Github,
+            "https://api.github.com",
+            "tok\nX: 1",
+            &Op::Whoami,
+        );
+        assert!(clean_headers(&r).is_err());
+        let ok = build(
+            Kind::Github,
+            "https://api.github.com",
+            "ghp_secret123",
+            &Op::Whoami,
+        );
+        assert!(clean_headers(&ok).is_ok());
+        let shown = redact("Invalid header value 'Bearer ghp_secret123'".into(), &ok);
+        assert!(!shown.contains("ghp_secret123"), "{shown}");
+        let gl = build(
+            Kind::Gitlab,
+            "https://gitlab.com/api/v4",
+            "glpat-abcdef",
+            &Op::Whoami,
+        );
+        assert!(!redact("x glpat-abcdef y".into(), &gl).contains("glpat"));
     }
 }

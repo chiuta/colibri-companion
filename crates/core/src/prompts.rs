@@ -346,12 +346,36 @@ pub fn placeholders(text: &str) -> Vec<String> {
 
 /// Puts the typed values in the places; places left empty stay as they are.
 pub fn fill(text: &str, values: &[(String, String)]) -> String {
-    let mut out = text.to_string();
-    for (name, v) in values {
-        if !v.trim().is_empty() {
-            out = out.replace(&format!("[{name}]"), v.trim());
+    // One pass over the text, so a typed value that itself contains "[OTHER]" is never filled again.
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(a) = rest.find('[') {
+        out.push_str(&rest[..a]);
+        let after = &rest[a + 1..];
+        match after.find(']') {
+            Some(b) => {
+                let name = &after[..b];
+                match values
+                    .iter()
+                    .find(|(n, v)| n == name && !v.trim().is_empty())
+                {
+                    Some((_, v)) => {
+                        out.push_str(v.trim());
+                        rest = &after[b + 1..];
+                    }
+                    None => {
+                        out.push('[');
+                        rest = after;
+                    }
+                }
+            }
+            None => {
+                out.push('[');
+                rest = after;
+            }
         }
     }
+    out.push_str(rest);
     out
 }
 
@@ -570,6 +594,10 @@ mod tests {
             &[("NAME".into(), " Ana ".into()), ("TOPIC".into(), "".into())],
         );
         assert!(out.starts_with("Write to Ana about [TOPIC]. Tell Ana"));
+        // a value that contains another place's name is left as typed
+        let t2 = "[A] and [B]";
+        let o2 = fill(t2, &[("A".into(), "[B]".into()), ("B".into(), "x".into())]);
+        assert_eq!(o2, "[B] and x");
     }
 
     #[test]

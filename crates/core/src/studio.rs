@@ -501,7 +501,7 @@ pub fn image_from_response(body: &str) -> Result<Vec<u8>, String> {
     let bytes = base64_decode(b64).ok_or_else(|| "the picture is not valid base64".to_string())?;
     let known = bytes.starts_with(&[0x89, b'P', b'N', b'G'])
         || bytes.starts_with(&[0xFF, 0xD8])
-        || bytes.starts_with(b"RIFF");
+        || (bytes.len() > 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP");
     if !known {
         return Err("the answer is not a PNG, JPEG or WebP picture".into());
     }
@@ -511,7 +511,7 @@ pub fn image_from_response(body: &str) -> Result<Vec<u8>, String> {
 pub fn extension_of(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(&[0xFF, 0xD8]) {
         "jpg"
-    } else if bytes.starts_with(b"RIFF") {
+    } else if bytes.len() > 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
         "webp"
     } else {
         "png"
@@ -571,6 +571,9 @@ mod tests {
             "no such model"
         );
         assert!(image_from_response("<html>").is_err());
+        // RIFF is also WAV and AVI: only WEBP counts as a picture
+        let wav = "UklGRiQAAABXQVZFZm10IBAAAAA="; // RIFF....WAVEfmt
+        assert!(image_from_response(&format!(r#"{{"data":[{{"b64_json":"{wav}"}}]}}"#)).is_err());
         assert!(image_from_response(r#"{"data":[]}"#).is_err());
         let b = image_request("a cat", "1024x1024", "m");
         assert!(b.contains("b64_json") && b.contains("a cat"));

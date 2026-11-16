@@ -173,18 +173,28 @@ pub fn data_url(mime: &str, bytes: &[u8]) -> String {
 /// Visible text of an HTML page: scripts, styles and tags dropped, a few entities decoded.
 pub fn html_to_text(html: &str) -> String {
     let lower = html.to_ascii_lowercase();
+    // Where the last closing tag of each kind is: an unclosed `<script>` repeated thousands of
+    // times must not make every one of them search to the end of the page.
+    let last_close: Vec<Option<usize>> = ["script", "style", "head"]
+        .iter()
+        .map(|t| lower.rfind(&format!("</{t}")))
+        .collect();
     let mut out = String::with_capacity(html.len() / 2);
     let (mut i, bytes) = (0, html.as_bytes());
     while i < bytes.len() {
         if bytes[i] == b'<' {
             let rest = &lower[i..];
-            let skip_to = ["script", "style", "head"].iter().find_map(|t| {
-                rest.strip_prefix('<')
-                    .filter(|r| {
-                        r.starts_with(t) && r[t.len()..].starts_with(['>', ' ', '\t', '\n'])
-                    })
-                    .and_then(|_| lower[i..].find(&format!("</{t}")).map(|e| i + e))
-            });
+            let skip_to = ["script", "style", "head"]
+                .iter()
+                .enumerate()
+                .find_map(|(n, t)| {
+                    rest.strip_prefix('<')
+                        .filter(|r| {
+                            r.starts_with(t) && r[t.len()..].starts_with(['>', ' ', '\t', '\n'])
+                        })
+                        .filter(|_| last_close[n].is_some_and(|l| l >= i))
+                        .and_then(|_| lower[i..].find(&format!("</{t}")).map(|e| i + e))
+                });
             if let Some(end) = skip_to {
                 i = lower[end..].find('>').map_or(bytes.len(), |g| end + g + 1);
                 continue;
@@ -221,6 +231,14 @@ import re, sys, zipfile, html
 path = sys.argv[1]
 z = zipfile.ZipFile(path)
 names = z.namelist()
+LIMIT = 100 * 1024 * 1024
+TOTAL = [0]
+def rd(n):
+    info = z.getinfo(n)
+    TOTAL[0] += info.file_size
+    if info.file_size > LIMIT or TOTAL[0] > 3 * LIMIT:
+        sys.exit("a part inside this file is far bigger than it should be (refused)")
+    return z.read(n)
 def text_of(xml):
     xml = re.sub(r"</(w:p|a:p|text:p|text:h|row|table:table-row)>", "\n", xml)
     xml = re.sub(r"<w:tab/>|</(a:tc|table:table-cell)>", "\t", xml)
@@ -228,20 +246,20 @@ def text_of(xml):
     return html.unescape(xml)
 out = []
 if "word/document.xml" in names:
-    out.append(text_of(z.read("word/document.xml").decode("utf-8", "replace")))
+    out.append(text_of(rd("word/document.xml").decode("utf-8", "replace")))
 elif any(n.startswith("ppt/slides/slide") for n in names):
     slides = sorted((n for n in names if re.match(r"ppt/slides/slide\d+\.xml$", n)), key=lambda n: int(re.findall(r"\d+", n)[0]))
     for i, n in enumerate(slides, 1):
-        out.append("--- slide %d ---\n%s" % (i, text_of(z.read(n).decode("utf-8", "replace"))))
+        out.append("--- slide %d ---\n%s" % (i, text_of(rd(n).decode("utf-8", "replace"))))
 elif "xl/workbook.xml" in names:
     shared = []
     if "xl/sharedStrings.xml" in names:
-        for si in re.findall(r"<si>(.*?)</si>", z.read("xl/sharedStrings.xml").decode("utf-8", "replace"), re.S):
+        for si in re.findall(r"<si>(.*?)</si>", rd("xl/sharedStrings.xml").decode("utf-8", "replace"), re.S):
             shared.append(html.unescape("".join(re.findall(r"<t[^>]*>(.*?)</t>", si, re.S))))
     sheets = sorted(n for n in names if re.match(r"xl/worksheets/sheet\d+\.xml$", n))
     for n in sheets:
         out.append("--- %s ---" % n.split("/")[-1])
-        for row in re.findall(r"<row[^>]*>(.*?)</row>", z.read(n).decode("utf-8", "replace"), re.S):
+        for row in re.findall(r"<row[^>]*>(.*?)</row>", rd(n).decode("utf-8", "replace"), re.S):
             cells = []
             for attrs, body in re.findall(r"<c([^>]*?)(?:/>|>(.*?)</c>)", row, re.S):
                 v = re.search(r"<v>(.*?)</v>", body or "", re.S)
@@ -253,7 +271,7 @@ elif "xl/workbook.xml" in names:
                 cells.append(val)
             out.append("\t".join(cells))
 elif "content.xml" in names:
-    out.append(text_of(z.read("content.xml").decode("utf-8", "replace")))
+    out.append(text_of(rd("content.xml").decode("utf-8", "replace")))
 else:
     sys.exit("not a document this reader knows")
 sys.stdout.buffer.write("\n".join(out).encode("utf-8"))
@@ -269,10 +287,19 @@ r = PdfReader(sys.argv[1])
 sys.stdout.buffer.write("\n\n".join((p.extract_text() or "") for p in r.pages).encode("utf-8"))
 "#;
 
+/// A relative file name that starts with `-` would be read as an option by the helper programs.
+fn dash_safe(path: &Path) -> std::path::PathBuf {
+    if path.is_relative() && path.to_string_lossy().starts_with('-') {
+        Path::new(".").join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 fn pdf_text(python: Option<&PythonCmd>, path: &Path) -> Result<String, AttachError> {
     // poppler first: fast and the most faithful to the layout
     let mut c = Command::new("pdftotext");
-    c.args(["-layout", "-q"]).arg(path).arg("-");
+    c.args(["-layout", "-q"]).arg(dash_safe(path)).arg("-");
     hide_window(&mut c);
     if let Ok(out) = run_capture(c, Duration::from_secs(60)) {
         if out.status.success() {
@@ -281,7 +308,7 @@ fn pdf_text(python: Option<&PythonCmd>, path: &Path) -> Result<String, AttachErr
     }
     let py = python.ok_or(AttachError::NeedsTool("pdftotext or pypdf"))?;
     let mut c = py.command();
-    c.args(["-I", "-c", PDF_SCRIPT]).arg(path);
+    c.args(["-I", "-c", PDF_SCRIPT]).arg(dash_safe(path));
     hide_window(&mut c);
     let out =
         run_capture(c, Duration::from_secs(90)).map_err(|e| AttachError::Failed(e.to_string()))?;
@@ -300,7 +327,7 @@ fn pdf_text(python: Option<&PythonCmd>, path: &Path) -> Result<String, AttachErr
 
 fn office_text(python: &PythonCmd, path: &Path) -> Result<String, AttachError> {
     let mut c = python.command();
-    c.args(["-I", "-c", OFFICE_SCRIPT]).arg(path);
+    c.args(["-I", "-c", OFFICE_SCRIPT]).arg(dash_safe(path));
     hide_window(&mut c);
     let out =
         run_capture(c, Duration::from_secs(60)).map_err(|e| AttachError::Failed(e.to_string()))?;
@@ -723,5 +750,27 @@ z.close()
                 .iter()
                 .all(|p| p.chars().count() <= 5000)
         );
+    }
+
+    #[test]
+    fn unclosed_tags_by_the_thousand_do_not_take_forever() {
+        let page = "<script>x ".repeat(20_000)
+            + "<style>y".repeat(20_000).as_str()
+            + "<head >".repeat(20_000).as_str()
+            + "end";
+        let t0 = std::time::Instant::now();
+        let text = html_to_text(&page);
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            t0.elapsed()
+        );
+        assert!(text.contains("end"));
+    }
+
+    #[test]
+    fn a_dash_name_is_not_taken_for_an_option() {
+        assert_eq!(dash_safe(Path::new("-opw")), Path::new("./-opw"));
+        assert_eq!(dash_safe(Path::new("/tmp/-opw")), Path::new("/tmp/-opw"));
     }
 }
