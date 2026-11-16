@@ -49,12 +49,11 @@ impl Registry {
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        fs::write(
+        crate::store::write_atomic(
             path,
-            serde_json::to_string_pretty(self).map_err(std::io::Error::other)?,
+            serde_json::to_string_pretty(self)
+                .map_err(std::io::Error::other)?
+                .as_bytes(),
         )
     }
 

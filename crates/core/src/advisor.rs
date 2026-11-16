@@ -27,6 +27,7 @@ pub fn best_vram_gb(gpus: &[GpuInfo]) -> Option<f64> {
     gpus.iter()
         .filter(|g| !g.integrated)
         .filter_map(|g| g.vram_gb)
+        .filter(|v| v.is_finite() && *v > 0.0)
         .fold(None, |m: Option<f64>, v| Some(m.map_or(v, |x| x.max(v))))
 }
 
@@ -291,13 +292,23 @@ pub enum Why {
 /// Without a fast drive (or before the drive was tested) only models that run from memory are
 /// offered; with a fast drive a streaming model is offered when memory reaches colibri's "good".
 /// "Most capable" is taken as the largest download, the only size the catalogue gives.
+/// "Run well" is the catalogue's own memory figure plus a drive that tested fast; it is not a
+/// speed promise. Colibri's own README measures its 167 GB DeepSeek V4 Flash at about 1 token per
+/// second on 32 GB of RAM, so a streaming pick is a model that RUNS, slowly: use
+/// [`crate::estimate::estimate`] for the range to show next to it.
 pub fn recommend(
     models: &[crate::coli::ModelInfo],
     ram_total_gb: f64,
     drive: Option<crate::diskbench::DiskClass>,
 ) -> Option<(&crate::coli::ModelInfo, Why)> {
     let usable = usable_ram_gb(ram_total_gb);
-    let chat = |m: &&crate::coli::ModelInfo| m.is_chat_model() && m.status != "unsupported";
+    // a catalogue entry with no usable size (missing, zero, NaN) cannot be judged, so it is not offered
+    let chat = |m: &&crate::coli::ModelInfo| {
+        m.is_chat_model()
+            && m.status != "unsupported"
+            && m.download_gb.is_finite()
+            && m.download_gb > 0.0
+    };
     let in_memory = models
         .iter()
         .filter(chat)
@@ -365,5 +376,34 @@ mod recommend_tests {
             recommend(&cat, 32.0, Some(DiskClass::Slow)).unwrap().0.id,
             "mid"
         );
+    }
+
+    #[test]
+    fn an_entry_without_a_usable_size_is_never_recommended() {
+        for bad in [f64::NAN, f64::INFINITY, 0.0, -4.0] {
+            let cat = [
+                m("broken", bad, 6.0, 10.0, true),
+                m("ok", 8.0, 6.0, 10.0, false),
+            ];
+            let (pick, _) = recommend(&cat, 64.0, Some(DiskClass::Fast)).unwrap();
+            assert_eq!(pick.id, "ok", "{bad}");
+        }
+        assert!(recommend(&[], 64.0, None).is_none());
+        assert!(recommend(&[m("x", 8.0, 6.0, 10.0, false)], f64::NAN, None).is_none());
+    }
+
+    #[test]
+    fn a_nonsense_graphics_memory_figure_is_ignored() {
+        let g = |v| GpuInfo {
+            name: "x".into(),
+            vendor: Vendor::Nvidia,
+            vram_gb: Some(v),
+            integrated: false,
+        };
+        assert_eq!(
+            best_vram_gb(&[g(f64::NAN), g(8.0), g(-3.0), g(f64::INFINITY)]),
+            Some(8.0)
+        );
+        assert_eq!(best_vram_gb(&[g(f64::NAN)]), None);
     }
 }

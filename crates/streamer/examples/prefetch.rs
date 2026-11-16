@@ -15,17 +15,31 @@ fn arg(name: &str) -> Option<String> {
         .and_then(|i| a.get(i + 1).cloned())
 }
 
+fn or_exit<T>(r: Result<T, String>) -> T {
+    r.unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        std::process::exit(1)
+    })
+}
+
+fn number<T: std::str::FromStr>(name: &str) -> Option<T> {
+    arg(name).map(|v| {
+        or_exit(
+            v.parse()
+                .map_err(|_| format!("{name} needs a number, got `{v}`")),
+        )
+    })
+}
+
 fn main() {
-    let tokens: usize = arg("--tokens").and_then(|v| v.parse().ok()).unwrap_or(1500);
+    let tokens: usize = number("--tokens").unwrap_or(1500);
     let (label, ne, trace) = if let Some(f) = arg("--trace") {
-        let ne: u32 = arg("--experts")
-            .and_then(|v| v.parse().ok())
-            .expect("--experts N");
-        let t = parse_trace(&std::fs::read_to_string(&f).expect("read trace"), ne);
+        let ne: u32 = or_exit(number("--experts").ok_or("--trace needs --experts N".to_string()));
+        let t = or_exit(read_trace_file(&f, ne));
         (format!("{f}: a REAL trace"), ne, t)
     } else if let Some(f) = arg("--usage") {
-        let u = parse_usage(&std::fs::read_to_string(&f).expect("read usage")).expect("usage");
-        let k: usize = arg("--k").and_then(|v| v.parse().ok()).unwrap_or(8);
+        let u = or_exit(read_usage_file(&f));
+        let k: usize = number("--k").unwrap_or(8);
         let t = u.sample_trace(k, tokens, 42);
         (
             format!("{f}: SAMPLED from popularity, layers independent by construction"),

@@ -1118,18 +1118,19 @@ impl CompanionApp {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "colibri".into());
                 let fresh = root.with_file_name(format!("{name}-update"));
-                let _ = std::fs::remove_dir_all(&fresh);
-                zip_with_python(&py, &fresh, tx, &ctx).and_then(|_| {
-                    let stamp = update::iso_now().replace([':', '-'], "");
-                    let old = root.with_file_name(format!("{name}-old-{stamp}"));
-                    std::fs::rename(&root, &old).map_err(|e| e.to_string())?;
-                    if let Err(e) = std::fs::rename(&fresh, &root) {
-                        let _ = std::fs::rename(&old, &root); // put the old one back
-                        return Err(e.to_string());
-                    }
-                    update::write_fetched_marker(&root);
-                    Ok(())
-                })
+                update::prepare_update_dir(&fresh)
+                    .and_then(|_| zip_with_python(&py, &fresh, tx, &ctx))
+                    .and_then(|_| {
+                        let stamp = update::iso_now().replace([':', '-'], "");
+                        let old = root.with_file_name(format!("{name}-old-{stamp}"));
+                        std::fs::rename(&root, &old).map_err(|e| e.to_string())?;
+                        if let Err(e) = std::fs::rename(&fresh, &root) {
+                            let _ = std::fs::rename(&old, &root); // put the old one back
+                            return Err(e.to_string());
+                        }
+                        update::write_fetched_marker(&root);
+                        Ok(())
+                    })
             } else {
                 Err("Python was not found".into())
             };
@@ -1180,10 +1181,13 @@ impl CompanionApp {
     }
 
     pub fn pause_install(&mut self) {
+        // Only a process the status says is running: a pid left in a state file may belong to
+        // another program by now.
         let pid = self
             .status
             .as_ref()
             .and_then(|s| s.install.as_ref())
+            .filter(|i| i.running)
             .and_then(|i| i.pid);
         if let (Some(coli), Some(pid)) = (&self.coli, pid) {
             let _ = coli.pause_install(pid);
@@ -1823,7 +1827,15 @@ impl CompanionApp {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(format!("preview.{}", b.extension()));
         match std::fs::write(&path, &b.code) {
-            Ok(()) => companion_core::proc::open_externally(&path.display().to_string()),
+            // Scripts (.py, .sh, .js…) are refused by the opener: a preview must never run code.
+            Ok(()) if companion_core::proc::open_externally(&path.display().to_string()) => {}
+            Ok(()) => self.toast(
+                self.t(
+                    "Previzualizarea nu a putut fi deschisă",
+                    "Could not open the preview",
+                )
+                .to_string(),
+            ),
             Err(e) => self.toast(format!(
                 "{}: {e}",
                 self.t(

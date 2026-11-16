@@ -54,14 +54,69 @@ impl Params {
         }
     }
 
-    /// Time of one request on an idle drive.
+    /// Why these numbers cannot describe a drive, if they cannot. The model functions never
+    /// panic or return NaN on bad input, but their answer is only meaningful when this is `Ok`.
+    pub fn validate(&self) -> Result<(), String> {
+        let pos = |v: f64, what: &str| {
+            if v.is_finite() && v > 0.0 {
+                Ok(())
+            } else {
+                Err(format!("{what} must be a positive number, got {v}"))
+            }
+        };
+        pos(self.expert_bytes, "expert size")?;
+        pos(self.seq_bw, "single-request bandwidth")?;
+        pos(self.rand_bw, "bandwidth ceiling")?;
+        if !(self.latency.is_finite() && self.latency >= 0.0) {
+            return Err(format!("latency must be 0 or more, got {}", self.latency));
+        }
+        if !(self.compute.is_finite() && self.compute >= 0.0) {
+            return Err(format!(
+                "compute time must be 0 or more, got {}",
+                self.compute
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.hit_rate) {
+            return Err(format!(
+                "hit rate must be within 0..=1, got {}",
+                self.hit_rate
+            ));
+        }
+        if self.layers == 0 {
+            return Err("layers must be at least 1".into());
+        }
+        Ok(())
+    }
+
+    /// Time of one request on an idle drive; infinite when the drive has no usable speed.
     fn request_time(&self) -> f64 {
-        self.latency + self.expert_bytes / self.seq_bw
+        if usable(self.seq_bw) {
+            self.latency + self.expert_bytes / self.seq_bw
+        } else {
+            f64::INFINITY
+        }
+    }
+
+    /// Experts that must be read per layer. The small epsilon keeps float noise such as
+    /// `10 * (1 - 0.7) = 3.0000000000000004` from costing a whole extra read.
+    fn reads(&self) -> u32 {
+        let hit = if self.hit_rate.is_finite() {
+            self.hit_rate.clamp(0.0, 1.0)
+        } else {
+            0.0 // unknown: assume no help
+        };
+        (self.experts_per_layer as f64 * (1.0 - hit) - 1e-9)
+            .ceil()
+            .max(0.0) as u32
     }
 
     /// Drive throughput in bytes per second with `q` requests in flight.
     pub fn throughput(&self, q: u32) -> f64 {
-        (q.max(1) as f64 * self.expert_bytes / self.request_time()).min(self.rand_bw)
+        let t = self.request_time();
+        if !t.is_finite() || t <= 0.0 || !usable(self.rand_bw) {
+            return 0.0;
+        }
+        (q.max(1) as f64 * self.expert_bytes / t).min(self.rand_bw)
     }
 
     /// Smallest queue depth (1..=64) that reaches 95% of the ceiling.
@@ -74,9 +129,12 @@ impl Params {
     /// Read time for one layer at queue depth `q`.
     pub fn layer_io(&self, q: u32) -> f64 {
         let q = q.max(1);
-        let reads = (self.experts_per_layer as f64 * (1.0 - self.hit_rate)).ceil() as u32;
+        let reads = self.reads();
         if reads == 0 {
             return 0.0;
+        }
+        if !usable(self.rand_bw) || !self.request_time().is_finite() {
+            return f64::INFINITY; // a drive with no speed never finishes; avoids 0 * inf = NaN
         }
         let full = reads / q;
         let rest = reads % q;
@@ -84,27 +142,54 @@ impl Params {
             self.request_time()
                 .max(n as f64 * self.expert_bytes / self.rand_bw)
         };
-        full as f64 * wave(q) + if rest > 0 { wave(rest) } else { 0.0 }
+        let mut t = 0.0;
+        if full > 0 {
+            t += full as f64 * wave(q);
+        }
+        if rest > 0 {
+            t += wave(rest);
+        }
+        t
     }
 
     /// Seconds per token, reading and computing one layer after the other.
     pub fn token_time_serial(&self, q: u32) -> f64 {
+        if self.layers == 0 {
+            return 0.0;
+        }
         self.layers as f64 * (self.layer_io(q) + self.compute)
     }
 
     /// Seconds per token when the reads of layer L+1 run during the compute of layer L.
     pub fn token_time_overlapped(&self, q: u32) -> f64 {
+        if self.layers == 0 {
+            return 0.0;
+        }
         let io = self.layer_io(q);
         let n = self.layers as f64;
-        io + (n - 1.0).max(0.0) * io.max(self.compute) + self.compute
+        io + (n - 1.0) * io.max(self.compute) + self.compute
     }
 
+    /// Tokens per second; 0 when the time per token is zero or unbounded (no usable estimate).
     pub fn tokens_per_s_serial(&self, q: u32) -> f64 {
-        1.0 / self.token_time_serial(q)
+        rate(self.token_time_serial(q))
     }
 
     pub fn tokens_per_s_overlapped(&self, q: u32) -> f64 {
-        1.0 / self.token_time_overlapped(q)
+        rate(self.token_time_overlapped(q))
+    }
+}
+
+/// A bandwidth that can be divided by: finite and positive.
+fn usable(v: f64) -> bool {
+    v.is_finite() && v > 0.0
+}
+
+fn rate(t: f64) -> f64 {
+    if t.is_finite() && t > 0.0 {
+        1.0 / t
+    } else {
+        0.0
     }
 }
 
@@ -162,5 +247,62 @@ mod tests {
         assert!(
             Params::measured(200.0).tokens_per_s_serial(8) < Params::sata().tokens_per_s_serial(8)
         );
+    }
+
+    #[test]
+    fn a_drive_with_no_speed_gives_zero_tokens_per_second_never_nan() {
+        for (seq, rand) in [
+            (0.0, 3e9),
+            (3e9, 0.0),
+            (-1.0, 3e9),
+            (f64::NAN, 3e9),
+            (3e9, f64::NAN),
+        ] {
+            let mut p = Params::nvme();
+            (p.seq_bw, p.rand_bw) = (seq, rand);
+            for q in [0, 1, 8, 64] {
+                for v in [
+                    p.tokens_per_s_serial(q),
+                    p.tokens_per_s_overlapped(q),
+                    p.throughput(q),
+                ] {
+                    assert!(
+                        v.is_finite() && v >= 0.0,
+                        "seq {seq} rand {rand} q {q}: {v}"
+                    );
+                }
+                assert!(!p.layer_io(q).is_nan());
+            }
+            assert!(p.validate().is_err());
+        }
+        assert!(Params::measured(0.0).validate().is_err());
+    }
+
+    #[test]
+    fn no_layers_is_no_estimate_in_both_modes() {
+        let mut p = Params::nvme();
+        p.layers = 0;
+        assert_eq!(p.tokens_per_s_serial(4), 0.0);
+        assert_eq!(p.tokens_per_s_overlapped(4), 0.0);
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn float_noise_does_not_add_a_read() {
+        let mut p = Params::nvme();
+        p.experts_per_layer = 10;
+        p.hit_rate = 0.7; // 10 * (1 - 0.7) = 3.0000000000000004 in f64: a plain ceil() says 4
+        assert_eq!(p.reads(), 3);
+        p.hit_rate = f64::NAN;
+        assert_eq!(p.reads(), 10);
+        p.hit_rate = 7.0; // out of range: clamped, not a negative read count
+        assert_eq!(p.reads(), 0);
+    }
+
+    #[test]
+    fn the_defaults_are_valid() {
+        for p in [Params::nvme(), Params::sata(), Params::measured(1800.0)] {
+            assert!(p.validate().is_ok());
+        }
     }
 }

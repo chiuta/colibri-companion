@@ -16,14 +16,42 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Write through a temporary file so a crash never leaves half a file behind.
+/// Write through a temporary file so a crash never leaves half a file behind. The temporary
+/// name is unique (a neighbouring `x.tmp` is never touched, two writers never share one), the
+/// data is flushed to disk before the rename, and on Unix the file is private to its owner:
+/// settings hold the API key and conversations hold what the person wrote.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, bytes)?;
-    fs::rename(&tmp, path)
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(
+        ".{}-{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let tmp = path.with_file_name(name);
+    let result = (|| {
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 // ------------------------------------------------------------------ settings
@@ -231,11 +259,48 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Reads the settings. A file that cannot be read at all is kept beside the original as
+    /// `settings.json.bad` (the next save would otherwise overwrite it) and the defaults are used.
+    /// A file with one wrong value keeps every other value: only the unreadable setting resets.
     pub fn load_from(path: &Path) -> Self {
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default()
+        let Ok(text) = fs::read_to_string(path) else {
+            return Self::default();
+        };
+        let value: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => {
+                let mut bad = path.as_os_str().to_os_string();
+                bad.push(".bad");
+                let _ = fs::copy(path, PathBuf::from(bad));
+                return Self::default();
+            }
+        };
+        let mut s = serde_json::from_value::<Settings>(value.clone()).unwrap_or_else(|_| {
+            let mut good = serde_json::Map::new();
+            if let Some(obj) = value.as_object() {
+                for (k, v) in obj {
+                    let mut one = serde_json::Map::new();
+                    one.insert(k.clone(), v.clone());
+                    if serde_json::from_value::<Settings>(one.into()).is_ok() {
+                        good.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            serde_json::from_value(good.into()).unwrap_or_default()
+        });
+        s.sanitize();
+        s
+    }
+
+    /// Brings values a hand-edited file could make harmful back into a usable range.
+    pub fn sanitize(&mut self) {
+        if !self.font_scale.is_finite() {
+            self.font_scale = 1.1;
+        }
+        self.font_scale = self.font_scale.clamp(0.6, 3.0);
+        if self.server_url.trim().is_empty() {
+            self.server_url = "http://127.0.0.1:8000".into();
+        }
     }
     pub fn load() -> Self {
         Self::load_from(&paths::settings_file())
@@ -456,6 +521,12 @@ impl ConversationStore {
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
             .collect();
+        // never a nameless ".json" (the names already on disk stay as they are)
+        let safe = if safe.is_empty() {
+            "_".to_string()
+        } else {
+            safe
+        };
         self.dir.join(format!("{safe}.json"))
     }
     pub fn save(&self, c: &Conversation) -> io::Result<()> {
@@ -798,5 +869,76 @@ mod lang_tests {
         assert!(b.title.ends_with("(2)"));
         assert_eq!(c.messages.len(), 4);
         assert_eq!(c.branch_at(99, "x").messages.len(), 4);
+    }
+
+    #[test]
+    fn a_neighbouring_tmp_file_survives_and_nothing_is_left_behind() {
+        let dir = temp("atomic");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("settings.tmp"), b"mine").unwrap();
+        write_atomic(&dir.join("settings.json"), b"{}").unwrap();
+        assert_eq!(fs::read(dir.join("settings.tmp")).unwrap(), b"mine");
+        assert_eq!(fs::read(dir.join("settings.json")).unwrap(), b"{}");
+        let names: Vec<_> = fs::read_dir(&dir).unwrap().flatten().collect();
+        assert_eq!(names.len(), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn written_files_are_private_to_their_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("mode");
+        write_atomic(&dir.join("s.json"), b"{}").unwrap();
+        let mode = fs::metadata(dir.join("s.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o077, 0, "{mode:o}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_wrong_setting_does_not_reset_the_others() {
+        let dir = temp("lenient");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"font_scale":"big","theme":"Dark","api_key":"k","unknown":1}"#,
+        )
+        .unwrap();
+        let s = Settings::load_from(&path);
+        assert_eq!(s.theme, Theme::Dark);
+        assert_eq!(s.api_key, "k");
+        assert_eq!(s.font_scale, Settings::default().font_scale);
+        // absurd values from a hand edit are brought back into range
+        fs::write(&path, r#"{"font_scale":0.0,"server_url":" "}"#).unwrap();
+        let s = Settings::load_from(&path);
+        assert!(s.font_scale >= 0.6);
+        assert_eq!(s.server_url, "http://127.0.0.1:8000");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_corrupt_settings_file_is_kept_aside_not_lost() {
+        let dir = temp("corrupt");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, b"{ \"api_key\": \"secret\" ").unwrap();
+        let s = Settings::load_from(&path);
+        assert_eq!(s, Settings::load_from(&dir.join("missing.json")));
+        assert!(
+            fs::read_to_string(dir.join("settings.json.bad"))
+                .unwrap()
+                .contains("secret")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_id_with_no_usable_characters_still_gets_a_name() {
+        let store = ConversationStore::at(PathBuf::from("/tmp/x"));
+        assert_eq!(store.file("///"), PathBuf::from("/tmp/x/_.json"));
     }
 }

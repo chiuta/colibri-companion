@@ -10,6 +10,15 @@
 <meta property="og:description" content="Free, open-source, 100% local. Pick a model in one click and chat. Windows, macOS, Linux.">
 <meta property="og:image" content="https://colibri-companion.chiuta.ro/assets/img/chat.webp">
 <meta property="og:type" content="website">
+<link rel="alternate" hreflang="en" href="https://colibri-companion.chiuta.ro/?lang=en">
+<link rel="alternate" hreflang="ro" href="https://colibri-companion.chiuta.ro/?lang=ro">
+<link rel="alternate" hreflang="fr" href="https://colibri-companion.chiuta.ro/?lang=fr">
+<link rel="alternate" hreflang="it" href="https://colibri-companion.chiuta.ro/?lang=it">
+<link rel="alternate" hreflang="es" href="https://colibri-companion.chiuta.ro/?lang=es">
+<link rel="alternate" hreflang="pt" href="https://colibri-companion.chiuta.ro/?lang=pt">
+<link rel="alternate" hreflang="de" href="https://colibri-companion.chiuta.ro/?lang=de">
+<link rel="alternate" hreflang="hu" href="https://colibri-companion.chiuta.ro/?lang=hu">
+<link rel="alternate" hreflang="x-default" href="https://colibri-companion.chiuta.ro/">
 <link rel="icon" type="image/png" href="assets/img/icon.png">
 <link rel="preload" href="assets/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <style>
@@ -428,6 +437,8 @@ function apply(l){
   document.querySelectorAll(".gal figure").forEach(function(f){f.querySelector("img").alt=f.querySelector("figcaption").textContent});
   document.getElementById("lang").value=cur;
   document.title="Colibri Companion — "+tr("hero_title");
+  var md=document.querySelector('meta[name="description"]'); if(md&&tr("meta_desc"))md.setAttribute("content",tr("meta_desc"));
+  var od=document.querySelector('meta[property="og:description"]'); if(od&&tr("meta_desc"))od.setAttribute("content",tr("meta_desc"));
   if(!mine) osName.textContent="";
   subs();
   try{localStorage.setItem("cc-lang",cur)}catch(e){}

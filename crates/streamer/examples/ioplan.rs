@@ -42,6 +42,10 @@ fn tune(mut p: Params) -> Params {
 }
 
 fn show(name: &str, p: &Params) {
+    if let Err(e) = p.validate() {
+        eprintln!("error: {name}: {e}");
+        std::process::exit(1);
+    }
     println!(
         "\n{name}: {:.0} MB/s single, {:.0} MB/s ceiling, {:.0} us, expert {:.1} MB, {} layers x {} experts, hit {:.0}%, compute {:.1} ms/layer",
         p.seq_bw / 1e6,

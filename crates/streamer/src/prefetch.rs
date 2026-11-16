@@ -8,10 +8,14 @@
 //! from a popularity history has no correlation between layers by construction.
 
 use crate::policy::Step;
+use crate::trace::{dense, try_dense};
 use std::collections::HashMap;
 
 /// Experts of one token grouped by layer, in layer order: `(layer, experts)`.
 pub fn by_layer(step: &Step, n_experts: u32) -> Vec<(u32, Vec<u32>)> {
+    if n_experts == 0 {
+        return Vec::new();
+    }
     let mut out: Vec<(u32, Vec<u32>)> = Vec::new();
     for &id in step {
         let (l, e) = (id / n_experts, id % n_experts);
@@ -47,11 +51,14 @@ impl Predictor {
             }
             for w in layers.windows(2) {
                 let ((l0, a), (l1, b)) = (&w[0], &w[1]);
-                if *l1 != l0 + 1 {
+                if l0.checked_add(1) != Some(*l1) {
                     continue;
                 }
                 for &x in a {
-                    let row = p.next.entry(l0 * n_experts + x).or_default();
+                    let Some(key) = try_dense(*l0, x, n_experts) else {
+                        continue;
+                    };
+                    let row = p.next.entry(key).or_default();
                     for &y in b {
                         *row.entry(y).or_default() += 1;
                     }
@@ -65,8 +72,12 @@ impl Predictor {
     /// the experts the token used at `layer`. Co-occurrence first, then popularity.
     pub fn predict(&self, layer: u32, used: &[u32], budget: usize) -> Vec<u32> {
         let mut score: HashMap<u32, u64> = HashMap::new();
+        let Some(next_layer) = layer.checked_add(1) else {
+            return Vec::new();
+        };
         for &x in used {
-            if let Some(row) = self.next.get(&(layer * self.n_experts + x)) {
+            let row = try_dense(layer, x, self.n_experts).and_then(|k| self.next.get(&k));
+            if let Some(row) = row {
                 for (&y, &c) in row {
                     *score.entry(y).or_default() += c as u64;
                 }
@@ -76,7 +87,7 @@ impl Predictor {
         v.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         let mut out: Vec<u32> = v.into_iter().take(budget).map(|x| x.0).collect();
         if out.len() < budget {
-            out.extend(self.popular(layer + 1, budget, &out));
+            out.extend(self.popular(next_layer, budget, &out));
         }
         out
     }
@@ -132,10 +143,10 @@ pub fn evaluate(trace: &[Step], n_experts: u32, train_share: f64, mult: usize) -
         let layers = by_layer(s, n_experts);
         for w in layers.windows(2) {
             let ((l0, a), (l1, b)) = (&w[0], &w[1]);
-            if *l1 != l0 + 1 {
+            if l0.checked_add(1) != Some(*l1) {
                 continue;
             }
-            let budget = b.len() * mult;
+            let budget = b.len().saturating_mul(mult);
             let guess = p.predict(*l0, a, budget);
             let base = p.popular(*l1, budget, &[]);
             sc.loads += b.len() as u64;
@@ -156,6 +167,9 @@ pub fn correlated_trace(
     fidelity: f64,
     seed: u64,
 ) -> Vec<Step> {
+    if n_experts == 0 {
+        return vec![Vec::new(); tokens];
+    }
     let mut s = seed | 1;
     let mut rnd = move || {
         s ^= s << 13;
@@ -163,6 +177,7 @@ pub fn correlated_trace(
         s ^= s << 17;
         (s >> 11) as f64 / (1u64 << 53) as f64
     };
+    let ne = n_experts as u64;
     (0..tokens)
         .map(|_| {
             let mut cur: Vec<u32> = (0..k).map(|_| (rnd() * n_experts as f64) as u32).collect();
@@ -170,12 +185,12 @@ pub fn correlated_trace(
             for l in 0..n_layers {
                 cur.sort_unstable();
                 cur.dedup();
-                step.extend(cur.iter().map(|e| l * n_experts + e));
+                step.extend(cur.iter().map(|e| dense(l, *e, n_experts)));
                 cur = cur
                     .iter()
                     .map(|&e| {
                         if rnd() < fidelity {
-                            (e * 7 + 3) % n_experts
+                            ((e as u64 * 7 + 3) % ne) as u32
                         } else {
                             (rnd() * n_experts as f64) as u32
                         }
@@ -223,5 +238,32 @@ mod tests {
     #[test]
     fn nothing_to_score_is_zero_not_a_panic() {
         assert_eq!(evaluate(&[], 64, 0.5, 1).share(), 0.0);
+    }
+
+    #[test]
+    fn zero_experts_per_layer_is_empty_not_a_division_by_zero() {
+        assert!(by_layer(&vec![1, 2, 3], 0).is_empty());
+        assert_eq!(evaluate(&[vec![1, 2, 3]], 0, 0.5, 1).share(), 0.0);
+        assert!(
+            correlated_trace(3, 0, 2, 4, 0.5, 1)
+                .iter()
+                .all(|s| s.is_empty())
+        );
+    }
+
+    #[test]
+    fn the_top_layer_and_huge_expert_counts_do_not_overflow() {
+        let p = Predictor::train(&[vec![u32::MAX]], 1); // layer u32::MAX with one expert per layer
+        assert!(p.predict(u32::MAX, &[0], 4).is_empty());
+        let big = Predictor::train(&[vec![0, 4_000_000_000]], 3_000_000_000);
+        assert!(big.predict(0, &[0], 2).len() <= 2);
+        let t = correlated_trace(2, 1_000_000_000, 3, 2, 1.0, 1); // e * 7 would overflow a u32
+        assert_eq!(t.len(), 2);
+    }
+
+    #[test]
+    fn a_zero_multiplier_predicts_nothing() {
+        let t = correlated_trace(6, 64, 4, 100, 1.0, 5);
+        assert_eq!(evaluate(&t, 64, 0.5, 0).share(), 0.0);
     }
 }

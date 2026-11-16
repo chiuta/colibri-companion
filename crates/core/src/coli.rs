@@ -216,7 +216,9 @@ impl Hardware {
             p.split('.')
                 .try_fold(&v, |cur, k| cur.get(k))
                 .and_then(Value::as_f64)
+                .filter(|x| x.is_finite())
                 .unwrap_or(0.0)
+                .max(0.0)
         };
         let mut gpus = Vec::new();
         if let Some(list) = v.pointer("/gpu/nvidia").and_then(Value::as_array) {
@@ -244,7 +246,11 @@ impl Hardware {
                     .filter_map(|g| {
                         Some(NvidiaCard {
                             name: g.get("name")?.as_str()?.to_string(),
-                            vram_gb: g.get("total_bytes").and_then(Value::as_f64).unwrap_or(0.0)
+                            vram_gb: g
+                                .get("total_bytes")
+                                .and_then(Value::as_f64)
+                                .unwrap_or(0.0)
+                                .max(0.0)
                                 / GB,
                             compute_cap: g
                                 .get("compute_cap")
@@ -411,13 +417,12 @@ pub struct PlanSummary {
 
 impl PlanSummary {
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let start = text.find('{').ok_or("colibri returned no plan")?;
-        let v: serde_json::Value = serde_json::from_str(&text[start..])
-            .map_err(|e| format!("could not read the plan: {e}"))?;
+        let v = first_json_object(text).ok_or("colibri returned no plan")?;
         let gb = |p: &str| {
             v.pointer(p)
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or(0.0)
+                .max(0.0)
                 / 1_000_000_000.0
         };
         let text_at = |p: &str| {
@@ -432,7 +437,8 @@ impl PlanSummary {
             hit_rate: v
                 .pointer("/projected_hit_rate")
                 .and_then(serde_json::Value::as_f64)
-                .unwrap_or(1.0),
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0),
             cold_gb: gb("/tiers/disk/cold_expert_bytes"),
             cache_gb: gb("/tiers/ram/expert_cache_bytes"),
             state_gb: gb("/tiers/ram/sequence_state_bytes"),
@@ -454,6 +460,17 @@ impl PlanSummary {
     }
 }
 
+/// The first complete JSON object in `text`, however much log noise comes before or after it.
+fn first_json_object(text: &str) -> Option<serde_json::Value> {
+    text.match_indices('{').find_map(|(i, _)| {
+        serde_json::Deserializer::from_str(&text[i..])
+            .into_iter::<serde_json::Value>()
+            .next()?
+            .ok()
+            .filter(serde_json::Value::is_object)
+    })
+}
+
 /// How a `coli tune` run ended.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TuneOutcome {
@@ -467,18 +484,52 @@ pub enum TuneOutcome {
     Unknown,
 }
 
+/// Removes terminal control sequences: CSI (`ESC [ … final`), OSC (`ESC ] … BEL` or `ESC \`) and
+/// two-character escapes. A lone ESC at the end, or one that starts nothing, costs no other text.
 fn strip_ansi(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            for n in chars.by_ref() {
-                if n.is_ascii_alphabetic() {
-                    break;
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek().copied() {
+            Some('[') => {
+                chars.next();
+                // parameter and intermediate bytes, then one final byte 0x40..=0x7E
+                while let Some(&n) = chars.peek() {
+                    chars.next();
+                    if ('\u{40}'..='\u{7e}').contains(&n) {
+                        break;
+                    }
+                    if !('\u{20}'..='\u{3f}').contains(&n) {
+                        break; // not a CSI after all: stop without eating text
+                    }
                 }
             }
-        } else {
-            out.push(c);
+            Some(']') => {
+                chars.next();
+                while let Some(n) = chars.next() {
+                    if n == '\u{7}' {
+                        break;
+                    }
+                    if n == '\u{1b}' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                    if n == '\n' {
+                        out.push(n);
+                        break;
+                    }
+                }
+            }
+            Some(n) if n != '\n' => {
+                chars.next();
+            }
+            _ => {}
         }
     }
     out
@@ -491,20 +542,32 @@ pub fn parse_tune_log(log: &str) -> TuneOutcome {
         if line.contains("baseline retained") {
             return TuneOutcome::Unchanged;
         }
-        if line.contains("accepted") && line.contains("tok/s") {
-            let nums: Vec<f64> = line
-                .split(|c: char| !(c.is_ascii_digit() || c == '.'))
-                .filter_map(|t| t.parse::<f64>().ok())
-                .collect();
-            if nums.len() >= 2 {
-                return TuneOutcome::Faster {
-                    before: nums[0],
-                    after: nums[1],
-                };
-            }
+        if let Some((before, after)) = speeds_in(line) {
+            return TuneOutcome::Faster { before, after };
         }
     }
     TuneOutcome::Unknown
+}
+
+/// "accepted pipe2+direct: 3.00 → 4.50 tok/s (+50.0%)": the speed on each side of the arrow. Digits
+/// in the name of the setting, or in the gain after the unit, are not speeds.
+fn speeds_in(line: &str) -> Option<(f64, f64)> {
+    if !line.contains("accepted") {
+        return None;
+    }
+    let head = &line[..line.find("tok/s")?];
+    let (left, right) = head.split_once('→').or_else(|| head.split_once("->"))?;
+    let number = |t: &str, last: bool| {
+        let mut found = t
+            .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .filter_map(|x| x.parse::<f64>().ok().filter(|v| v.is_finite()));
+        if last {
+            found.next_back()
+        } else {
+            found.next()
+        }
+    };
+    Some((number(left, true)?, number(right, false)?))
 }
 
 // ------------------------------------------------------------------ the wrapper
@@ -530,6 +593,27 @@ pub fn find_package_hint(log: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// A path as an argument for colibri: absolute, because colibri runs in its own folder, where a
+/// relative path would mean something else; and so it can never start with `-` and be read as an option.
+fn arg_path(p: &Path) -> PathBuf {
+    std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// A value for an option (`--model ID`, `--backend NAME`): letters, digits and `._:/@+-`, and no
+/// leading `-`. The catalogue is colibri's own, but a value is still never trusted into a command line.
+fn check_word(what: &str, v: &str) -> io::Result<()> {
+    let ok = !v.is_empty()
+        && !v.starts_with('-')
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._:/@+-".contains(c));
+    ok.then_some(()).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unusable {what}: {v:?}"),
+        )
+    })
 }
 
 impl Coli {
@@ -612,6 +696,10 @@ impl Coli {
         backend: Option<&str>,
         log: &Path,
     ) -> io::Result<Child> {
+        check_word("model id", model_id)?;
+        if let Some(b) = backend {
+            check_word("backend", b)?;
+        }
         if let Some(dir) = log.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -626,7 +714,7 @@ impl Coli {
             model_id,
         ]);
         if let Some(d) = models_dir {
-            c.arg("--dir").arg(d);
+            c.arg("--dir").arg(arg_path(d));
         }
         if let Some(b) = backend {
             c.arg("--backend").arg(b);
@@ -655,7 +743,7 @@ impl Coli {
         let out = fs::File::create(log)?;
         let err = out.try_clone()?;
         let mut c = self.coli_cmd(&["import"]);
-        c.arg(first_gguf)
+        c.arg(arg_path(first_gguf))
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err);
@@ -671,6 +759,9 @@ impl Coli {
         ctx: Option<u32>,
         log: &Path,
     ) -> io::Result<Child> {
+        if let Some(b) = backend {
+            check_word("backend", b)?;
+        }
         if let Some(dir) = log.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -683,7 +774,7 @@ impl Coli {
             "--no-browser",
             "--model-dir",
         ]);
-        c.arg(model_dir);
+        c.arg(arg_path(model_dir));
         if let Some(b) = backend {
             c.arg("--backend").arg(b);
         }
@@ -702,7 +793,8 @@ impl Coli {
 
     /// The same plan for a given context length (0: colibri's automatic choice).
     pub fn plan_ctx(&self, model_dir: &Path, ctx: u32) -> Result<PlanSummary, String> {
-        let dir = model_dir.to_string_lossy();
+        let abs = arg_path(model_dir);
+        let dir = abs.to_string_lossy();
         let n = ctx.to_string();
         let mut args = vec!["plan", "--model", dir.as_ref(), "--json"];
         if ctx > 0 {
@@ -722,7 +814,7 @@ impl Coli {
         let out = fs::File::create(log)?;
         let err = out.try_clone()?;
         let mut c = self.coli_cmd(&["tune", "--model"]);
-        c.arg(model_dir)
+        c.arg(arg_path(model_dir))
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err);
@@ -785,7 +877,8 @@ pub fn missing_gguf_parts(first: &Path) -> Vec<String> {
         return Vec::new();
     };
     let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
-    let Ok(total) = digits.parse::<u32>() else {
+    // a split model has a few dozen parts, never millions: a crafted name must not freeze the window
+    let Ok(total) = digits.parse::<u32>().map(|n| n.min(10_000)) else {
         return Vec::new();
     };
     let rest = &tail[digits.len()..];
@@ -1039,5 +1132,88 @@ mod plan_tests {
             TuneOutcome::Unchanged
         );
         assert_eq!(parse_tune_log("tuning failed"), TuneOutcome::Unknown);
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+
+    #[test]
+    fn the_plan_is_found_among_log_lines_before_and_after() {
+        let j = r#"{"bottleneck_class":"disk","projected_hit_rate":0.5,"tiers":{"disk":{"cold_expert_bytes":2000000000}}}"#;
+        let noisy = format!("loading {{cfg}} ...\n{j}\nnote: done {{ok}}\n");
+        let p = PlanSummary::from_json(&noisy).unwrap();
+        assert_eq!(p.class, "disk");
+        assert!((p.cold_gb - 2.0).abs() < 1e-9);
+        assert!(PlanSummary::from_json("{ not json").is_err());
+        // wild numbers cannot leave the 0..1 range or go negative
+        let wild = PlanSummary::from_json(
+            r#"{"projected_hit_rate":7,"tiers":{"disk":{"cold_expert_bytes":-5}}}"#,
+        )
+        .unwrap();
+        assert_eq!(wild.hit_rate, 1.0);
+        assert_eq!(wild.cold_gb, 0.0);
+    }
+
+    #[test]
+    fn a_stray_escape_does_not_eat_the_text_after_it() {
+        assert_eq!(strip_ansi("a\u{1b}[1;32mgreen\u{1b}[0m b"), "agreen b");
+        assert_eq!(strip_ansi("end\u{1b}\nNext line"), "end\nNext line");
+        assert_eq!(strip_ansi("x\u{1b}]0;title\u{7}y"), "xy");
+        assert_eq!(strip_ansi("x\u{1b}"), "x");
+        assert_eq!(strip_ansi("tok/s \u{1b}[K ok"), "tok/s  ok");
+    }
+
+    #[test]
+    fn digits_in_the_setting_name_are_not_speeds() {
+        let line = "  ✓ accepted pipe2+int4: 3.00 → 4.50 tok/s (+50.0%)";
+        assert_eq!(
+            parse_tune_log(line),
+            TuneOutcome::Faster {
+                before: 3.0,
+                after: 4.5
+            }
+        );
+        assert_eq!(
+            parse_tune_log("accepted x: 1.5 -> 2.0 tok/s"),
+            TuneOutcome::Faster {
+                before: 1.5,
+                after: 2.0
+            }
+        );
+        assert_eq!(
+            parse_tune_log("accepted but no speeds tok/s"),
+            TuneOutcome::Unknown
+        );
+    }
+
+    #[test]
+    fn a_crafted_part_count_cannot_freeze_the_window() {
+        let t = std::time::Instant::now();
+        let m = missing_gguf_parts(Path::new("/nonexistent/M-00001-of-4294967295.gguf"));
+        assert!(m.len() <= 10_000);
+        assert!(t.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn values_that_look_like_options_are_refused() {
+        let coli = Coli::new(
+            std::env::temp_dir(),
+            PythonCmd {
+                program: "python3".into(),
+                pre_args: vec![],
+                version: (3, 12),
+            },
+        );
+        let log = std::env::temp_dir().join(format!("cc-arg-{}.log", std::process::id()));
+        for bad in ["--help", "-x", "a b", "a;rm", ""] {
+            let e = coli.spawn_install(bad, None, None, &log).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
+        }
+        assert!(check_word("model id", "Qwen/Qwen3.6-35B_A3B:q4").is_ok());
+        let _ = fs::remove_file(&log);
+        // a relative or dash-led path becomes absolute
+        assert!(arg_path(Path::new("-models")).is_absolute());
     }
 }

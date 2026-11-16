@@ -15,12 +15,28 @@ fn arg(name: &str) -> Option<String> {
         .and_then(|i| a.get(i + 1).cloned())
 }
 
+fn or_exit<T>(r: Result<T, String>) -> T {
+    r.unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        std::process::exit(1)
+    })
+}
+
+fn number<T: std::str::FromStr>(name: &str) -> Option<T> {
+    arg(name).map(|v| {
+        or_exit(
+            v.parse()
+                .map_err(|_| format!("{name} needs a number, got `{v}`")),
+        )
+    })
+}
+
 fn main() {
-    let tokens: usize = arg("--tokens").and_then(|v| v.parse().ok()).unwrap_or(600);
+    let tokens: usize = number("--tokens").unwrap_or(600);
     let (label, universe, trace, usage) = if let Some(f) = arg("--usage") {
-        let u = parse_usage(&std::fs::read_to_string(&f).expect("read usage")).expect("usage");
-        let k: usize = arg("--k").and_then(|v| v.parse().ok()).unwrap_or(8);
-        let uni = (u.n_layers * u.n_experts) as usize;
+        let u = or_exit(read_usage_file(&f));
+        let k: usize = number("--k").unwrap_or(8);
+        let uni = u.n_layers as usize * u.n_experts as usize;
         let t = u.sample_trace(k, tokens, 42);
         (
             format!("{f}: popularity from the history, {k} experts per layer"),
@@ -29,10 +45,8 @@ fn main() {
             Some(u),
         )
     } else if let Some(f) = arg("--trace") {
-        let ne: u32 = arg("--experts")
-            .and_then(|v| v.parse().ok())
-            .expect("--experts N");
-        let t = parse_trace(&std::fs::read_to_string(&f).expect("read trace"), ne);
+        let ne: u32 = or_exit(number("--experts").ok_or("--trace needs --experts N".to_string()));
+        let t = or_exit(read_trace_file(&f, ne));
         let uni = t.iter().flatten().max().map_or(0, |m| *m as usize + 1);
         (format!("{f}: a real trace"), uni, t, None)
     } else {
@@ -54,9 +68,10 @@ fn main() {
         } else {
             "-".into()
         };
-        let pinned = usage.as_ref().map_or("-".into(), |u| {
-            format!("{:.1}%", 100.0 * u.static_coverage(cap))
-        });
+        let pinned = match &usage {
+            Some(u) if u.total() > 0 => format!("{:.1}%", 100.0 * u.static_coverage(cap)),
+            _ => "n/a".into(), // no history, or a history with no uses: nothing to pin
+        };
         println!(
             "{:>6}% {:>7.1}% {:>10} {:>9} {:>8.1}%",
             pct,

@@ -2,6 +2,8 @@
 
 [English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · [Italiano](README.it.md) · **Español** · [Português](README.pt.md) · [Deutsch](README.de.md) · [Magyar](README.hu.md)
 
+**Sitio web: https://colibri-companion.chiuta.ro** — descarga, videotutoriales, ayuda.
+
 Una aplicación de escritorio sencilla para [colibri](https://github.com/JustVugg/colibri): elige un modelo adecuado a tu ordenador, descárgalo con un clic y conversa — todo en local, sin cuenta y sin nube.
 
 ## Ejecución
@@ -30,7 +32,7 @@ La aplicación no incluye colibri. Ejecuta los comandos JSON de colibri (`setup 
 
 ## Plataformas
 
-Linux (x86-64, ARM64; Wayland y X11), Windows 10/11 y macOS (Intel y Apple Silicon) — un solo código fuente, renderizado OpenGL (funciona en tarjetas gráficas antiguas y en máquinas virtuales). `.github/workflows/build.yml` compila y prueba todas las variantes y genera archivos listos para distribuir. En Linux, `packaging/linux/install.sh` añade la aplicación al menú. Escalado HiDPI, atajos Ctrl/⌘+N, Ctrl/⌘+, y Esc, y compatibilidad con lectores de pantalla (AccessKit).
+Linux (x86-64, ARM64; Wayland y X11), Windows 10/11 y macOS (Intel y Apple Silicon) — un solo código fuente, renderizado OpenGL (funciona en tarjetas gráficas antiguas y en máquinas virtuales). `.github/workflows/build.yml` compila y prueba todas las variantes y genera archivos listos para distribuir. En Linux, `packaging/linux/install.sh` añade la aplicación al menú. Escalado HiDPI, atajos Ctrl/⌘+N, Ctrl/⌘+, y Esc, y compatibilidad con lectores de pantalla (AccessKit). Las compilaciones y pruebas automáticas cubren los tres sistemas; las pruebas manuales en ordenadores reales con Windows y macOS siguen siendo limitadas, y las etiquetas para lectores de pantalla (AccessKit) aún no se han probado con lectores reales.
 
 **Documentos y herramientas:** añade archivos (**Más → Documentos**) y haz preguntas: la aplicación los busca en tu ordenador (palabras clave, sin nube) y muestra bajo cada respuesta los pasajes utilizados. **Más → Herramientas MCP** conecta servidores MCP que tú añades e inicias; el modelo puede solicitar una herramienta y cada llamada requiere tu aprobación (función temprana, depende de que el modelo siga el formato).
 

@@ -158,15 +158,12 @@ impl Library {
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        fs::write(
-            &tmp,
-            serde_json::to_string(self).map_err(std::io::Error::other)?,
-        )?;
-        fs::rename(tmp, path)
+        crate::store::write_atomic(
+            path,
+            serde_json::to_string(self)
+                .map_err(std::io::Error::other)?
+                .as_bytes(),
+        )
     }
 
     pub fn create(&mut self, name: &str, now: u64) -> Option<String> {

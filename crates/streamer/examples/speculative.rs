@@ -13,20 +13,34 @@ fn arg(name: &str) -> Option<String> {
         .and_then(|i| a.get(i + 1).cloned())
 }
 
+fn or_exit<T>(r: Result<T, String>) -> T {
+    r.unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        std::process::exit(1)
+    })
+}
+
+fn number<T: std::str::FromStr>(name: &str) -> Option<T> {
+    arg(name).map(|v| {
+        or_exit(
+            v.parse()
+                .map_err(|_| format!("{name} needs a number, got `{v}`")),
+        )
+    })
+}
+
 fn main() {
     let (label, universe, trace) = if let Some(f) = arg("--usage") {
-        let u = parse_usage(&std::fs::read_to_string(&f).expect("read usage")).expect("usage");
+        let u = or_exit(read_usage_file(&f));
         let t = u.sample_trace(8, 800, 42);
         (
             format!("{f}: sampled, popularity only"),
-            (u.n_layers * u.n_experts) as usize,
+            u.n_layers as usize * u.n_experts as usize,
             t,
         )
     } else if let Some(f) = arg("--trace") {
-        let ne: u32 = arg("--experts")
-            .and_then(|v| v.parse().ok())
-            .expect("--experts N");
-        let t = parse_trace(&std::fs::read_to_string(&f).expect("read trace"), ne);
+        let ne: u32 = or_exit(number("--experts").ok_or("--trace needs --experts N".to_string()));
+        let t = or_exit(read_trace_file(&f, ne));
         let uni = t.iter().flatten().max().map_or(0, |m| *m as usize + 1);
         (format!("{f}: a real trace"), uni, t)
     } else {
@@ -36,7 +50,7 @@ fn main() {
             synthetic_trace(256, 8, 4000, 42),
         )
     };
-    let pct: usize = arg("--cache").and_then(|v| v.parse().ok()).unwrap_or(10);
+    let pct: usize = number("--cache").unwrap_or(10);
     let cap = (universe * pct / 100).max(1);
     println!(
         "{label}: {} tokens, {universe} experts. A cost model, not an engine.",

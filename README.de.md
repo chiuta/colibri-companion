@@ -2,6 +2,8 @@
 
 [English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · **Deutsch** · [Magyar](README.hu.md)
 
+**Website: https://colibri-companion.chiuta.ro** — Download, Video-Anleitungen, Hilfe.
+
 Eine benutzerfreundliche Desktop-App für [colibri](https://github.com/JustVugg/colibri): Wähle ein Modell, das zu deinem Computer passt, lade es mit einem Klick herunter und chatte – alles lokal, ohne Konto und ohne Cloud.
 
 ## Starten
@@ -30,7 +32,7 @@ Die App enthält colibri nicht. Sie führt die JSON-Befehle von colibri aus (`se
 
 ## Plattformen
 
-Linux (x86-64, ARM64; Wayland und X11), Windows 10/11 und macOS (Intel und Apple Silicon) — eine Codebasis, OpenGL-Darstellung (läuft auch auf alten Grafikkarten und in virtuellen Maschinen). `.github/workflows/build.yml` baut und testet alle Varianten und erzeugt fertige Archive. Unter Linux fügt `packaging/linux/install.sh` die App dem Menü hinzu. HiDPI-Skalierung, Kürzel Strg/⌘+N, Strg/⌘+, und Esc sowie Unterstützung für Screenreader (AccessKit).
+Linux (x86-64, ARM64; Wayland und X11), Windows 10/11 und macOS (Intel und Apple Silicon) — eine Codebasis, OpenGL-Darstellung (läuft auch auf alten Grafikkarten und in virtuellen Maschinen). `.github/workflows/build.yml` baut und testet alle Varianten und erzeugt fertige Archive. Unter Linux fügt `packaging/linux/install.sh` die App dem Menü hinzu. HiDPI-Skalierung, Kürzel Strg/⌘+N, Strg/⌘+, und Esc sowie Unterstützung für Screenreader (AccessKit). Automatische Builds und Tests decken alle drei Systeme ab; manuelle Tests auf echten Windows- und macOS-Rechnern sind noch begrenzt, und die Beschriftungen für Screenreader (AccessKit) wurden noch nicht mit echten Screenreadern ausprobiert.
 
 **Dokumente und Werkzeuge:** Füge Dateien hinzu (**Mehr → Dokumente**) und stelle Fragen: Die App durchsucht sie auf deinem Computer (Stichwörter, keine Cloud) und zeigt unter jeder Antwort die genutzten Stellen. **Mehr → MCP-Werkzeuge** verbindet MCP-Server, die du hinzufügst und startest; das Modell kann ein Werkzeug anfordern, jeder Aufruf braucht deine Zustimmung (frühe Funktion, hängt davon ab, ob das Modell das Format befolgt).
 

@@ -83,6 +83,27 @@ impl Read for PollingStream {
     }
 }
 
+/// Longest status, header or chunk-size line accepted, and most headers in one response. A server
+/// that never ends a line cannot make the program grow without limit.
+const MAX_LINE: u64 = 16 * 1024;
+const MAX_HEADERS: usize = 200;
+/// Most bytes `Response::text` keeps (health checks and model lists are tiny).
+/// Longest line of a streamed body (one server-sent event); real ones are a few kilobytes.
+const MAX_BODY_LINE: u64 = 32 * 1024 * 1024;
+const MAX_TEXT: u64 = 64 * 1024 * 1024;
+
+/// `read_line`, but a line longer than [`MAX_LINE`] is an error.
+fn read_line_capped<R: BufRead>(r: &mut R, line: &mut String) -> io::Result<usize> {
+    let n = r.by_ref().take(MAX_LINE + 1).read_line(line)?;
+    if n as u64 > MAX_LINE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "a line is too long",
+        ));
+    }
+    Ok(n)
+}
+
 /// `http://host:port` -> (host, port). Only plain HTTP.
 pub fn parse_authority(base: &str) -> Result<(String, u16), String> {
     if base.starts_with("https://") {
@@ -148,7 +169,7 @@ impl<R: Read> Read for Body<R> {
                 }
                 if *left == 0 {
                     let mut line = String::new();
-                    if self.reader.read_line(&mut line)? == 0 {
+                    if read_line_capped(&mut self.reader, &mut line)? == 0 {
                         *done = true;
                         return Ok(0);
                     }
@@ -163,7 +184,9 @@ impl<R: Read> Read for Body<R> {
                     if size == 0 {
                         loop {
                             line.clear();
-                            if self.reader.read_line(&mut line)? == 0 || line.trim().is_empty() {
+                            if read_line_capped(&mut self.reader, &mut line)? == 0
+                                || line.trim().is_empty()
+                            {
                                 break;
                             }
                         }
@@ -202,6 +225,12 @@ impl<R: Read> Body<R> {
                     });
                 }
                 Ok(_) => {
+                    if buf.len() as u64 > MAX_BODY_LINE {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "a line is too long",
+                        ));
+                    }
                     if byte[0] == b'\n' {
                         if buf.last() == Some(&b'\r') {
                             buf.pop();
@@ -232,7 +261,7 @@ impl<R: Read> Response<R> {
     }
     pub fn text(mut self) -> String {
         let mut bytes = Vec::new();
-        let _ = self.body.read_to_end(&mut bytes);
+        let _ = (&mut self.body).take(MAX_TEXT).read_to_end(&mut bytes);
         String::from_utf8_lossy(&bytes).into_owned()
     }
 }
@@ -241,7 +270,7 @@ impl<R: Read> Response<R> {
 pub fn read_response<R: Read>(reader: R) -> io::Result<Response<R>> {
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    read_line_capped(&mut reader, &mut line)?;
     let mut parts = line.split_whitespace();
     let version = parts.next().unwrap_or("");
     let status: u16 = parts
@@ -252,8 +281,14 @@ pub fn read_response<R: Read>(reader: R) -> io::Result<Response<R>> {
     let mut headers = Vec::new();
     loop {
         line.clear();
-        if reader.read_line(&mut line)? == 0 || line.trim().is_empty() {
+        if read_line_capped(&mut reader, &mut line)? == 0 || line.trim().is_empty() {
             break;
+        }
+        if headers.len() >= MAX_HEADERS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many headers",
+            ));
         }
         if let Some((k, v)) = line.split_once(':') {
             headers.push((k.trim().to_string(), v.trim().to_string()));
@@ -313,6 +348,22 @@ pub fn send(
 ) -> io::Result<Response<PollingStream>> {
     let (host, port) =
         parse_authority(base).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    // Nothing that ends a header line or the request may reach the wire: a key pasted with a
+    // trailing newline would otherwise break the request, or add headers of its own.
+    let bearer = opts.bearer.map(str::trim);
+    let clean = |t: &str| !t.chars().any(|c| c.is_control());
+    if !clean(method)
+        || !clean(path)
+        || path.contains(' ')
+        || !path.starts_with('/')
+        || !clean(&host)
+        || bearer.is_some_and(|k| !clean(k))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the request contains a control character",
+        ));
+    }
     let mut last_err = io::Error::new(io::ErrorKind::NotFound, "no address");
     let mut stream = None;
     for addr in (host.as_str(), port).to_socket_addrs()? {
@@ -342,7 +393,7 @@ pub fn send(
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nUser-Agent: colibri-companion\r\nAccept: */*\r\nConnection: close\r\n"
     );
-    if let Some(k) = opts.bearer {
+    if let Some(k) = bearer.filter(|k| !k.is_empty()) {
         head.push_str(&format!("Authorization: Bearer {k}\r\n"));
     }
     if let Some(body) = json_body {
@@ -470,5 +521,50 @@ mod tests {
         );
         assert!(matches!(end, Ok(None) | Err(_)));
         drop(server); // the thread ends on its own
+    }
+
+    #[test]
+    fn endless_lines_and_header_floods_are_refused() {
+        let long = format!("HTTP/1.1 200 OK\r\nX: {}\r\n\r\n", "a".repeat(20_000));
+        assert!(read_response(Cursor::new(long.into_bytes())).is_err());
+        let flood = format!("HTTP/1.1 200 OK\r\n{}\r\n", "X: 1\r\n".repeat(500));
+        assert!(read_response(Cursor::new(flood.into_bytes())).is_err());
+        let status = format!("HTTP/1.1 200 {}", "a".repeat(20_000));
+        assert!(read_response(Cursor::new(status.into_bytes())).is_err());
+    }
+
+    #[test]
+    fn a_key_with_a_newline_never_reaches_the_wire() {
+        let opts = |k| RequestOptions {
+            bearer: Some(k),
+            ..Default::default()
+        };
+        for bad in ["abc\r\nX-Evil: 1", "ab\ncd"] {
+            let e = send("http://127.0.0.1:1", "GET", "/v1/models", None, &opts(bad))
+                .err()
+                .unwrap();
+            assert_eq!(e.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
+        }
+        let e = send(
+            "http://127.0.0.1:1",
+            "GET",
+            "/a\r\nHost: x",
+            None,
+            &opts("k"),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+        // a trailing newline from a paste is trimmed, not an error: the failure is the closed port
+        let e = send(
+            "http://127.0.0.1:1",
+            "GET",
+            "/v1/models",
+            None,
+            &opts("key\n"),
+        )
+        .err()
+        .unwrap();
+        assert_ne!(e.kind(), io::ErrorKind::InvalidInput);
     }
 }

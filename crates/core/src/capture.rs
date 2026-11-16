@@ -23,25 +23,52 @@ use std::path::Path;
 pub const DEFAULT_CAP_BYTES: u64 = 64 * 1024 * 1024;
 /// Below this many tokens the numbers are only indicative.
 pub const MIN_TOKENS: usize = 200;
+/// Longest analysed capture, in tokens. The policy replays are linear (the optimal one and the
+/// predictor's tables are the heavy ones), and this keeps the time and memory of a 64 MB file
+/// to seconds and a few hundred MB.
+pub const MAX_TOKENS: usize = 6000;
+/// Bounds on what a trace line may say. A real model stays far inside them; a corrupt or hostile
+/// file does not get to overflow an index or allocate without limit.
+pub const MAX_LAYERS: u32 = 512;
+pub const MAX_EXPERTS: u32 = 4096;
+/// The decayed-frequency policy scans its whole cache at every miss (measured: about 20 ns per
+/// access and cached expert), so it is replayed only while accesses times cache size stay under
+/// this bound (about a second). On a real capture that leaves it out; it is not used in the
+/// verdicts.
+const DECAY_MAX_WORK: usize = 50_000_000;
+/// The next-layer predictor is trained again for every budget; this many tokens are enough for
+/// its share estimate and keep it to a couple of seconds.
+const PREFETCH_TOKENS: usize = 2000;
 
 /// The environment to start colibri with so that it records its routing to `path`.
 pub fn capture_env(path: &Path) -> Vec<(String, String)> {
     vec![("ROUTE_TRACE".into(), path.to_string_lossy().into_owned())]
 }
 
-/// True when the capture has reached `cap_bytes` (or the file cannot be read).
+/// True when the capture has reached `cap_bytes`. A file that does not exist yet is not over the
+/// cap (the engine creates it a moment after it starts); any other failure to read it is.
 pub fn over_cap(path: &Path, cap_bytes: u64) -> bool {
-    fs::metadata(path).map_or(true, |m| m.len() >= cap_bytes)
+    match fs::metadata(path) {
+        Ok(m) => m.len() >= cap_bytes,
+        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
-/// Reads at most `cap_bytes` from the start of the file, cut at the last whole line.
+/// Reads at most `cap_bytes` from the start of the file and keeps only whole lines: the engine
+/// may still be writing, so the last line can be cut anywhere (an expert id cut after its first
+/// digit would be a different expert). The flag says the file held more than `cap_bytes`.
 fn read_capped(path: &Path, cap_bytes: u64) -> std::io::Result<(String, bool)> {
     let f = fs::File::open(path)?;
     let mut buf = Vec::new();
-    f.take(cap_bytes).read_to_end(&mut buf)?;
-    let truncated = buf.len() as u64 >= cap_bytes;
-    if truncated && let Some(i) = buf.iter().rposition(|b| *b == b'\n') {
-        buf.truncate(i + 1);
+    // one byte more than the cap tells a file of exactly `cap_bytes` from a longer one
+    f.take(cap_bytes.saturating_add(1)).read_to_end(&mut buf)?;
+    let truncated = buf.len() as u64 > cap_bytes;
+    if truncated {
+        buf.truncate(cap_bytes as usize);
+    }
+    match buf.iter().rposition(|b| *b == b'\n') {
+        Some(i) => buf.truncate(i + 1),
+        None => buf.clear(),
     }
     Ok((String::from_utf8_lossy(&buf).into_owned(), truncated))
 }
@@ -59,6 +86,8 @@ pub struct Summary {
     pub experts_seen: usize,
     pub max_expert: u32,
     pub per_layer_top_k: usize,
+    /// Lines that were not a valid routing row inside [`MAX_LAYERS`] and [`MAX_EXPERTS`].
+    pub skipped: usize,
 }
 
 /// A guess at the number of experts per layer from the largest id seen: the next of the sizes
@@ -67,11 +96,57 @@ pub fn guess_experts(max_expert: u32) -> u32 {
     [8, 16, 32, 64, 128, 160, 192, 256, 384, 512, 1024]
         .into_iter()
         .find(|n| *n > max_expert)
-        .unwrap_or(max_expert + 1)
+        .unwrap_or(max_expert.saturating_add(1))
+}
+
+/// Keeps the lines that are a valid routing row: `<call> <row> <layer> <id>[:<gate>]...` with at
+/// least one expert, the layer below [`MAX_LAYERS`] and every id below [`MAX_EXPERTS`]. Returns
+/// the kept text and how many non-blank lines were dropped.
+fn clean(text: &str) -> (String, usize) {
+    let mut out = String::with_capacity(text.len());
+    let mut skipped = 0usize;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        let head = (it.next(), it.next(), it.next());
+        let ok = match head {
+            (Some(c), Some(r), Some(l)) => {
+                c.parse::<u64>().is_ok()
+                    && r.parse::<u32>().is_ok()
+                    && l.parse::<u32>().is_ok_and(|l| l < MAX_LAYERS)
+                    && {
+                        let mut n = 0usize;
+                        let all = it.all(|t| {
+                            n += 1;
+                            t.split(':')
+                                .next()
+                                .and_then(|x| x.parse::<u32>().ok())
+                                .is_some_and(|e| e < MAX_EXPERTS)
+                        });
+                        all && n > 0
+                    }
+            }
+            _ => false,
+        };
+        if ok {
+            out.push_str(line);
+            out.push('\n');
+        } else {
+            skipped += 1;
+        }
+    }
+    (out, skipped)
 }
 
 /// Counts what is in `text` without needing the model's dimensions.
 pub fn summarize_text(text: &str, bytes: u64) -> Summary {
+    let (cleaned, skipped) = clean(text);
+    summarize_clean(&cleaned, bytes, skipped)
+}
+
+fn summarize_clean(text: &str, bytes: u64, skipped: usize) -> Summary {
     let mut calls = HashSet::new();
     let (mut lines, mut layers, mut max_e, mut top_k) = (0usize, 0u32, 0u32, 0usize);
     let mut seen = HashSet::new();
@@ -91,7 +166,7 @@ pub fn summarize_text(text: &str, bytes: u64) -> Summary {
         }
         lines += 1;
         calls.insert(c);
-        layers = layers.max(l + 1);
+        layers = layers.max(l + 1); // l < MAX_LAYERS after `clean`
         top_k = top_k.max(ids.len());
         for e in ids {
             max_e = max_e.max(e);
@@ -108,6 +183,7 @@ pub fn summarize_text(text: &str, bytes: u64) -> Summary {
         experts_seen: seen.len(),
         max_expert: max_e,
         per_layer_top_k: top_k,
+        skipped,
     }
 }
 
@@ -116,7 +192,8 @@ pub fn summarize_text(text: &str, bytes: u64) -> Summary {
 pub struct CachePoint {
     pub cache_pct: u32,
     pub lru: f64,
-    pub decay_freq: f64,
+    /// `None` when the cache is too large for this policy to be replayed in reasonable time.
+    pub decay_freq: Option<f64>,
     /// A fixed set of the most used experts: the best a pinned cache could do on this capture.
     pub pinned: f64,
     /// Sees the future: a ceiling, not something an engine can run.
@@ -144,6 +221,8 @@ pub struct SpecPoint {
 pub struct Report {
     pub summary: Summary,
     pub n_experts: u32,
+    /// Tokens actually replayed (at most [`MAX_TOKENS`]).
+    pub analysed_tokens: usize,
     /// The file was longer than the cap and only its start was read.
     pub truncated: bool,
     pub too_short: bool,
@@ -175,11 +254,26 @@ fn pinned_cover(trace: &[Vec<u32>], cap: usize) -> f64 {
 /// Replays a capture text through the cost models. `n_experts` is the number of experts per
 /// layer (use [`guess_experts`] only when the model's config is unknown).
 pub fn analyze_text(text: &str, bytes: u64, n_experts: u32, truncated: bool) -> Report {
-    let summary = summarize_text(text, bytes);
-    let trace = parse_trace(text, n_experts);
-    let universe = (summary.layers.max(1) * n_experts) as usize;
+    let (cleaned, skipped) = clean(text);
+    let summary = summarize_clean(&cleaned, bytes, skipped);
+    let mut notes: Vec<String> = Vec::new();
+    // a count of experts the capture contradicts would silently drop its experts
+    let mut n_experts = n_experts.clamp(1, MAX_EXPERTS);
+    if summary.tokens > 0 && n_experts <= summary.max_expert {
+        let guessed = guess_experts(summary.max_expert).min(MAX_EXPERTS);
+        notes.push(format!(
+            "The capture uses expert {} but {} experts per layer were given: {} were assumed instead.",
+            summary.max_expert, n_experts, guessed
+        ));
+        n_experts = guessed;
+    }
+    let mut trace = parse_trace(&cleaned, n_experts);
+    let analysed_tokens = trace.len().min(MAX_TOKENS);
+    trace.truncate(MAX_TOKENS);
+    let universe = summary.layers.max(1) as usize * n_experts as usize;
     let too_short = trace.len() < MIN_TOKENS;
 
+    let accesses: usize = trace.iter().map(Vec::len).sum();
     let cache: Vec<CachePoint> = [5u32, 10, 25, 50]
         .into_iter()
         .map(|pct| {
@@ -187,7 +281,8 @@ pub fn analyze_text(text: &str, bytes: u64, n_experts: u32, truncated: bool) -> 
             CachePoint {
                 cache_pct: pct,
                 lru: replay(&trace, &mut Lru::new(cap)),
-                decay_freq: replay(&trace, &mut DecayFreq::new(cap, 300.0)),
+                decay_freq: (accesses.saturating_mul(cap) <= DECAY_MAX_WORK)
+                    .then(|| replay(&trace, &mut DecayFreq::new(cap, 300.0))),
                 pinned: pinned_cover(&trace, cap),
                 optimal: belady(&trace, cap),
             }
@@ -197,7 +292,12 @@ pub fn analyze_text(text: &str, bytes: u64, n_experts: u32, truncated: bool) -> 
     let prefetch: Vec<PrefetchPoint> = [1usize, 2, 4]
         .into_iter()
         .map(|mult| {
-            let s = prefetch::evaluate(&trace, n_experts, 0.5, mult);
+            let s = prefetch::evaluate(
+                &trace[..trace.len().min(PREFETCH_TOKENS)],
+                n_experts,
+                0.5,
+                mult,
+            );
             PrefetchPoint {
                 mult,
                 predicted: s.share(),
@@ -222,7 +322,7 @@ pub fn analyze_text(text: &str, bytes: u64, n_experts: u32, truncated: bool) -> 
         }
     }
 
-    let verdicts = verdicts(
+    let mut verdicts = verdicts(
         &summary,
         &cache,
         &prefetch,
@@ -230,9 +330,29 @@ pub fn analyze_text(text: &str, bytes: u64, n_experts: u32, truncated: bool) -> 
         too_short,
         truncated,
     );
+    if summary.skipped > 0 {
+        notes.push(format!(
+            "{} line(s) were not valid routing rows and were ignored.",
+            summary.skipped
+        ));
+    }
+    if summary.tokens > analysed_tokens {
+        notes.push(format!(
+            "Only the first {analysed_tokens} of {} tokens were analysed.",
+            summary.tokens
+        ));
+    }
+    if summary.tokens > 0 {
+        // after the honesty flag, before the findings
+        let at = usize::from(too_short && !verdicts.is_empty());
+        for (i, n) in notes.into_iter().enumerate() {
+            verdicts.insert(at + i, n);
+        }
+    }
     Report {
         summary,
         n_experts,
+        analysed_tokens,
         truncated,
         too_short,
         cache,
@@ -293,13 +413,13 @@ fn verdicts(
     if let Some(p) = pre.iter().find(|p| p.mult == 2) {
         if p.predicted - p.popularity_only > 0.10 {
             v.push(format!(
-                "Layers are correlated: a next-layer predictor would have {} of loads ready in time against {} from popularity alone, so prefetching is worth building.",
+                "Layers are correlated: a next-layer predictor would have {} of loads ready in time against {} from popularity alone, so cross-layer prefetching can pay off: colibri already has it (PILOT, or COUPLE with a table built from this capture by c/tools/route_pairs.py).",
                 pct(p.predicted),
                 pct(p.popularity_only)
             ));
         } else {
             v.push(format!(
-                "Little correlation between layers was found ({} against {} from popularity alone): prefetching by prediction would not help much.",
+                "Little correlation between layers was found ({} against {} from popularity alone): prefetching by prediction (PILOT, COUPLE) would not help much.",
                 pct(p.predicted),
                 pct(p.popularity_only)
             ));
@@ -329,12 +449,14 @@ fn verdicts(
 
 /// Reads a capture file (at most `cap_bytes`) and analyses it.
 pub fn analyze_file(path: &Path, n_experts: Option<u32>, cap_bytes: u64) -> Result<Report, String> {
-    let bytes = fs::metadata(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?
-        .len();
+    let md = fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !md.is_file() {
+        // a pipe or device would block the read forever
+        return Err(format!("{} is not a regular file", path.display()));
+    }
     let (text, truncated) = read_capped(path, cap_bytes).map_err(|e| e.to_string())?;
-    let ne = n_experts.unwrap_or_else(|| guess_experts(summarize_text(&text, bytes).max_expert));
-    Ok(analyze_text(&text, bytes, ne, truncated))
+    let ne = n_experts.unwrap_or_else(|| guess_experts(summarize_text(&text, md.len()).max_expert));
+    Ok(analyze_text(&text, md.len(), ne, truncated))
 }
 
 #[cfg(test)]
@@ -436,5 +558,173 @@ mod tests {
         assert!(cut.verdicts.iter().any(|v| v.contains("size limit")));
         assert!(analyze_file(&dir.join("missing"), None, 10).is_err());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("coli-capture-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn hostile_numbers_neither_panic_nor_allocate() {
+        let t = "0 0 4294967295 1:0.5\n0 0 0 4294967295:0.5\n0 4294967295 1 1:1\n\
+                 18446744073709551615 0 1 2:1\n-1 0 0 3:1\n0 0 99999999999 1:1\n";
+        let s = summarize_text(t, t.len() as u64);
+        assert_eq!(s.lines, 2, "{s:?}"); // the huge row and call ids are valid; the rest is not
+        let r = analyze_text(t, t.len() as u64, u32::MAX, false);
+        assert!(r.n_experts <= MAX_EXPERTS);
+        for n in [0, 1, u32::MAX] {
+            let _ = analyze_text(t, t.len() as u64, n, false);
+        }
+    }
+
+    #[test]
+    fn random_garbage_never_panics() {
+        let mut x = 0x2545F4914F6CDD1Du64;
+        let mut rnd = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let atoms = [
+            "0",
+            "1",
+            "7",
+            "255",
+            "4294967295",
+            "-3",
+            "1.5",
+            "a",
+            ":",
+            "3:0.1",
+            "9:",
+            ":4",
+            "",
+            "\u{1F980}",
+            "99999999999999999999",
+        ];
+        for _ in 0..300 {
+            let mut t = String::new();
+            for _ in 0..(rnd() % 40) {
+                for _ in 0..(rnd() % 7) {
+                    t += atoms[(rnd() % atoms.len() as u64) as usize];
+                    t.push(if rnd() % 5 == 0 { '\t' } else { ' ' });
+                }
+                t.push('\n');
+            }
+            let n = (rnd() % 600) as u32;
+            let r = analyze_text(&t, t.len() as u64, n, false);
+            assert!(r.n_experts >= 1 && r.n_experts <= MAX_EXPERTS);
+            assert!(!r.verdicts.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_file_of_exactly_the_cap_is_not_called_truncated() {
+        let d = scratch("exact");
+        let p = d.join("t.txt");
+        let t = trace_text(5, 2, 2, 4);
+        fs::write(&p, &t).unwrap();
+        let r = analyze_file(&p, Some(64), t.len() as u64).unwrap();
+        assert!(!r.truncated, "the whole file was read");
+        assert_eq!(r.summary.tokens, 5);
+        let cut = analyze_file(&p, Some(64), t.len() as u64 - 1).unwrap();
+        assert!(cut.truncated);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_line_the_engine_is_still_writing_is_dropped_not_misread() {
+        let d = scratch("partial");
+        let p = d.join("t.txt");
+        // the last line stops after the first digit of expert 45
+        fs::write(&p, "0 0 0 1:0.5 2:0.5\n0 0 1 3:0.5 4").unwrap();
+        let r = analyze_file(&p, Some(64), DEFAULT_CAP_BYTES).unwrap();
+        assert_eq!(r.summary.lines, 1, "{:?}", r.summary);
+        assert_eq!(r.summary.max_expert, 2);
+        // one huge line with no newline inside the cap leaves nothing to read
+        fs::write(&p, "0 0 0 1:0.5 2:0.5 3:0.5 4:0.5 5:0.5").unwrap();
+        let r = analyze_file(&p, Some(64), 20).unwrap();
+        assert_eq!(r.summary.tokens, 0);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn bytes_that_are_not_utf8_do_not_stop_the_analysis() {
+        let d = scratch("utf8");
+        let p = d.join("t.txt");
+        let mut b = b"0 0 0 1:0.5 2:0.5\n\xff\xfe\x00garbage\n".to_vec();
+        b.extend_from_slice(b"1 0 0 1:0.5 2:0.5\n");
+        fs::write(&p, &b).unwrap();
+        let r = analyze_file(&p, Some(64), DEFAULT_CAP_BYTES).unwrap();
+        assert_eq!(r.summary.lines, 2);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_missing_file_is_not_over_the_cap_but_a_directory_is_refused() {
+        let d = scratch("missing");
+        assert!(
+            !over_cap(&d.join("not-yet"), 10),
+            "the engine has not created it yet"
+        );
+        assert!(
+            analyze_file(&d, Some(64), 100).is_err(),
+            "a directory is not a capture"
+        );
+        let empty = d.join("empty");
+        fs::write(&empty, b"").unwrap();
+        let r = analyze_file(&empty, None, 100).unwrap();
+        assert_eq!(r.summary.tokens, 0);
+        assert!(r.verdicts[0].contains("no routing rows"));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_capture_is_followed() {
+        let d = scratch("link");
+        let real = d.join("real.txt");
+        fs::write(&real, trace_text(3, 2, 2, 4)).unwrap();
+        let link = d.join("link.txt");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let r = analyze_file(&link, Some(64), DEFAULT_CAP_BYTES).unwrap();
+        assert_eq!(r.summary.tokens, 3);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_wrong_expert_count_is_corrected_and_said() {
+        let t = trace_text(250, 3, 2, 40);
+        // the real ids reach well above 8
+        let r = analyze_text(&t, t.len() as u64, 8, false);
+        assert!(r.n_experts > r.summary.max_expert);
+        assert!(
+            r.verdicts
+                .iter()
+                .any(|v| v.contains("were assumed instead"))
+        );
+        assert!(r.summary.tokens > 0);
+    }
+
+    #[test]
+    fn a_long_capture_is_cut_to_a_bounded_replay_and_says_so() {
+        let t = trace_text(MAX_TOKENS + 500, 2, 2, 8);
+        let r = analyze_text(&t, t.len() as u64, 64, false);
+        assert_eq!(r.analysed_tokens, MAX_TOKENS);
+        assert!(r.verdicts.iter().any(|v| v.contains("Only the first")));
+    }
+
+    #[test]
+    fn the_slow_policy_is_skipped_for_a_large_cache() {
+        let small = trace_text(300, 4, 2, 8);
+        let r = analyze_text(&small, small.len() as u64, 64, false);
+        assert!(r.cache.iter().all(|c| c.decay_freq.is_some()));
+        let big = trace_text(300, 40, 8, 64);
+        let r = analyze_text(&big, big.len() as u64, 256, false);
+        assert!(r.cache.iter().any(|c| c.decay_freq.is_none()));
     }
 }

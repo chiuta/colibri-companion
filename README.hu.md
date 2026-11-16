@@ -2,6 +2,8 @@
 
 [English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · **Magyar**
 
+**Weboldal: https://colibri-companion.chiuta.ro** — letöltés, videós útmutatók, segítség.
+
 Egyszerű asztali alkalmazás a [colibrihez](https://github.com/JustVugg/colibri): válassz a számítógépedhez illő modellt, töltsd le egy kattintással, majd csevegj — minden helyben, fiók és felhő nélkül.
 
 ## Indítás
@@ -30,7 +32,7 @@ Az alkalmazás nem tartalmazza a colibrit. A colibri JSON-parancsait futtatja (`
 
 ## Platformok
 
-Linux (x86-64, ARM64; Wayland és X11), Windows 10/11 és macOS (Intel és Apple Silicon) — egyetlen forráskód, OpenGL-megjelenítés (régi videókártyán és virtuális gépben is fut). A `.github/workflows/build.yml` minden változatot lefordít és tesztel, és kiadásra kész archívumokat készít. Linuxon a `packaging/linux/install.sh` felveszi az alkalmazást a menübe. HiDPI-skálázás, Ctrl/⌘+N, Ctrl/⌘+, és Esc billentyűk, képernyőolvasó-támogatás (AccessKit).
+Linux (x86-64, ARM64; Wayland és X11), Windows 10/11 és macOS (Intel és Apple Silicon) — egyetlen forráskód, OpenGL-megjelenítés (régi videókártyán és virtuális gépben is fut). A `.github/workflows/build.yml` minden változatot lefordít és tesztel, és kiadásra kész archívumokat készít. Linuxon a `packaging/linux/install.sh` felveszi az alkalmazást a menübe. HiDPI-skálázás, Ctrl/⌘+N, Ctrl/⌘+, és Esc billentyűk, képernyőolvasó-támogatás (AccessKit). Az automatikus fordítás és tesztelés mindhárom rendszerre kiterjed; a valódi Windows- és macOS-gépeken végzett kézi tesztelés még korlátozott, és a képernyőolvasó-címkéket (AccessKit) még nem próbáltuk ki valódi képernyőolvasóval.
 
 **Dokumentumok és eszközök:** adj hozzá fájlokat (**Továbbiak → Dokumentumok**), és kérdezz róluk: az alkalmazás a számítógépeden keresi őket (kulcsszavak, felhő nélkül), és a válasz alatt megmutatja a felhasznált részeket. A **Továbbiak → MCP-eszközök** az általad hozzáadott és elindított MCP-szervereket köti be; a modell eszközt kérhet, és minden hívás a te jóváhagyásodat kéri (korai funkció, függ attól, hogy a modell követi-e a formátumot).
 

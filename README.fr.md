@@ -2,6 +2,8 @@
 
 [English](README.md) · [Română](README.ro.md) · **Français** · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · [Magyar](README.hu.md)
 
+**Site web : https://colibri-companion.chiuta.ro** — téléchargement, tutoriels vidéo, aide.
+
 Une application de bureau conviviale pour [colibri](https://github.com/JustVugg/colibri) : choisis un modèle adapté à ton ordinateur, télécharge-le en un clic, puis discute — tout en local, sans compte ni cloud.
 
 ## Lancement
@@ -30,7 +32,7 @@ L'application n'inclut pas colibri. Elle lance les commandes JSON de colibri (`s
 
 ## Plateformes
 
-Linux (x86-64, ARM64 ; Wayland et X11), Windows 10/11 et macOS (Intel et Apple Silicon) — un seul code source, rendu OpenGL (fonctionne sur de vieilles cartes graphiques et en machine virtuelle). `.github/workflows/build.yml` construit et teste toutes les variantes et produit des archives prêtes à distribuer. Sous Linux, `packaging/linux/install.sh` ajoute l'application au menu. Mise à l'échelle HiDPI, raccourcis Ctrl/⌘+N, Ctrl/⌘+, et Échap, prise en charge des lecteurs d'écran (AccessKit).
+Linux (x86-64, ARM64 ; Wayland et X11), Windows 10/11 et macOS (Intel et Apple Silicon) — un seul code source, rendu OpenGL (fonctionne sur de vieilles cartes graphiques et en machine virtuelle). `.github/workflows/build.yml` construit et teste toutes les variantes et produit des archives prêtes à distribuer. Sous Linux, `packaging/linux/install.sh` ajoute l'application au menu. Mise à l'échelle HiDPI, raccourcis Ctrl/⌘+N, Ctrl/⌘+, et Échap, prise en charge des lecteurs d'écran (AccessKit). Les compilations et tests automatiques couvrent les trois systèmes ; les essais manuels sur de vrais ordinateurs Windows et macOS restent limités, et les étiquettes pour lecteurs d'écran (AccessKit) n'ont pas encore été essayées avec de vrais lecteurs.
 
 **Documents et outils :** ajoute des fichiers (**Plus → Documents**) et pose des questions : l'application les cherche sur ton ordinateur (mots-clés, sans cloud) et montre sous chaque réponse les passages utilisés. **Plus → Outils MCP** connecte des serveurs MCP que tu ajoutes et lances ; le modèle peut demander un outil et chaque appel exige ton accord (fonction précoce, dépend du respect du format par le modèle).
 

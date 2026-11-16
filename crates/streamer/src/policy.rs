@@ -86,7 +86,11 @@ impl Cache for DecayFreq {
             let victim = *self
                 .score
                 .iter()
-                .min_by(|a, b| self.now(*a.1).total_cmp(&self.now(*b.1)))
+                .min_by(|a, b| {
+                    // lowest score first; equal scores go by key so a replay is reproducible
+                    // (HashMap iteration order is random per process)
+                    self.now(*a.1).total_cmp(&self.now(*b.1)).then(a.0.cmp(b.0))
+                })
                 .map(|(k, _)| k)
                 .unwrap();
             self.score.remove(&victim);
@@ -154,6 +158,10 @@ pub fn belady(trace: &[Step], cap: usize) -> f64 {
 /// A deterministic synthetic trace: `tokens` steps of `k` distinct experts out of `n`, drawn from a
 /// Zipf-like popularity with a topic that drifts, so recency and frequency both carry signal.
 pub fn synthetic_trace(n: u32, k: usize, tokens: usize, seed: u64) -> Vec<Step> {
+    if n == 0 {
+        return vec![Vec::new(); tokens];
+    }
+    let k = k.min(n as usize); // cannot draw more distinct experts than exist
     let mut s = seed | 1;
     let mut rnd = move || {
         s ^= s << 13;
@@ -168,13 +176,25 @@ pub fn synthetic_trace(n: u32, k: usize, tokens: usize, seed: u64) -> Vec<Step> 
                 shift = (rnd() * n as f64) as u32;
             }
             let mut step = Vec::with_capacity(k);
-            while step.len() < k {
+            // the skewed draw may be unable to reach k distinct ids (small n): after a bounded
+            // number of tries, fill the rest in order so the loop always ends
+            let mut tries = 0usize;
+            while step.len() < k && tries < 64 * k {
+                tries += 1;
                 let u = rnd();
                 let r = ((n as f64).powf(u) - 1.0) as u32 % n; // skewed toward small ranks
-                let id = (r + shift) % n;
+                let id = (r as u64 + shift as u64) as u32 % n;
                 if !step.contains(&id) {
                     step.push(id);
                 }
+            }
+            let mut j = 0u32;
+            while step.len() < k {
+                let id = (shift.wrapping_add(j)) % n;
+                if !step.contains(&id) {
+                    step.push(id);
+                }
+                j += 1;
             }
             step
         })
@@ -218,5 +238,158 @@ mod tests {
         let trace: Vec<Step> = vec![vec![1, 2], vec![1, 2]];
         assert_eq!(replay(&trace, &mut Lru::new(0)), 0.0);
         assert_eq!(belady(&trace, 0), 0.0);
+    }
+
+    // --- cross-checks against slow, obviously correct references ---
+
+    fn xorshift(seed: u64) -> impl FnMut() -> u64 {
+        let mut s = seed | 1;
+        move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        }
+    }
+
+    fn random_trace(r: &mut impl FnMut() -> u64) -> Vec<Step> {
+        let universe = 1 + r() % 12;
+        let tokens = (r() % 14) as usize;
+        (0..tokens)
+            .map(|_| (0..(r() % 5)).map(|_| (r() % universe) as u32).collect())
+            .collect()
+    }
+
+    fn naive_lru(flat: &[u32], cap: usize) -> u64 {
+        let mut cache: Vec<u32> = Vec::new(); // front = least recently used
+        let mut hits = 0;
+        for &k in flat {
+            if let Some(i) = cache.iter().position(|x| *x == k) {
+                cache.remove(i);
+                cache.push(k);
+                hits += 1;
+            } else if cap > 0 {
+                if cache.len() == cap {
+                    cache.remove(0);
+                }
+                cache.push(k);
+            }
+        }
+        hits
+    }
+
+    fn naive_belady(flat: &[u32], cap: usize) -> u64 {
+        let mut cache: Vec<u32> = Vec::new();
+        let mut hits = 0;
+        for (i, &k) in flat.iter().enumerate() {
+            if cache.contains(&k) {
+                hits += 1;
+            } else if cap > 0 {
+                if cache.len() == cap {
+                    let next = |x: u32| flat[i + 1..].iter().position(|y| *y == x);
+                    let victim = (0..cache.len())
+                        .max_by_key(|&j| next(cache[j]).map_or(usize::MAX, |p| p))
+                        .unwrap();
+                    cache.remove(victim);
+                }
+                cache.push(k);
+            }
+        }
+        hits
+    }
+
+    #[test]
+    fn lru_and_belady_agree_with_brute_force_on_random_traces() {
+        let mut r = xorshift(12345);
+        for _ in 0..3000 {
+            let trace = random_trace(&mut r);
+            let flat: Vec<u32> = trace.iter().flatten().copied().collect();
+            let cap = (r() % 9) as usize;
+            let n = flat.len();
+            let want_lru = naive_lru(&flat, cap);
+            let got_lru = replay(&trace, &mut Lru::new(cap));
+            let want_opt = naive_belady(&flat, cap);
+            let got_opt = belady(&trace, cap);
+            if n > 0 {
+                assert_eq!(
+                    got_lru,
+                    want_lru as f64 / n as f64,
+                    "lru {flat:?} cap {cap}"
+                );
+                assert_eq!(
+                    got_opt,
+                    want_opt as f64 / n as f64,
+                    "opt {flat:?} cap {cap}"
+                );
+                assert!(got_opt >= got_lru);
+                let d = replay(&trace, &mut DecayFreq::new(cap, 5.0));
+                assert!(
+                    got_opt + 1e-12 >= d,
+                    "decay beat optimal {flat:?} cap {cap}"
+                );
+                assert!((0.0..=1.0).contains(&d));
+            }
+        }
+    }
+
+    #[test]
+    fn optimal_never_hits_less_with_more_room_on_random_traces() {
+        let mut r = xorshift(777);
+        for _ in 0..500 {
+            let trace = random_trace(&mut r);
+            let mut prev = 0.0;
+            for cap in 0..10 {
+                let b = belady(&trace, cap);
+                assert!(b + 1e-12 >= prev, "{trace:?} cap {cap}");
+                prev = b;
+            }
+        }
+    }
+
+    #[test]
+    fn decay_freq_is_reproducible_even_when_scores_tie() {
+        // every key seen once: all scores tie, so the victim must follow the key order
+        let trace: Vec<Step> = (0..40).map(|i| vec![i % 13, (i * 5 + 1) % 13]).collect();
+        let first = replay(&trace, &mut DecayFreq::new(4, 1e9));
+        for _ in 0..30 {
+            assert_eq!(replay(&trace, &mut DecayFreq::new(4, 1e9)), first);
+        }
+    }
+
+    #[test]
+    fn decay_freq_survives_degenerate_half_lives_and_long_traces() {
+        let trace = synthetic_trace(32, 4, 3000, 3);
+        for hl in [0.0, f64::NAN, f64::INFINITY, -5.0, 1e-300] {
+            let h = replay(&trace, &mut DecayFreq::new(8, hl));
+            assert!(
+                h.is_finite() && (0.0..=1.0).contains(&h),
+                "half-life {hl}: {h}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_traces_and_zero_capacity_do_not_panic() {
+        assert_eq!(replay(&[], &mut Lru::new(0)), 1.0);
+        assert_eq!(belady(&[], 0), 1.0);
+        assert_eq!(replay(&[vec![], vec![]], &mut DecayFreq::new(0, 10.0)), 1.0);
+    }
+
+    #[test]
+    fn a_synthetic_trace_asking_for_more_experts_than_exist_terminates() {
+        let t = synthetic_trace(3, 8, 5, 1);
+        assert!(t.iter().all(|s| s.len() == 3));
+        assert_eq!(synthetic_trace(0, 4, 2, 1), vec![Vec::<u32>::new(); 2]);
+    }
+
+    #[test]
+    fn a_skewed_draw_that_cannot_reach_k_distinct_ids_still_ends() {
+        // n = 4: the power-law draw only ever reaches ranks 0..=2, so 4 distinct needs the fill
+        let t = synthetic_trace(4, 4, 6, 9);
+        assert!(t.iter().all(|s| {
+            let mut v = s.clone();
+            v.sort_unstable();
+            v == vec![0, 1, 2, 3]
+        }));
     }
 }

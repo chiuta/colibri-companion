@@ -2,6 +2,8 @@
 
 [English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · **Português** · [Deutsch](README.de.md) · [Magyar](README.hu.md)
 
+**Site: https://colibri-companion.chiuta.ro** — transferência, tutoriais em vídeo, ajuda.
+
 Uma aplicação de secretária simples para o [colibri](https://github.com/JustVugg/colibri): escolhe um modelo adequado ao teu computador, transfere-o com um clique e conversa — tudo local, sem conta e sem nuvem.
 
 ## Execução
@@ -30,7 +32,7 @@ A aplicação não inclui o colibri. Executa os comandos JSON do colibri (`setup
 
 ## Plataformas
 
-Linux (x86-64, ARM64; Wayland e X11), Windows 10/11 e macOS (Intel e Apple Silicon) — um só código-fonte, renderização OpenGL (funciona em placas gráficas antigas e em máquinas virtuais). `.github/workflows/build.yml` compila e testa todas as variantes e produz arquivos prontos a distribuir. No Linux, `packaging/linux/install.sh` acrescenta a aplicação ao menu. Escala HiDPI, atalhos Ctrl/⌘+N, Ctrl/⌘+, e Esc, e suporte para leitores de ecrã (AccessKit).
+Linux (x86-64, ARM64; Wayland e X11), Windows 10/11 e macOS (Intel e Apple Silicon) — um só código-fonte, renderização OpenGL (funciona em placas gráficas antigas e em máquinas virtuais). `.github/workflows/build.yml` compila e testa todas as variantes e produz ficheiros comprimidos prontos a distribuir. No Linux, `packaging/linux/install.sh` acrescenta a aplicação ao menu. Escala HiDPI, atalhos Ctrl/⌘+N, Ctrl/⌘+, e Esc, e suporte para leitores de ecrã (AccessKit). As compilações e os testes automáticos cobrem os três sistemas; os testes manuais em computadores reais com Windows e macOS ainda são limitados, e as etiquetas para leitores de ecrã (AccessKit) ainda não foram experimentadas com leitores reais.
 
 **Documentos e ferramentas:** adiciona ficheiros (**Mais → Documentos**) e faz perguntas: a aplicação pesquisa-os no teu computador (palavras-chave, sem nuvem) e mostra sob cada resposta os excertos usados. **Mais → Ferramentas MCP** liga servidores MCP que tu adicionas e inicias; o modelo pode pedir uma ferramenta e cada chamada precisa da tua aprovação (funcionalidade inicial, depende de o modelo seguir o formato).
 

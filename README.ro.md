@@ -2,6 +2,8 @@
 
 [English](README.md) · **Română** · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · [Magyar](README.hu.md)
 
+**Site: https://colibri-companion.chiuta.ro** — descărcare, tutoriale video, ajutor.
+
 O aplicație desktop simplă pentru [colibri](https://github.com/JustVugg/colibri): alege un model potrivit calculatorului tău, descarcă-l cu un clic, apoi conversează — totul local, fără cont și fără cloud.
 
 ## Pornire
@@ -30,7 +32,7 @@ Aplicația nu include colibri. Rulează comenzile JSON ale lui colibri (`setup -
 
 ## Platforme
 
-Linux (x86-64, ARM64; Wayland și X11), Windows 10/11 și macOS (Intel și Apple Silicon) — un singur cod sursă, randare OpenGL (merge și pe plăci video vechi sau în mașini virtuale). `.github/workflows/build.yml` construiește și testează toate variantele și produce arhive gata de distribuit. Pe Linux, `packaging/linux/install.sh` adaugă aplicația în meniu. Scalare HiDPI, scurtături Ctrl/⌘+N, Ctrl/⌘+, și Esc, suport pentru cititoare de ecran (AccessKit).
+Linux (x86-64, ARM64; Wayland și X11), Windows 10/11 și macOS (Intel și Apple Silicon) — un singur cod sursă, randare OpenGL (merge și pe plăci video vechi sau în mașini virtuale). `.github/workflows/build.yml` construiește și testează toate variantele și produce arhive gata de distribuit. Pe Linux, `packaging/linux/install.sh` adaugă aplicația în meniu. Scalare HiDPI, scurtături Ctrl/⌘+N, Ctrl/⌘+, și Esc, suport pentru cititoare de ecran (AccessKit). Construirile și testele automate acoperă toate cele trei sisteme; testarea manuală pe calculatoare reale cu Windows și macOS este încă limitată, iar etichetele pentru cititoarele de ecran (AccessKit) nu au fost încă încercate cu cititoare reale.
 
 **Documente și unelte:** adaugă fișiere (**Mai mult → Documente**) și pune întrebări despre ele: aplicația le caută pe calculatorul tău (după cuvinte, fără cloud) și arată sub fiecare răspuns pasajele folosite. **Mai mult → Unelte MCP** conectează servere MCP adăugate și pornite de tine; modelul poate solicita o unealtă, iar fiecare apel necesită aprobarea ta (funcție timpurie, depinde de cât de bine urmează modelul formatul).
 

@@ -38,7 +38,7 @@ The app does not include colibri. It runs colibri's JSON commands (`setup --list
 
 ## Platforms
 
-Linux (x86-64, ARM64; Wayland and X11), Windows 10/11 and macOS (Intel and Apple Silicon) — one code base, OpenGL rendering (works on old graphics cards and in virtual machines). `.github/workflows/build.yml` builds and tests every variant and produces ready-to-ship archives. On Linux, `packaging/linux/install.sh` adds the app to the menu. HiDPI scaling, Ctrl/⌘+N, Ctrl/⌘+K, Ctrl/⌘+, and Esc shortcuts, and screen-reader support (AccessKit).
+Linux (x86-64, ARM64; Wayland and X11), Windows 10/11 and macOS (Intel and Apple Silicon) — one code base, OpenGL rendering (works on old graphics cards and in virtual machines). `.github/workflows/build.yml` builds and tests every variant and produces ready-to-ship archives. On Linux, `packaging/linux/install.sh` adds the app to the menu. HiDPI scaling, Ctrl/⌘+N, Ctrl/⌘+K, Ctrl/⌘+, and Esc shortcuts, and screen-reader support (AccessKit). Automated builds and tests cover all three systems; manual testing on real Windows and macOS computers is still limited, and the screen-reader labels (AccessKit) have not been tried with real screen readers.
 
 ## Languages
 

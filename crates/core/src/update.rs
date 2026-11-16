@@ -107,6 +107,22 @@ pub fn git_head(root: &Path) -> Option<String> {
     }
 }
 
+/// Clears the folder an update is unpacked into, but only when it is a leftover of this app (it
+/// carries the marker written after a fetch). A folder with that name that someone else made, a
+/// neighbour of the colibri folder named `…-update`, is never deleted.
+pub fn prepare_update_dir(fresh: &Path) -> Result<(), String> {
+    if !fresh.exists() {
+        return Ok(());
+    }
+    if fresh.join(MARKER).is_file() {
+        return fs::remove_dir_all(fresh).map_err(|e| e.to_string());
+    }
+    Err(format!(
+        "{} already exists and was not made by this app; move or delete it, then try again",
+        fresh.display()
+    ))
+}
+
 /// Remember when a ZIP copy was fetched (a ZIP has no git history to ask).
 pub fn write_fetched_marker(root: &Path) {
     let _ = fs::write(root.join(MARKER), iso_now());
@@ -287,5 +303,22 @@ mod tests {
         let r = parse_latest_release(json).unwrap();
         assert_eq!((r.tag.as_str(), r.prerelease), ("v0.1.0-alpha.1", true));
         assert!(parse_latest_release("[]").is_none());
+    }
+
+    #[test]
+    fn a_foreign_update_folder_is_never_deleted() {
+        let base = std::env::temp_dir().join(format!("cc-upd-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let theirs = base.join("colibri-update");
+        fs::create_dir_all(&theirs).unwrap();
+        fs::write(theirs.join("notes.txt"), b"mine").unwrap();
+        assert!(prepare_update_dir(&theirs).is_err());
+        assert!(theirs.join("notes.txt").is_file());
+        // a leftover of this app (it has the marker) is cleared; a missing folder is fine
+        write_fetched_marker(&theirs);
+        assert!(prepare_update_dir(&theirs).is_ok());
+        assert!(!theirs.exists());
+        assert!(prepare_update_dir(&theirs).is_ok());
+        let _ = fs::remove_dir_all(&base);
     }
 }

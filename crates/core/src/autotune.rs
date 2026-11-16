@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The settings that are tried. `None` leaves colibri's own choice untouched.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -22,15 +22,35 @@ pub struct Knobs {
     pub ctx: Option<u32>,
 }
 
+/// Largest hot store, thread team and context that are passed on to colibri: a profile read back
+/// from a file the user can edit, or a space computed from odd measurements, must not turn into
+/// `PIN_GB=-5`, `OMP_NUM_THREADS=0` or a number that does not fit.
+const MAX_PIN_GB: f64 = 4096.0;
+const MAX_THREADS: u32 = 1024;
+
 impl Knobs {
+    /// The same settings with every value that colibri could not use dropped (left to its own
+    /// choice) or brought into range.
+    pub fn sanitized(&self) -> Knobs {
+        Knobs {
+            pin_gb: self
+                .pin_gb
+                .filter(|g| g.is_finite() && *g > 0.0)
+                .map(|g| g.min(MAX_PIN_GB)),
+            threads: self.threads.filter(|t| *t >= 1).map(|t| t.min(MAX_THREADS)),
+            ctx: self.ctx,
+        }
+    }
+
     /// Environment for a run. Values are rounded so equal settings give equal text.
     pub fn env(&self) -> Vec<(String, String)> {
+        let this = self.sanitized();
         let mut v = Vec::new();
-        if let Some(gb) = self.pin_gb {
+        if let Some(gb) = this.pin_gb {
             v.push(("PIN".to_string(), "auto".to_string()));
             v.push(("PIN_GB".to_string(), format!("{gb:.1}")));
         }
-        if let Some(t) = self.threads {
+        if let Some(t) = this.threads {
             v.push(("OMP_NUM_THREADS".to_string(), t.to_string()));
         }
         v
@@ -77,7 +97,7 @@ impl Space {
     }
 
     pub fn thread_options(&self) -> Vec<Option<u32>> {
-        let c = self.physical_cores.max(1);
+        let c = self.physical_cores.clamp(1, MAX_THREADS);
         let mut out = vec![None];
         for t in [c / 2, c.saturating_sub(1), c] {
             if t >= 1 && !out.contains(&Some(t)) {
@@ -111,7 +131,8 @@ pub fn score(m: &Measurement) -> f64 {
     m.tok_s / (1.0 + excess)
 }
 
-/// The last "N tok/s" figure in colibri's output (ANSI colours tolerated).
+/// The last "N tok/s" figure in colibri's output (ANSI colours tolerated). A figure that is
+/// negative, not finite or above [`MAX_TOK_S`] is not a measurement and is skipped.
 pub fn parse_tok_s(log: &str) -> Option<f64> {
     let mut found = None;
     for line in log.lines() {
@@ -142,14 +163,20 @@ pub fn parse_tok_s(log: &str) -> Option<f64> {
                 .into_iter()
                 .rev()
                 .collect();
+            let negative = head[..head.len() - num.len()].ends_with('-');
             if let Ok(v) = num.parse::<f64>() {
-                found = Some(v);
+                if !negative && v.is_finite() && v <= MAX_TOK_S {
+                    found = Some(v);
+                }
             }
             rest = &rest[i + 5..];
         }
     }
     found
 }
+
+/// No local run of a language model reaches this; a larger figure is a misread.
+const MAX_TOK_S: f64 = 100_000.0;
 
 /// Runs one trial. The implementation starts colibri with the knobs, waits at most `budget`
 /// and returns what it measured. It should stop early when `cancel` is set.
@@ -166,15 +193,22 @@ pub trait Runner {
 pub struct Config {
     /// Hard cap on trials, the starting point included.
     pub max_runs: usize,
-    /// Time allowed for one trial.
+    /// Time allowed for one trial (never more than an hour, whatever is asked).
     pub budget: Duration,
+    /// Time allowed for the whole search; no trial starts after it.
+    pub total: Duration,
 }
+
+/// Hard ceilings, so a careless configuration cannot make the search run for days.
+const MAX_RUNS: usize = 200;
+const MAX_TRIAL: Duration = Duration::from_secs(3600);
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             max_runs: 12,
             budget: Duration::from_secs(120),
+            total: Duration::from_secs(30 * 60),
         }
     }
 }
@@ -194,6 +228,8 @@ pub struct Outcome {
     pub start_score: f64,
     pub trials: Vec<Trial>,
     pub aborted: bool,
+    /// The total time ran out before the search was done.
+    pub timed_out: bool,
 }
 
 impl Outcome {
@@ -219,23 +255,39 @@ pub fn search(
     let mut trials: Vec<Trial> = Vec::new();
     let mut seen: HashMap<String, f64> = HashMap::new();
     let mut aborted = false;
+    let mut timed_out = false;
+    let started = Instant::now();
+    let max_runs = cfg.max_runs.min(MAX_RUNS);
+    let budget = cfg.budget.min(MAX_TRIAL);
+    let start = start.sanitized();
 
     let mut try_one = |k: &Knobs, trials: &mut Vec<Trial>, aborted: &mut bool| -> Option<f64> {
         if let Some(s) = seen.get(&k.key()) {
             return Some(*s);
         }
-        if trials.len() >= cfg.max_runs {
+        if trials.len() >= max_runs {
             return None;
         }
         if cancel.load(Ordering::Relaxed) {
             *aborted = true;
             return None;
         }
-        let result = runner.run(k, cfg.budget, cancel);
+        if started.elapsed() >= cfg.total {
+            timed_out = true;
+            return None;
+        }
+        let result = runner.run(k, budget, cancel);
+        if cancel.load(Ordering::Relaxed) {
+            // a run that was cut short measured nothing worth keeping
+            *aborted = true;
+            trials.push(Trial {
+                knobs: k.clone(),
+                result: Err("cancelled".into()),
+                score: 0.0,
+            });
+            return None;
+        }
         let s = result.as_ref().map(score).unwrap_or(0.0);
-        if cancel.load(Ordering::Relaxed) {
-            *aborted = true;
-        }
         seen.insert(k.key(), s);
         trials.push(Trial {
             knobs: k.clone(),
@@ -253,6 +305,7 @@ pub fn search(
             start_score: 0.0,
             trials,
             aborted,
+            timed_out,
         };
     };
     let mut best_score = start_score;
@@ -313,6 +366,7 @@ pub fn search(
         start_score,
         trials,
         aborted,
+        timed_out,
     }
 }
 
@@ -335,34 +389,158 @@ pub struct Profile {
     pub saved_at: u64,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default)]
 struct Book {
     profiles: HashMap<String, Profile>,
 }
 
+/// Reads the saved winners. One damaged entry is dropped, not the whole book: an entry whose
+/// settings or score are not usable (hand-edited, or written by a bug) is skipped.
 fn read_book(path: &Path) -> Book {
-    std::fs::read_to_string(path)
+    let Some(v) = std::fs::read_to_string(path)
         .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    else {
+        return Book::default();
+    };
+    let mut profiles = HashMap::new();
+    if let Some(map) = v.get("profiles").and_then(|p| p.as_object()) {
+        for (k, e) in map {
+            if let Ok(mut p) = serde_json::from_value::<Profile>(e.clone()) {
+                if p.score.is_finite() && p.score > 0.0 {
+                    p.knobs = p.knobs.sanitized();
+                    profiles.insert(k.clone(), p);
+                }
+            }
+        }
+    }
+    Book { profiles }
 }
 
-/// Remembers the winner for `key`. A worse score never replaces a better saved one.
-pub fn save_profile(path: &Path, key: &str, knobs: &Knobs, score: f64) -> std::io::Result<()> {
-    let mut book = read_book(path);
-    if book.profiles.get(key).is_some_and(|p| p.score >= score) {
-        return Ok(());
+fn book_json(book: &Book) -> Result<String, std::io::Error> {
+    let mut sorted: Vec<(&String, &Profile)> = book.profiles.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0)); // stable text for the same content
+    let map: serde_json::Map<String, serde_json::Value> = sorted
+        .into_iter()
+        .map(|(k, p)| {
+            Ok((
+                k.clone(),
+                serde_json::to_value(p).map_err(std::io::Error::other)?,
+            ))
+        })
+        .collect::<Result<_, std::io::Error>>()?;
+    serde_json::to_string_pretty(&serde_json::json!({ "profiles": map }))
+        .map_err(std::io::Error::other)
+}
+
+/// Writes through a temporary file named for this process and call, then renames it over the
+/// target: two programs saving at once never write into the same temporary file, and a crash
+/// leaves the old file whole.
+fn write_atomic_unique(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::AtomicU64;
+    static N: AtomicU64 = AtomicU64::new(0);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
     }
-    book.profiles.insert(
-        key.to_string(),
-        Profile {
-            knobs: knobs.clone(),
-            score,
-            saved_at: crate::store::now_secs(),
-        },
+    let name = path.file_name().map_or_else(
+        || "profiles".to_string(),
+        |n| n.to_string_lossy().into_owned(),
     );
-    let text = serde_json::to_string_pretty(&book).map_err(std::io::Error::other)?;
-    crate::store::write_atomic(path, text.as_bytes())
+    let tmp = path.with_file_name(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let res = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
+}
+
+/// Runs `f` holding a lock file next to `path`, so two programs do not both read the book, add
+/// their winner and write it back, losing one of them. A lock older than half a minute is a
+/// leftover from a crash and is taken over; after two seconds of waiting `f` runs anyway (a lost
+/// update is better than a save that never happens).
+fn with_lock<T>(path: &Path, f: impl FnOnce() -> T) -> T {
+    let name = path.file_name().map_or_else(
+        || "profiles".to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let lock = path.with_file_name(format!(".{name}.lock"));
+    if let Some(dir) = lock.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let started = Instant::now();
+    let mut held = false;
+    while started.elapsed() < Duration::from_secs(2) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+        {
+            Ok(_) => {
+                held = true;
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = std::fs::metadata(&lock)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age > Duration::from_secs(30));
+                if stale {
+                    let _ = std::fs::remove_file(&lock);
+                } else {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+            Err(_) => break, // cannot lock here (read-only folder...): the write will say so
+        }
+    }
+    let out = f();
+    if held {
+        let _ = std::fs::remove_file(&lock);
+    }
+    out
+}
+
+/// Remembers the winner for `key`. A worse score never replaces a better saved one. A score
+/// that is not a positive finite number is refused (it would corrupt the file for every model).
+pub fn save_profile(path: &Path, key: &str, knobs: &Knobs, score: f64) -> std::io::Result<()> {
+    if !score.is_finite() || score <= 0.0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the score must be a positive number",
+        ));
+    }
+    with_lock(path, || {
+        // keep a copy of a file that exists but cannot be read, instead of silently replacing it
+        if let Ok(t) = std::fs::read_to_string(path) {
+            if serde_json::from_str::<serde_json::Value>(&t).is_err() {
+                let _ = std::fs::write(path.with_extension("json.bad"), t);
+            }
+        }
+        let mut book = read_book(path);
+        if book.profiles.get(key).is_some_and(|p| p.score >= score) {
+            return Ok(());
+        }
+        book.profiles.insert(
+            key.to_string(),
+            Profile {
+                knobs: knobs.sanitized(),
+                score,
+                saved_at: crate::store::now_secs(),
+            },
+        );
+        write_atomic_unique(path, book_json(&book)?.as_bytes())
+    })
 }
 
 pub fn load_profile(path: &Path, key: &str) -> Option<Profile> {
@@ -485,6 +663,7 @@ mod tests {
         let cfg = Config {
             max_runs: 3,
             budget: Duration::from_secs(1),
+            total: Duration::from_secs(60),
         };
         let out = search(&space(), Knobs::default(), &mut r, cfg, &cancel);
         assert_eq!(r.calls, 3);
@@ -595,5 +774,295 @@ mod tests {
         assert_eq!(load_profile(&file, &key).unwrap().score, 6.0);
         assert!(load_profile(&file, "other").is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct Scratch(std::path::PathBuf);
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let d = std::env::temp_dir().join(format!("autotune-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            Scratch(d)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn knobs(pin: Option<f64>, threads: Option<u32>) -> Knobs {
+        Knobs {
+            pin_gb: pin,
+            threads,
+            ctx: None,
+        }
+    }
+
+    #[test]
+    fn values_colibri_could_not_use_never_reach_its_environment() {
+        for bad in [f64::NAN, f64::INFINITY, -5.0, 0.0] {
+            assert!(knobs(Some(bad), None).env().is_empty(), "{bad}");
+        }
+        let huge = knobs(Some(1e300), Some(u32::MAX)).env();
+        assert!(
+            huge.contains(&("PIN_GB".into(), "4096.0".into())),
+            "{huge:?}"
+        );
+        assert!(huge.contains(&("OMP_NUM_THREADS".into(), "1024".into())));
+        assert!(knobs(None, Some(0)).env().is_empty());
+        let s = Space {
+            free_ram_gb: f64::NAN,
+            state_gb: f64::INFINITY,
+            physical_cores: u32::MAX,
+            contexts: vec![],
+        };
+        assert!(s.pin_options().iter().flatten().all(|g| g.is_finite()));
+        assert!(s.thread_options().iter().flatten().all(|t| *t <= 1024));
+    }
+
+    #[test]
+    fn a_speed_figure_that_is_not_a_measurement_is_skipped() {
+        assert_eq!(parse_tok_s("-3.5 tok/s"), None);
+        assert_eq!(
+            parse_tok_s("5 tok/s then 99999999999999999999 tok/s"),
+            Some(5.0)
+        );
+        assert_eq!(parse_tok_s("1.2.3 tok/s"), None);
+        assert_eq!(parse_tok_s("tok/s tok/s \u{1F980}tok/s"), None);
+        assert_eq!(parse_tok_s("\u{1b}[32m7.5 tok/s"), Some(7.5));
+        assert_eq!(parse_tok_s(""), None);
+    }
+
+    #[test]
+    fn a_run_cut_short_by_cancelling_is_not_taken_as_a_result() {
+        struct Cuts<'a>(&'a AtomicBool);
+        impl Runner for Cuts<'_> {
+            fn run(
+                &mut self,
+                _: &Knobs,
+                _: Duration,
+                c: &AtomicBool,
+            ) -> Result<Measurement, String> {
+                // the user presses stop while this trial runs; the figure it returns is partial
+                c.store(true, Ordering::Relaxed);
+                self.0.store(true, Ordering::Relaxed);
+                Ok(Measurement {
+                    tok_s: 999.0,
+                    swap_used_gb: 0.0,
+                })
+            }
+        }
+        let cancel = AtomicBool::new(false);
+        let out = search(
+            &space(),
+            Knobs::default(),
+            &mut Cuts(&cancel),
+            Config::default(),
+            &cancel,
+        );
+        assert!(out.aborted);
+        assert_eq!(out.best_score, 0.0, "{out:?}");
+        assert_eq!(out.best, Knobs::default());
+        assert!(out.trials.iter().all(|t| t.score == 0.0));
+    }
+
+    #[test]
+    fn when_every_trial_fails_the_search_still_ends_and_changes_nothing() {
+        struct Dead(usize);
+        impl Runner for Dead {
+            fn run(
+                &mut self,
+                _: &Knobs,
+                _: Duration,
+                _: &AtomicBool,
+            ) -> Result<Measurement, String> {
+                self.0 += 1;
+                Err("no server".into())
+            }
+        }
+        let mut r = Dead(0);
+        let out = search(
+            &space(),
+            Knobs::default(),
+            &mut r,
+            Config::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(out.best, Knobs::default());
+        assert_eq!(out.gain(), 0.0);
+        assert!(r.0 <= 12 && !out.trials.is_empty());
+    }
+
+    #[test]
+    fn nonsense_measurements_never_win() {
+        struct Odd;
+        impl Runner for Odd {
+            fn run(
+                &mut self,
+                k: &Knobs,
+                _: Duration,
+                _: &AtomicBool,
+            ) -> Result<Measurement, String> {
+                let tok_s = match k.threads {
+                    Some(4) => f64::INFINITY,
+                    Some(7) => f64::NAN,
+                    Some(_) => -1.0,
+                    None => 3.0,
+                };
+                Ok(Measurement {
+                    tok_s,
+                    swap_used_gb: f64::NAN,
+                })
+            }
+        }
+        let out = search(
+            &space(),
+            Knobs::default(),
+            &mut Odd,
+            Config::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(out.best.threads, None);
+        assert!(out.best_score.is_finite());
+    }
+
+    #[test]
+    fn the_total_time_and_the_trial_time_are_bounded() {
+        struct Spy(Vec<Duration>);
+        impl Runner for Spy {
+            fn run(
+                &mut self,
+                _: &Knobs,
+                b: Duration,
+                _: &AtomicBool,
+            ) -> Result<Measurement, String> {
+                self.0.push(b);
+                Ok(Measurement {
+                    tok_s: 1.0,
+                    swap_used_gb: 0.0,
+                })
+            }
+        }
+        let cfg = Config {
+            max_runs: usize::MAX,
+            budget: Duration::MAX,
+            total: Duration::ZERO,
+        };
+        let mut spy = Spy(vec![]);
+        let out = search(
+            &space(),
+            Knobs::default(),
+            &mut spy,
+            cfg,
+            &AtomicBool::new(false),
+        );
+        assert!(out.timed_out && spy.0.is_empty());
+        let cfg = Config {
+            max_runs: usize::MAX,
+            budget: Duration::MAX,
+            total: Duration::from_secs(60),
+        };
+        let mut spy = Spy(vec![]);
+        let out = search(
+            &space(),
+            Knobs::default(),
+            &mut spy,
+            cfg,
+            &AtomicBool::new(false),
+        );
+        assert!(!spy.0.is_empty() && spy.0.iter().all(|b| *b <= Duration::from_secs(3600)));
+        assert!(out.trials.len() <= MAX_RUNS);
+    }
+
+    #[test]
+    fn a_bad_score_is_refused_and_does_not_corrupt_the_file() {
+        let d = Scratch::new("bad score");
+        let file = d.0.join("with space").join("autotune.json");
+        save_profile(&file, "a", &knobs(Some(2.0), None), 4.0).unwrap();
+        for bad in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
+            assert!(save_profile(&file, "b", &knobs(None, None), bad).is_err());
+        }
+        assert_eq!(load_profile(&file, "a").unwrap().score, 4.0);
+    }
+
+    #[test]
+    fn a_damaged_entry_costs_one_profile_not_all_and_a_damaged_file_is_kept_aside() {
+        let d = Scratch::new("damaged");
+        let file = d.0.join("autotune.json");
+        std::fs::write(
+            &file,
+            r#"{"profiles":{"good":{"knobs":{"pin_gb":3.0,"threads":4,"ctx":null},"score":5.0,"saved_at":1},
+                "nan":{"knobs":{"pin_gb":null,"threads":null,"ctx":null},"score":null,"saved_at":1},
+                "neg":{"knobs":{"pin_gb":-9.0,"threads":0,"ctx":null},"score":-2.0,"saved_at":1}}}"#,
+        )
+        .unwrap();
+        assert!(load_profile(&file, "good").is_some());
+        assert!(load_profile(&file, "nan").is_none() && load_profile(&file, "neg").is_none());
+        std::fs::write(&file, "{ not json").unwrap();
+        assert!(load_profile(&file, "good").is_none());
+        save_profile(&file, "x", &knobs(None, Some(2)), 1.5).unwrap();
+        assert_eq!(load_profile(&file, "x").unwrap().score, 1.5);
+        assert_eq!(
+            std::fs::read_to_string(file.with_extension("json.bad")).unwrap(),
+            "{ not json"
+        );
+    }
+
+    #[test]
+    fn an_edited_profile_cannot_smuggle_values_colibri_rejects() {
+        let d = Scratch::new("edited");
+        let file = d.0.join("autotune.json");
+        std::fs::write(
+            &file,
+            r#"{"profiles":{"k":{"knobs":{"pin_gb":-9.0,"threads":0,"ctx":null},"score":2.0,"saved_at":1}}}"#,
+        )
+        .unwrap();
+        let p = load_profile(&file, "k").unwrap();
+        assert_eq!(p.knobs, Knobs::default());
+    }
+
+    #[test]
+    fn saves_from_several_threads_all_land_and_leave_no_litter() {
+        let d = Scratch::new("threads");
+        let file = std::sync::Arc::new(d.0.join("autotune.json"));
+        let hs: Vec<_> = (0..8)
+            .map(|i| {
+                let f = file.clone();
+                std::thread::spawn(move || {
+                    for r in 0..5 {
+                        save_profile(
+                            &f,
+                            &format!("k{i}"),
+                            &knobs(None, Some(1 + r)),
+                            1.0 + f64::from(r),
+                        )
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
+        for i in 0..8 {
+            let p = load_profile(&file, &format!("k{i}")).unwrap_or_else(|| panic!("k{i} lost"));
+            assert_eq!(p.score, 5.0);
+        }
+        let left: Vec<_> = std::fs::read_dir(&d.0)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "autotune.json")
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+    }
+
+    #[test]
+    fn the_machine_key_is_stable_and_total() {
+        assert_eq!(machine_key(15.7, 8, "m"), machine_key(15.69, 8, "m"));
+        assert_ne!(machine_key(15.7, 8, "m"), machine_key(31.6, 8, "m"));
+        let _ = machine_key(f64::NAN, 0, "");
+        let _ = machine_key(f64::INFINITY, u32::MAX, "é/ ü");
     }
 }

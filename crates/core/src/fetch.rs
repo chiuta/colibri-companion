@@ -8,11 +8,15 @@ use std::io;
 use std::path::Path;
 use std::process::{Child, Stdio};
 
-/// Run as `python -I -c SCRIPT URL DEST`. It prints `P <done> <total>` lines while
+/// Largest download accepted (the real archive is a few megabytes) and, in the same unit, the
+/// factor by which unpacking may grow it. A wrong or hostile address cannot fill the disk.
+pub const MAX_ZIP_BYTES: u64 = 1 << 30;
+
+/// Run as `python -I -c SCRIPT URL DEST MAX_BYTES`. It prints `P <done> <total>` lines while
 /// downloading, then `OK` once `DEST` holds the colibri folder; failures go to stderr.
 const SCRIPT: &str = r#"
 import os, shutil, sys, tempfile, urllib.request, zipfile
-url, dest = sys.argv[1], os.path.abspath(sys.argv[2])
+url, dest, limit = sys.argv[1], os.path.abspath(sys.argv[2]), int(sys.argv[3])
 parent = os.path.dirname(dest)
 os.makedirs(parent, exist_ok=True)
 work = tempfile.mkdtemp(prefix=".colibri-fetch-", dir=parent)
@@ -29,15 +33,17 @@ try:
                     break
                 out.write(chunk)
                 done += len(chunk)
+                if done > limit:
+                    raise RuntimeError("the download is larger than expected")
                 print("P", done, total, flush=True)
     except Exception as first:
         # Some Python installs (python.org on macOS) have no certificates: curl uses the system's.
         curl = shutil.which("curl")
-        if not curl or url.startswith("file:"):
+        if not curl or url.startswith("file:") or "larger than expected" in str(first):
             raise
         import subprocess
         print("P", 0, 0, flush=True)
-        r = subprocess.run([curl, "-fsSL", "--retry", "2", "-o", archive, url])
+        r = subprocess.run([curl, "-fsSL", "--retry", "2", "--max-filesize", str(limit), "-o", archive, "--", url])
         if r.returncode != 0:
             raise RuntimeError("%s (curl also failed: %d)" % (first, r.returncode))
     print("U", flush=True)
@@ -45,6 +51,9 @@ try:
         bad = z.testzip()
         if bad:
             raise RuntimeError("the download is damaged (%s)" % bad)
+        infos = z.infolist()
+        if len(infos) > 200000 or sum(i.file_size for i in infos) > limit * 4:
+            raise RuntimeError("the archive is larger than expected")
         z.extractall(os.path.join(work, "x"))
     top = os.path.join(work, "x")
     entries = [e for e in os.listdir(top)]
@@ -85,8 +94,20 @@ pub fn parse_line(line: &str) -> Option<FetchLine> {
 
 /// Starts the download; read `stdout` for [`FetchLine`]s and `stderr` for the reason of a failure.
 pub fn spawn_zip_download(python: &PythonCmd, url: &str, dest: &Path) -> io::Result<Child> {
+    spawn_zip_download_capped(python, url, dest, MAX_ZIP_BYTES)
+}
+
+/// [`spawn_zip_download`] with an explicit limit on the size of the download.
+pub fn spawn_zip_download_capped(
+    python: &PythonCmd,
+    url: &str,
+    dest: &Path,
+    max_bytes: u64,
+) -> io::Result<Child> {
     let mut c = python.command();
-    c.args(["-I", "-c", SCRIPT, url]).arg(dest);
+    c.args(["-I", "-c", SCRIPT, url])
+        .arg(dest)
+        .arg(max_bytes.to_string());
     hide_window(&mut c);
     let child = c
         .stdin(Stdio::null())
@@ -170,5 +191,42 @@ mod tests {
         let mut again = spawn_zip_download(&python, &url, &dest).unwrap();
         assert!(!again.wait().unwrap().success());
         assert!(crate::locate::is_colibri_root(&dest));
+    }
+
+    /// A download or archive bigger than the limit is stopped, and nothing is left behind.
+    #[cfg(not(windows))]
+    #[test]
+    fn an_oversized_archive_is_refused() {
+        use std::io::Read;
+        let Some(python) = crate::locate::find_python() else {
+            return;
+        };
+        let base = std::env::temp_dir().join(format!("cc-fetch-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let zip = base.join("big.zip");
+        let mut mk = python.command();
+        mk.args([
+            "-c",
+            "import sys, zipfile\nz = zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED)\n\
+             z.writestr('colibri-main/c/coli', 'x' * 100000)\nz.close()",
+        ])
+        .arg(&zip);
+        assert!(mk.status().unwrap().success());
+        let url = format!("file://{}", zip.display());
+        let dest = base.join("out").join("colibri");
+        // the archive is small but unpacks past 4x the limit
+        let mut child = spawn_zip_download_capped(&python, &url, &dest, 1000).unwrap();
+        let mut err = String::new();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut err)
+            .unwrap();
+        assert!(!child.wait().unwrap().success());
+        assert!(err.contains("larger than expected"), "{err}");
+        assert!(!dest.exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

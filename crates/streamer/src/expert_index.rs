@@ -46,9 +46,9 @@ impl ExpertIndex {
                 Some(id) => {
                     let s = idx.experts.entry(id).or_default();
                     s.ranges.push((t.start, t.end));
-                    s.bytes += t.len();
+                    s.bytes = s.bytes.saturating_add(t.len());
                 }
-                None => idx.resident_bytes += t.len(),
+                None => idx.resident_bytes = idx.resident_bytes.saturating_add(t.len()),
             }
         }
         for s in idx.experts.values_mut() {
@@ -58,7 +58,9 @@ impl ExpertIndex {
     }
 
     pub fn expert_bytes(&self) -> u64 {
-        self.experts.values().map(|s| s.bytes).sum()
+        self.experts
+            .values()
+            .fold(0u64, |a, s| a.saturating_add(s.bytes))
     }
 
     /// Mean size of one expert, 0 when there are none.
