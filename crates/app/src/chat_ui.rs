@@ -875,7 +875,7 @@ impl CompanionApp {
 fn stats_text(m: &StoredMessage, tokens_word: &str) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(t) = m.tokens_per_second {
-        parts.push(format!("{t:.1} tok/s"));
+        parts.push(loc(format!("{t:.1} tok/s")));
     }
     if let Some(n) = m.completion_tokens {
         parts.push(format!("{n} {tokens_word}"));

@@ -69,7 +69,7 @@ impl CompanionApp {
                     ui.label(
                         RichText::new(format!("{} · {}", m.name, m.vendor)).semibold(),
                     );
-                    ui.label(format!(
+                    ui.label(crate::widgets::loc(format!(
                         "{}{} · {} {:.1} GB · {} {}",
                         m.params_total,
                         active,
@@ -77,7 +77,7 @@ impl CompanionApp {
                         m.size_gb,
                         self.t("context", "context"),
                         m.context
-                    ));
+                    )));
                     // Catalogue wording is kept as the vendors printed it (English).
                     muted(ui, &p, m.strength);
                     muted(ui, &p, &lm::agent_note(m));

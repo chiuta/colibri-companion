@@ -112,6 +112,7 @@ fn help_text(lang: Lang) -> String {
 
 impl eframe::App for CompanionApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        crate::widgets::set_number_lang(self.s.lang);
         let started = std::time::Instant::now();
         self.build_ui(ui);
         // `COLIBRI_PERF=1` prints how long laying out the interface takes (for tuning only).

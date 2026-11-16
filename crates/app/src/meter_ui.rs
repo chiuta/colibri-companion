@@ -5,6 +5,7 @@
 
 use crate::app::{CompanionApp, Event};
 use crate::theme::Semibold;
+use crate::widgets::loc;
 use companion_core::chat::StreamSummary;
 use companion_core::meter::{AnswerStats, Live, Meter, Sample};
 use companion_core::resources::Sampler;
@@ -205,12 +206,12 @@ impl CompanionApp {
                 if let Some(l) = last {
                     // the figures at this moment, while the answer is being written
                     if let Some(c) = l.engine_cores {
-                        row(ui, self.t("Procesor motor acum (nuclee ocupate)", "Engine processor now (cores busy)"), format!("{c:.1}"));
+                        row(ui, self.t("Procesor motor acum (nuclee ocupate)", "Engine processor now (cores busy)"), loc(format!("{c:.1}")));
                     }
                     row(
                         ui,
                         self.t("Memorie folosită acum", "Memory used now"),
-                        format!("{:.1} / {:.1} GB", l.ram_used_gb, l.ram_total_gb),
+                        loc(format!("{:.1} / {:.1} GB", l.ram_used_gb, l.ram_total_gb)),
                     );
                 }
                 row(
@@ -221,7 +222,7 @@ impl CompanionApp {
                 row(
                     ui,
                     self.t("Procesor motor, vârf (nuclee)", "Engine processor, peak (cores)"),
-                    stats.engine_cores_peak.map(|c| format!("{c:.1}")).unwrap_or_else(dash),
+                    stats.engine_cores_peak.map(|c| loc(format!("{c:.1}"))).unwrap_or_else(dash),
                 );
                 row(
                     ui,
@@ -248,7 +249,7 @@ impl CompanionApp {
                         ui,
                         self.t("Memorie video, vârf", "Graphics memory, peak"),
                         match (stats.vram_peak_gb, stats.vram_total_gb) {
-                            (Some(u), Some(t)) => format!("{u:.1} / {t:.1} GB"),
+                            (Some(u), Some(t)) => loc(format!("{u:.1} / {t:.1} GB")),
                             (Some(u), None) => gb(u),
                             _ => dash(),
                         },
@@ -278,15 +279,15 @@ fn dash() -> String {
 }
 
 fn secs(ms: u64) -> String {
-    format!("{:.1} s", ms as f64 / 1000.0)
+    loc(format!("{:.1} s", ms as f64 / 1000.0))
 }
 
 fn tps(v: Option<f64>) -> String {
-    v.map(|t| format!("{t:.1} tok/s")).unwrap_or_else(dash)
+    v.map(|t| loc(format!("{t:.1} tok/s"))).unwrap_or_else(dash)
 }
 
 fn gb(v: f64) -> String {
-    format!("{v:.1} GB")
+    loc(format!("{v:.1} GB"))
 }
 
 fn pair(avg: Option<f32>, peak: Option<f32>, unit: &str) -> String {

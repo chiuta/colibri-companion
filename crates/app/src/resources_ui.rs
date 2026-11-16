@@ -93,16 +93,16 @@ impl CompanionApp {
         } else {
             0.0
         };
-        let ram = format!(
+        let ram = crate::widgets::loc(format!(
             "RAM {:.1} / {:.1} GB{}",
             s.ram_used_gb,
             s.ram_total_gb,
             if s.swap_used_gb > 0.2 {
-                format!(" · swap {:.1} GB", s.swap_used_gb)
+                crate::widgets::loc(format!(" · swap {:.1} GB", s.swap_used_gb))
             } else {
                 String::new()
             }
-        );
+        ));
         gauge(ui, &p, ram_frac, &ram);
         sparkline(ui, &self.ram_hist, p.ok, p.panel);
         ui.add_space(4.0);
@@ -134,7 +134,10 @@ impl CompanionApp {
                 ui,
                 &p,
                 vf,
-                &format!("VRAM {:.1} / {:.1} GB", g.vram_used_gb, g.vram_total_gb),
+                &crate::widgets::loc(format!(
+                    "VRAM {:.1} / {:.1} GB",
+                    g.vram_used_gb, g.vram_total_gb
+                )),
             );
         }
         if let (Some(free), Some(total)) = (s.disk_free_gb, s.disk_total_gb) {
@@ -148,19 +151,19 @@ impl CompanionApp {
                 ui,
                 &p,
                 used,
-                &format!(
+                &crate::widgets::loc(format!(
                     "{} {:.0} GB {} {:.0} GB",
                     self.t("Disc (modele): liber", "Disk (models): free"),
                     free,
                     self.t("din", "of"),
                     total
-                ),
+                )),
             );
         }
         ui.add_space(8.0);
         ui.label(RichText::new(self.t("Cine consumă", "Who is using it")).semibold());
         for pr in &s.procs {
-            ui.label(format!(
+            ui.label(crate::widgets::loc(format!(
                 "{} — {}% {} · {:.2} GB RAM · {} {}",
                 pr.label,
                 pr.cpu_percent.round(),
@@ -168,7 +171,7 @@ impl CompanionApp {
                 pr.rss_gb,
                 pr.processes,
                 self.t("procese", "processes")
-            ));
+            )));
         }
         if s.procs.len() < 2 {
             muted(

@@ -169,22 +169,75 @@ pub fn right_to_left<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 
 // ------------------------------------------------------------------ formatting
 
+/// The language the numbers are written in. Set once per frame by the window; until then (and in
+/// tests) numbers keep the plain English form.
+static NUMBER_LANG: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
+
+pub fn set_number_lang(l: companion_core::Lang) {
+    use companion_core::Lang::*;
+    let n = match l {
+        Ro => 0,
+        En => 1,
+        Fr => 2,
+        It => 3,
+        Es => 4,
+        Pt => 5,
+        De => 6,
+        Hu => 7,
+    };
+    NUMBER_LANG.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A number with units as English writes it ("19.4 GB") in the reader's way: a decimal comma in
+/// every language except English, and the French octet units (Go, Mo, To, ko). Only a dot
+/// between two digits is touched, so text around the number is left alone.
+pub fn localise_number(s: &str, lang_index: u8) -> String {
+    if lang_index == 1 || lang_index > 7 {
+        return s.to_string();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    for (i, c) in chars.iter().enumerate() {
+        let between_digits = *c == '.'
+            && i > 0
+            && chars[i - 1].is_ascii_digit()
+            && chars.get(i + 1).is_some_and(char::is_ascii_digit);
+        out.push(if between_digits { ',' } else { *c });
+    }
+    if lang_index == 2 {
+        for (from, to) in [
+            (" GB", " Go"),
+            (" MB", " Mo"),
+            (" TB", " To"),
+            (" kB", " ko"),
+        ] {
+            out = out.replace(from, to);
+        }
+    }
+    out
+}
+
+/// [`localise_number`] for the language set with [`set_number_lang`].
+pub fn loc(s: String) -> String {
+    localise_number(&s, NUMBER_LANG.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 pub fn fmt_gb(gb: f64) -> String {
-    if gb >= 1000.0 {
+    loc(if gb >= 1000.0 {
         format!("{:.2} TB", gb / 1000.0)
     } else if gb >= 100.0 {
         format!("{gb:.0} GB")
     } else {
         format!("{gb:.1} GB")
-    }
+    })
 }
 
 pub fn fmt_rate(bytes_per_s: f64) -> String {
-    if bytes_per_s >= 1e6 {
+    loc(if bytes_per_s >= 1e6 {
         format!("{:.1} MB/s", bytes_per_s / 1e6)
     } else {
         format!("{:.0} kB/s", bytes_per_s / 1e3)
-    }
+    })
 }
 
 pub fn fmt_duration(secs: f64, ro: bool) -> String {
@@ -221,5 +274,25 @@ mod tests {
         assert_eq!(fmt_duration(30.0, true), "30 s");
         assert_eq!(fmt_duration(600.0, true), "10 min");
         assert_eq!(fmt_duration(7500.0, false), "2 h 5 min");
+    }
+
+    #[test]
+    fn numbers_are_written_the_readers_way() {
+        // 0 = Romanian, 1 = English, 2 = French, 6 = German
+        assert_eq!(localise_number("19.4 GB", 1), "19.4 GB");
+        assert_eq!(localise_number("19.4 GB", 0), "19,4 GB");
+        assert_eq!(localise_number("19.4 GB", 2), "19,4 Go");
+        assert_eq!(
+            localise_number("25.0 MB/s · 1.56 TB · 800 kB/s", 2),
+            "25,0 Mo/s · 1,56 To · 800 ko/s"
+        );
+        assert_eq!(localise_number("19.4 GB", 6), "19,4 GB");
+        // text around a number, versions and sentence dots stay as they are
+        assert_eq!(
+            localise_number("v0.1.0 ready. Next", 6),
+            "v0,1,0 ready. Next"
+        );
+        assert_eq!(localise_number("Done. 3 files", 6), "Done. 3 files");
+        assert_eq!(localise_number("19.4 GB", 200), "19.4 GB");
     }
 }

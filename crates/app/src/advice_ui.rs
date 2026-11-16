@@ -28,7 +28,7 @@ impl CompanionApp {
 
     fn gpu_line(&self, g: &GpuInfo) -> String {
         let mem = match g.vram_gb {
-            Some(v) if !g.integrated => format!(" · {v:.0} GB VRAM"),
+            Some(v) if !g.integrated => crate::widgets::loc(format!(" · {v:.0} GB VRAM")),
             _ if g.integrated => self
                 .t(" · folosește memoria RAM", " · shares main memory")
                 .to_string(),
@@ -46,7 +46,7 @@ impl CompanionApp {
             .filter(|m| m.is_chat_model() && m.status != "unsupported" && !m.streams_from_disk())
             .filter(|m| m.download_gb <= usable)
             .max_by(|a, b| a.download_gb.total_cmp(&b.download_gb))
-            .map(|m| format!("{} ({:.0} GB)", m.name, m.download_gb))
+            .map(|m| crate::widgets::loc(format!("{} ({:.0} GB)", m.name, m.download_gb)))
     }
 
     pub fn advice_section(&mut self, ui: &mut Ui, view: &ResView) {
@@ -125,7 +125,11 @@ impl CompanionApp {
                     (p.warn_soft, p.warn)
                 };
                 tinted(ui, fill, stroke, |ui| {
-                    ui.label(format!("{} · {:.1} GB", self.t(ro, en), m));
+                    ui.label(crate::widgets::loc(format!(
+                        "{} · {:.1} GB",
+                        self.t(ro, en),
+                        m
+                    )));
                 });
             }
         }
@@ -189,7 +193,7 @@ impl CompanionApp {
                 Tip::CloseApps(list) => {
                     let names = list
                         .iter()
-                        .map(|(n, g)| format!("{n} ({g:.1} GB)"))
+                        .map(|(n, g)| crate::widgets::loc(format!("{n} ({g:.1} GB)")))
                         .collect::<Vec<_>>()
                         .join(", ");
                     ui.label(
@@ -398,11 +402,11 @@ impl CompanionApp {
                     ui.label(format!("{n}"));
                     match plan {
                         Ok(pl) => {
-                            ui.label(format!(
+                            ui.label(crate::widgets::loc(format!(
                                 "{} {:.1} GB",
                                 self.t("cache de experți", "expert cache"),
                                 pl.cache_gb
-                            ));
+                            )));
                             ui.label(format!(
                                 "{:.0}% {}",
                                 pl.hit_rate * 100.0,
@@ -486,7 +490,11 @@ impl CompanionApp {
                         "A slow drive: models that read from it will be very slow. Pick only models that fit in memory, or use an NVMe SSD.",
                     ),
                 };
-                ui.label(format!("{:.0} MB/s · {}", mb, self.t(ro, en)));
+                ui.label(crate::widgets::loc(format!(
+                    "{:.0} MB/s · {}",
+                    mb,
+                    self.t(ro, en)
+                )));
             }
             Some(Err(_)) => muted(
                 ui,

@@ -19,6 +19,9 @@ impl CompanionApp {
                     .inner_margin(Margin::symmetric(14, 8)),
             )
             .show(ui, |ui| {
+                // Below this width the less used buttons move into the "More" menu, so the bar never
+                // overlaps itself (long words in German or Hungarian need more room than English).
+                let narrow = ui.available_width() < 1380.0;
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("Colibri Companion")
@@ -46,10 +49,28 @@ impl CompanionApp {
                         if self.s.lang != before {
                             let _ = self.s.save();
                         }
-                        if ui.button(self.t("Resurse", "Resources")).clicked() {
+                        if !narrow && ui.button(self.t("Resurse", "Resources")).clicked() {
                             self.set_resources_open(true);
                         }
                         ui.menu_button(self.t("Mai multe ▾", "More ▾"), |ui| {
+                            if narrow {
+                                if ui.button(self.t("Resurse", "Resources")).clicked() {
+                                    self.set_resources_open(true);
+                                    ui.close();
+                                }
+                                if ui
+                                    .button(self.t("Accesibilitate", "Accessibility"))
+                                    .clicked()
+                                {
+                                    self.open_access();
+                                    ui.close();
+                                }
+                                if ui.button(self.t("Despre", "About")).clicked() {
+                                    self.show_about = true;
+                                    ui.close();
+                                }
+                                ui.separator();
+                            }
                             for (label, which) in [
                                 (self.t("Programe locale", "Local programs"), 0),
                                 (self.t("Compară modele", "Compare models"), 1),
@@ -97,15 +118,16 @@ impl CompanionApp {
                                 }
                             }
                         });
-                        if ui.button(self.t("Despre", "About")).clicked() {
+                        if !narrow && ui.button(self.t("Despre", "About")).clicked() {
                             self.show_about = true;
                         }
                         if ui.button(self.t("Setări", "Settings")).clicked() {
                             self.show_settings = true;
                         }
-                        if ui
-                            .button(self.t("Accesibilitate", "Accessibility"))
-                            .clicked()
+                        if !narrow
+                            && ui
+                                .button(self.t("Accesibilitate", "Accessibility"))
+                                .clicked()
                         {
                             self.open_access();
                         }
@@ -250,7 +272,7 @@ impl CompanionApp {
                                 ));
                             }
                             if let Some(r) = f.ram_used_gb {
-                                bits.push(format!("RAM {r:.1} GB"));
+                                bits.push(crate::widgets::loc(format!("RAM {r:.1} GB")));
                             }
                             ui.label(RichText::new(bits.join("  ·  ")).small().color(p.muted));
                         }
