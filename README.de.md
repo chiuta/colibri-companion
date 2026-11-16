@@ -32,6 +32,8 @@ Die App enthält colibri nicht. Sie führt die JSON-Befehle von colibri aus (`se
 
 Linux (x86-64, ARM64; Wayland und X11), Windows 10/11 und macOS (Intel und Apple Silicon) — eine Codebasis, OpenGL-Darstellung (läuft auch auf alten Grafikkarten und in virtuellen Maschinen). `.github/workflows/build.yml` baut und testet alle Varianten und erzeugt fertige Archive. Unter Linux fügt `packaging/linux/install.sh` die App dem Menü hinzu. HiDPI-Skalierung, Kürzel Strg/⌘+N, Strg/⌘+, und Esc sowie Unterstützung für Screenreader (AccessKit).
 
+**Dokumente und Werkzeuge:** Fügen Sie Dateien hinzu (**Mehr → Dokumente**) und stellen Sie Fragen: Die App durchsucht sie auf Ihrem Computer (Stichwörter, keine Cloud) und zeigt unter jeder Antwort die genutzten Stellen. **Mehr → MCP-Werkzeuge** verbindet MCP-Server, die Sie hinzufügen und starten; das Modell kann ein Werkzeug anfordern, jeder Aufruf braucht Ihre Zustimmung (frühe Funktion, hängt davon ab, ob das Modell das Format befolgt).
+
 Modelle: Behalte mehrere auf dem Computer, wechsle zwischen ihnen oder füge in einem Fenster weitere hinzu (**Modelle**); zuerst wird das leistungsfähigste vorgeschlagen, das dein Computer ausführen kann (bei wenig RAM werden die Experten von der SSD gelesen). Tempo: CUDA für NVIDIA, Vulkan für andere Grafikchips, sonst der Prozessor, automatisch gewählt. **Ressourcen** zeigt live Prozessor, Speicher, Grafikkarte und Festplatte sowie den Beweis, dass nichts deinen Computer verlässt (alle offenen Verbindungen der App und der Engine, mit dem Befehl zum Selbstprüfen). Fehlt colibri, wird es für dich heruntergeladen (ohne git), und eine tägliche Prüfung (abschaltbar) meldet, wenn colibri oder diese App eine neue Version hat.
 
 ## Sprachen

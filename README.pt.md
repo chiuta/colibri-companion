@@ -32,6 +32,8 @@ A aplicação não inclui o colibri. Executa os comandos JSON do colibri (`setup
 
 Linux (x86-64, ARM64; Wayland e X11), Windows 10/11 e macOS (Intel e Apple Silicon) — um só código-fonte, renderização OpenGL (funciona em placas gráficas antigas e em máquinas virtuais). `.github/workflows/build.yml` compila e testa todas as variantes e produz arquivos prontos a distribuir. No Linux, `packaging/linux/install.sh` acrescenta a aplicação ao menu. Escala HiDPI, atalhos Ctrl/⌘+N, Ctrl/⌘+, e Esc, e suporte para leitores de ecrã (AccessKit).
 
+**Documentos e ferramentas:** adicione ficheiros (**Mais → Documentos**) e faça perguntas: a aplicação pesquisa-os no seu computador (palavras-chave, sem nuvem) e mostra sob cada resposta os excertos usados. **Mais → Ferramentas MCP** liga servidores MCP que você adiciona e inicia; o modelo pode pedir uma ferramenta e cada chamada precisa da sua aprovação (funcionalidade inicial, depende de o modelo seguir o formato).
+
 Modelos: guarda vários no computador, alterna entre eles ou adiciona mais a partir de uma só janela (**Modelos**); o mais capaz que o teu computador consegue executar é sugerido primeiro (com pouca RAM, os especialistas são lidos do SSD). Velocidade: CUDA para NVIDIA, Vulkan para outros chips gráficos, senão o processador, escolhidos automaticamente. **Recursos** mostra em direto processador, memória, placa gráfica e disco, e a prova de que nada sai do teu computador (todas as ligações abertas da aplicação e do motor, com o comando para verificares tu próprio). Se o colibri faltar é descarregado por ti (sem git), e uma verificação diária (pode ser desligada) avisa quando o colibri ou esta aplicação têm uma versão nova.
 
 ## Idiomas

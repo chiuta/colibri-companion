@@ -32,6 +32,8 @@ L'app non include colibri. Esegue i comandi JSON di colibri (`setup --list --jso
 
 Linux (x86-64, ARM64; Wayland e X11), Windows 10/11 e macOS (Intel e Apple Silicon) — un solo codice sorgente, rendering OpenGL (funziona anche su vecchie schede grafiche e in macchine virtuali). `.github/workflows/build.yml` compila e testa ogni variante e produce archivi pronti da distribuire. Su Linux, `packaging/linux/install.sh` aggiunge l'app al menu. Scalatura HiDPI, scorciatoie Ctrl/⌘+N, Ctrl/⌘+, ed Esc, supporto per lettori di schermo (AccessKit).
 
+**Documenti e strumenti:** aggiungi file (**Altro → Documenti**) e fai domande: l'app li cerca sul tuo computer (parole chiave, senza cloud) e mostra sotto ogni risposta i passaggi usati. **Altro → Strumenti MCP** collega server MCP che aggiungi e avvii tu; il modello può chiedere uno strumento e ogni chiamata richiede la tua approvazione (funzione iniziale, dipende da quanto il modello segue il formato).
+
 Modelli: tienine più d'uno sul computer, passa dall'uno all'altro o aggiungine da un'unica finestra (**Modelli**); per primo viene proposto il più capace che il tuo computer può eseguire (con poca RAM gli esperti vengono letti dall'SSD). Velocità: CUDA per NVIDIA, Vulkan per gli altri chip grafici, altrimenti il processore, scelti automaticamente. **Risorse** mostra in tempo reale processore, memoria, scheda grafica e disco, più la prova che nulla esce dal tuo computer (tutte le connessioni aperte dell'app e del motore, con il comando per verificare da solo). Se colibri manca viene scaricato per te (senza git), e un controllo giornaliero (disattivabile) ti avvisa quando colibri o questa app hanno una nuova versione.
 
 ## Lingue

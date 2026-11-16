@@ -20,6 +20,8 @@ cargo run --release -p colibri-companion -- --demo  # demo, no colibri needed
 
 Chat: streaming answers, instant Stop, Markdown, collapsible reasoning, saved conversations, style (Precise / Balanced / Creative), copy and regenerate; search your conversations (Ctrl/⌘+K), rename them (right-click), edit your last message, drop text files into the message, and save a conversation as a .md file. Themes: light, dark, high contrast.
 
+**Documents and tools:** add files (**More → Documents**) and ask questions about them: the app searches them on your computer (keyword search, no cloud) and shows the passages it used under each answer. **More → MCP tools** connects MCP servers that you add and start yourself; the model can ask to use a tool, and every call needs your approval (early feature, depends on the model following the format).
+
 Models: keep several on the computer, switch between them or add more from one window (**Models**), with the most capable model your computer can run suggested first (small-RAM computers stream experts from the SSD). Speed: CUDA for NVIDIA, Vulkan for other graphics chips, else the processor, chosen automatically. **Resources** shows processor, memory, graphics card and disk use live, plus the evidence that nothing leaves your computer (every open connection of the app and the engine, with the command to check it yourself). If colibri is missing it is downloaded for you (no git needed), and a once-a-day check (can be turned off) tells you when colibri or this app has a new version.
 
 ## How it works
