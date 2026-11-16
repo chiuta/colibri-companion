@@ -93,10 +93,70 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  build-old-linux:
+    # The same program built to run on older Linux distributions: it is linked against glibc 2.17
+    # (the baseline of Debian 8+, Ubuntu 14.04+, RHEL/CentOS 7+, and every newer one) with
+    # cargo-zigbuild. The build still runs on Ubuntu 26.04; only the library baseline is older.
+    # The windowing and graphics libraries are loaded at run time, so they come from the user's system.
+    needs: licenses
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-26.04,     rust: x86_64-unknown-linux-gnu,  name: linux-x86_64-glibc2.17 }
+          - { os: ubuntu-26.04-arm, rust: aarch64-unknown-linux-gnu, name: linux-aarch64-glibc2.17 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.rust }}" }
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "glibc217-${{ matrix.rust }}" }
+      - name: Linux system libraries
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+      - name: Zig and cargo-zigbuild
+        run: python3 -m pip install --user --break-system-packages ziglang cargo-zigbuild && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build against glibc 2.17
+        env:
+          RUST_TARGET: ${{ matrix.rust }}
+        run: cargo zigbuild --release --locked -p colibri-companion --target "$RUST_TARGET.2.17"
+      - name: Check the glibc baseline
+        env:
+          RUST_TARGET: ${{ matrix.rust }}
+        run: |
+          f="target/$RUST_TARGET/release/colibri-companion"
+          # the newest glibc symbol the program asks for must be 2.17 or older
+          newest=$(objdump -T "$f" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)
+          echo "Newest glibc symbol required: $newest" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$(printf '%s\n2.17\n' "$newest" | sort -V | tail -1)" = "2.17" ] || { echo "needs glibc $newest" >&2; exit 1; }
+      - name: Load it in an old distribution
+        env:
+          RUST_TARGET: ${{ matrix.rust }}
+        run: |
+          # Ubuntu 16.04 has glibc 2.23: a missing symbol version shows up as "version `GLIBC_..' not found".
+          out=$(docker run --rm -v "$PWD/target/$RUST_TARGET/release:/app:ro" ubuntu:16.04 ldd /app/colibri-companion 2>&1 || true)
+          echo "$out"
+          if echo "$out" | grep -q "not found" && echo "$out" | grep -q "GLIBC"; then echo "glibc mismatch" >&2; exit 1; fi
+      - name: Package
+        run: |
+          d=colibri-companion-${{ matrix.name }}; mkdir "$d"
+          cp LICENSE NOTICE README*.md THIRD_PARTY_LICENSES.md "$d"/ && cp -r licenses "$d"/
+          cp "target/${{ matrix.rust }}/release/colibri-companion" "$d"/
+          cp -r packaging "$d"/
+          tar czf "$d.tar.gz" "$d"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: colibri-companion-${{ matrix.name }}
+          path: colibri-companion-${{ matrix.name }}.*
+          retention-days: 14
+          if-no-files-found: error
+
   release:
     # Only for version tags: attaches every platform's archive to a draft pre-release.
     if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
-    needs: build
+    needs: [build, build-old-linux]
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions: { contents: write }
