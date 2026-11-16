@@ -541,7 +541,7 @@ impl CompanionApp {
                             }
                         }
                         if !streaming && !m.content.is_empty() {
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 if ui.small_button(w_copy).clicked() {
                                     action = Some(MsgAction::Copy(m.content.clone()));
                                 }

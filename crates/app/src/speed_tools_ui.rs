@@ -418,7 +418,11 @@ impl CompanionApp {
             "Viteză estimată: ≈ {} jetoane/s · {}",
             "Estimated speed: ≈ {} tokens/s · {}",
         )
-        .replacen("{}", &fmt_rate_range(e.tok_s_low, e.tok_s_high), 1)
+        .replacen(
+            "{}",
+            &crate::widgets::loc(fmt_rate_range(e.tok_s_low, e.tok_s_high)),
+            1,
+        )
         .replacen("{}", self.speed_class(e.speed), 1)
     }
 
