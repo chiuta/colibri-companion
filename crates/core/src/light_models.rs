@@ -26,7 +26,7 @@
 //!   fits comfortably first). It is NOT a quality benchmark.
 
 /// Date on which the figures below were read.
-pub const CHECKED: &str = "2026-11-16";
+pub const CHECKED: &str = "2026-11-17";
 
 /// RAM tiers in GB.
 pub const TIERS: [u32; 4] = [4, 8, 16, 32];
@@ -324,8 +324,13 @@ pub const LIGHT_MODELS: &[LightModel] = &[
         hf_repo: Some("LiquidAI/LFM3-1.7B-GGUF"),
         engine: Engine::OpenAiServer,
         documented_ram_gb: None,
-        note: "Non-standard licence (revenue-limited commercial use): ask before shipping in a product.",
-        agent: AGENT_UNKNOWN,
+        note: "Non-standard licence (revenue-limited commercial use): ask before shipping in a product. The HF card prints no absolute date (only 'updated 18 days ago'); the date comes from a roundup.",
+        agent: AgentFit {
+            tool_calling: Support::Documented("https://huggingface.co/LiquidAI/LFM3-1.7B"),
+            min_context_k: Some(256),
+            notes: "HF card: 'designed for local agents, tool calling, structured outputs'; tools passed to apply_chat_template, calls emitted as XML (not Companion's fenced block, so it may need prompting)",
+            ..AGENT_UNKNOWN
+        },
         sources: &[
             "https://huggingface.co/LiquidAI/LFM3-1.7B",
             "https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF",
@@ -351,7 +356,40 @@ pub const LIGHT_MODELS: &[LightModel] = &[
         hf_repo: Some("Qwen/Qwen3.5-4B"),
         engine: Engine::OpenAiServer,
         documented_ram_gb: None,
-        note: "HF card shows only a relative commit age; the month comes from the 0.8B card of the same series. 2B and 9B licences were not readable (see UNVERIFIED).",
+        note: "HF card shows only a relative commit age; the month comes from the 0.8B card of the same series. 2B licence not readable (see UNVERIFIED); 9B is a separate entry.",
+        agent: AgentFit {
+            tool_calling: Support::Documented("https://ollama.com/library/qwen3.5"),
+            agentic_coding: Support::Unverified,
+            structured_output: Support::Unverified,
+            min_context_k: Some(256),
+            notes: "Ollama tools badge for the Qwen3.5 family; HF card: 'excels in tool calling' (parser qwen3_coder)",
+        },
+        sources: &[
+            "https://ollama.com/library/qwen3.5",
+            "https://huggingface.co/Qwen/Qwen3.5-4B/tree/main",
+        ],
+        checked: CHECKED,
+    },
+    LightModel {
+        id: "qwen3.5-9b",
+        name: "Qwen3.5 9B",
+        vendor: "Alibaba Qwen",
+        released: "Mar 2026 (Qwen3.5 small series; HF cards updated Mar 9)",
+        params_total: "9B (not stated on the page read)",
+        params_active: None,
+        size_lo_gb: 6.6,
+        size_gb: 7.6,
+        quant: "Ollama default tags (page prints 6.6-7.6 GB)",
+        context: "256K",
+        modalities: "text, image",
+        licence: "apache-2.0",
+        permissive: true,
+        strength: "Largest Qwen3.5 small model that still fits a 16 GB machine",
+        ollama_tag: Some("qwen3.5:9b"),
+        hf_repo: Some("Qwen/Qwen3.5-9B"),
+        engine: Engine::OpenAiServer,
+        documented_ram_gb: None,
+        note: "Licence read from the HF page header (search snippet of the /tree/main page); the model card text itself was not fetchable here.",
         agent: AgentFit {
             tool_calling: Support::Documented("https://ollama.com/library/qwen3.5"),
             agentic_coding: Support::Unverified,
@@ -361,7 +399,7 @@ pub const LIGHT_MODELS: &[LightModel] = &[
         },
         sources: &[
             "https://ollama.com/library/qwen3.5",
-            "https://huggingface.co/Qwen/Qwen3.5-4B/tree/main",
+            "https://huggingface.co/Qwen/Qwen3.5-9B/tree/main",
         ],
         checked: CHECKED,
     },
@@ -375,7 +413,7 @@ pub const LIGHT_MODELS: &[LightModel] = &[
         size_lo_gb: 1.67,
         size_gb: 1.67,
         quant: "GGUF Q4_K_M (Q8_0 is 2.87 GB)",
-        context: "not stated on the pages read",
+        context: "131,072 (HF card)",
         modalities: "text",
         licence: "lfm1.0",
         permissive: false,
@@ -390,6 +428,7 @@ pub const LIGHT_MODELS: &[LightModel] = &[
             ..AGENT_UNKNOWN
         },
         sources: &[
+            "https://huggingface.co/LiquidAI/LFM2.5-2.6B",
             "https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF",
             "https://www.liquid.ai/en/blog/lfm2-5-2-6b",
         ],
@@ -428,12 +467,12 @@ pub const LIGHT_MODELS: &[LightModel] = &[
 /// Candidates NOT in the list, with the reason. Never shown as recommendations.
 pub const UNVERIFIED: &[(&str, &str)] = &[
     (
-        "qwen3.5-2b / 9b",
-        "Ollama sizes read (2.7-3.1 / 6.6-7.6 GB) but the HF card licence could not be fetched; 4B and 0.8B are Apache-2.0",
+        "qwen3.5-2b",
+        "Ollama size read (2.7-3.1 GB) but the HF card licence could not be fetched (page not on the fetch allowlist); 0.8B, 4B and 9B are Apache-2.0",
     ),
     (
         "granite-4.2 3B/8B/30B",
-        "Apache 2.0 and 25 Aug 2026 from IBM research; no context length, no GB size (Ollama page not fetchable)",
+        "IBM docs page: Apache 2.0, 128K context, reasoning-augmented tool calling; 25 Aug 2026 only from secondary pages; no GB size (Ollama/HF pages not fetchable)",
     ),
     (
         "mimo-v2.6-distill-qwen-9b",
