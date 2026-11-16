@@ -59,6 +59,7 @@ struct Real {
     tx: Sender<Event>,
     ctx: egui::Context,
     cancel: CancelToken,
+    lang: companion_core::store::Lang,
 }
 
 impl Real {
@@ -105,8 +106,8 @@ impl Env for Real {
             self.online()?;
         }
         let bytes = connect::send(self.python.as_ref(), &connect::page(url, ""))
-            .map_err(|e| connect::explain(&e, false))?;
-        connect::page_text(&bytes).map_err(|e| connect::explain(&e, false))
+            .map_err(|e| crate::app::explain_in(self.lang, &e))?;
+        connect::page_text(&bytes).map_err(|e| crate::app::explain_in(self.lang, &e))
     }
     fn read_folder(&mut self, path: &str) -> Result<String, String> {
         let found = attach::collect(&[path.into()], 100);
@@ -148,9 +149,9 @@ impl Env for Real {
             &sv.token,
             &connect::Op::File { repo, path },
         );
-        let bytes =
-            connect::send(self.python.as_ref(), &req).map_err(|e| connect::explain(&e, false))?;
-        connect::page_text(&bytes).map_err(|e| connect::explain(&e, false))
+        let bytes = connect::send(self.python.as_ref(), &req)
+            .map_err(|e| crate::app::explain_in(self.lang, &e))?;
+        connect::page_text(&bytes).map_err(|e| crate::app::explain_in(self.lang, &e))
     }
     fn ask(&mut self, prompt: &str) -> Result<String, String> {
         let client = companion_core::chat::ChatClient::new(&self.base, Some(self.key.clone()));
@@ -198,7 +199,7 @@ impl Env for Real {
         let body = serde_json::json!({ "text": text, "content": text }).to_string();
         connect::send(self.python.as_ref(), &connect::webhook(url, &body))
             .map(|_| ())
-            .map_err(|e| connect::explain(&e, false))
+            .map_err(|e| crate::app::explain_in(self.lang, &e))
     }
     fn notify(&mut self, text: &str) {
         let _ = self.tx.send(Event::FlowNotify(text.to_string()));
@@ -282,11 +283,32 @@ fn index_of(s: &Step) -> usize {
 }
 
 impl CompanionApp {
+    /// The ready-made automations in the current language.
+    pub fn flow_templates(&self) -> Vec<flows::Flow> {
+        use companion_core::store::Lang;
+        if matches!(self.s.lang, Lang::Ro | Lang::En) {
+            return flows::templates(self.s.lang == Lang::Ro);
+        }
+        let tr = |en: &str| {
+            crate::i18n::lookup(self.s.lang, en).map_or_else(|| en.to_string(), str::to_string)
+        };
+        let mut v = flows::templates(false);
+        for f in &mut v {
+            f.name = tr(&f.name);
+            for st in &mut f.steps {
+                if let flows::Step::Ask { prompt } = st {
+                    *prompt = tr(prompt);
+                }
+            }
+        }
+        v
+    }
+
     pub fn open_flows(&mut self) {
         if !self.flows.loaded {
             self.flows.lib = Library::load(&lib_path());
             if self.flows.lib.flows.is_empty() {
-                self.flows.lib.flows = flows::templates(self.is_ro());
+                self.flows.lib.flows = self.flow_templates();
             }
             self.flows.loaded = true;
         }
@@ -342,6 +364,7 @@ impl CompanionApp {
             tx: self.tx.clone(),
             ctx: self.ctx.clone(),
             cancel,
+            lang: self.s.lang,
         };
         self.spawn(move |tx| {
             let o = flows::run(&flow, &input, unattended, &mut env);
@@ -440,7 +463,7 @@ impl CompanionApp {
                             }
                         });
                         if ui.small_button(t_tpl).clicked() {
-                            for tpl in flows::templates(self.is_ro()) {
+                            for tpl in self.flow_templates() {
                                 if !self.flows.lib.flows.iter().any(|f| f.id == tpl.id) {
                                     self.flows.lib.flows.push(tpl);
                                 }
@@ -593,7 +616,9 @@ impl CompanionApp {
                         ui.separator();
                         ui.label(l_in);
                         ui.add(egui::TextEdit::singleline(&mut self.flows.input).desired_width(f32::INFINITY));
-                        let problem = flows::validate(&self.flows.lib.flows[i]).err();
+                        let problem = flows::validate(&self.flows.lib.flows[i])
+                            .err()
+                            .map(|e| crate::i18n::engine_text(self.s.lang, &e));
                         if let Some(pr) = &problem {
                             ui.label(RichText::new(pr).color(p.bad));
                         }

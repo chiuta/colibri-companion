@@ -444,6 +444,11 @@ impl CompanionApp {
         }
     }
 
+    /// An error from the online connection, in the current language.
+    pub fn explain(&self, e: &companion_core::connect::ConnectError) -> String {
+        explain_in(self.s.lang, e)
+    }
+
     pub fn is_ro(&self) -> bool {
         self.s.lang == Lang::Ro
     }
@@ -1820,6 +1825,7 @@ impl CompanionApp {
             Event::Memory(b) => self.memory_built(*b),
             Event::Summary { conv, upto, result } => self.summary_done(conv, upto, result),
             Event::FlowLog(l) => {
+                let l = crate::i18n::engine_text(self.s.lang, &l);
                 self.flows.log.push(l);
                 let n = self.flows.log.len();
                 if n > 300 {
@@ -2147,5 +2153,22 @@ fn zip_with_python(
             .unwrap_or("the download failed")
             .trim()
             .to_string())
+    }
+}
+
+/// An error from the online connection in the given language: Romanian and English are written
+/// out in the core, the other six come from the translation table by the English text.
+pub fn explain_in(lang: Lang, e: &companion_core::connect::ConnectError) -> String {
+    use companion_core::connect;
+    match lang {
+        Lang::Ro => connect::explain(e, true),
+        Lang::En => connect::explain(e, false),
+        other => {
+            let (key, detail) = connect::explain_key(e);
+            let detail = crate::i18n::lookup(other, &detail).map_or(detail, str::to_string);
+            crate::i18n::lookup(other, key)
+                .unwrap_or(key)
+                .replace("{}", &detail)
+        }
     }
 }

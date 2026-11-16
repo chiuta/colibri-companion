@@ -156,11 +156,10 @@ impl CompanionApp {
         result: Result<Vec<u8>, ConnectError>,
     ) {
         self.online.busy = false;
-        let ro = self.is_ro();
         let bytes = match result {
             Ok(b) => b,
             Err(e) => {
-                self.online.status = connect::explain(&e, ro);
+                self.online.status = self.explain(&e);
                 return;
             }
         };
@@ -183,14 +182,14 @@ impl CompanionApp {
                         format!("{} {}", r.len(), self.t("depozite", "repositories"));
                     self.online.repos = r;
                 }
-                Err(e) => self.online.status = connect::explain(&e, ro),
+                Err(e) => self.online.status = self.explain(&e),
             },
             OnlineWhat::Tree(path) => match connect::parse_tree(kind, &bytes) {
                 Ok(t) => {
                     self.online.path = path;
                     self.online.entries = t;
                 }
-                Err(e) => self.online.status = connect::explain(&e, ro),
+                Err(e) => self.online.status = self.explain(&e),
             },
             OnlineWhat::File(name) => {
                 let text = String::from_utf8_lossy(&bytes).into_owned();
@@ -221,7 +220,7 @@ impl CompanionApp {
                         .t("Nu sunt probleme deschise.", "No open issues.")
                         .into()
                 }
-                Err(e) => self.online.status = connect::explain(&e, ro),
+                Err(e) => self.online.status = self.explain(&e),
             },
             OnlineWhat::Page(url) => match connect::page_text(&bytes) {
                 Ok(t) => {
@@ -231,7 +230,7 @@ impl CompanionApp {
                         .push((format!("{}.txt", connect::host_of(&url)), ex.text));
                     self.toast(self.t("Am adăugat pagina web", "Added the web page"));
                 }
-                Err(e) => self.online.status = connect::explain(&e, ro),
+                Err(e) => self.online.status = self.explain(&e),
             },
         }
     }
@@ -294,7 +293,7 @@ impl CompanionApp {
                             let url = self.online.page_url.trim().to_string();
                             match connect::check_url(&url) {
                                 Ok(()) => self.online_go(Kind::Generic, connect::page(&url, ""), OnlineWhat::Page(url)),
-                                Err(e) => self.online.status = connect::explain(&e, self.is_ro()),
+                                Err(e) => self.online.status = self.explain(&e),
                             }
                         }
                     });
@@ -471,7 +470,6 @@ impl CompanionApp {
     fn catalog_window(&mut self, ctx: &egui::Context) {
         let p = self.p;
         let mut open = true;
-        let ro = self.is_ro();
         let l_ready = self.t("Doar ce merge acum", "Only what works now");
         egui::Window::new(self.t("Catalog de platforme", "Platform catalogue"))
             .open(&mut open)
@@ -547,13 +545,13 @@ impl CompanionApp {
                                     companion_core::proc::open_externally(x.url);
                                 }
                             });
-                            muted(ui, &p, if ro { x.ro } else { x.en });
+                            muted(ui, &p, self.t(x.ro, x.en));
                         }
                     }
                     ui.add_space(8.0);
                     ui.label(RichText::new(self.t("Nivelurile", "The levels")).strong());
                     for l in Level::ALL {
-                        muted(ui, &p, platforms::level_text(l, ro));
+                        muted(ui, &p, self.t(platforms::level_text(l, true), platforms::level_text(l, false)));
                     }
                 });
             });

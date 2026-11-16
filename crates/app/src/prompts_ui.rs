@@ -42,6 +42,26 @@ fn library_file() -> std::path::PathBuf {
 }
 
 impl CompanionApp {
+    /// The built-in prompts in the current language: Romanian and English are written out,
+    /// the other six come from the translation table by their English text.
+    pub fn builtin_prompts(&self) -> Vec<companion_core::prompts::Prompt> {
+        use companion_core::store::Lang;
+        let mut v = prompts::builtin(self.s.lang == Lang::Ro);
+        if matches!(self.s.lang, Lang::Ro | Lang::En) {
+            return v;
+        }
+        let tr = |en: &str| {
+            crate::i18n::lookup(self.s.lang, en).map_or_else(|| en.to_string(), str::to_string)
+        };
+        v = prompts::builtin(false);
+        for p in &mut v {
+            p.category = tr(&p.category);
+            p.title = tr(&p.title);
+            p.text = tr(&p.text);
+        }
+        v
+    }
+
     pub fn open_prompts(&mut self) {
         if !self.prompts.loaded {
             self.prompts.lib = Library::load(&library_file());
@@ -91,8 +111,7 @@ impl CompanionApp {
         }
         let p = self.p;
         let mut open = true;
-        let ro = self.is_ro();
-        let mut all = prompts::builtin(ro);
+        let mut all = self.builtin_prompts();
         all.extend(self.prompts.lib.own.clone());
         let h_search = self.t("Caută…", "Search…");
         let h_fav = self.t("★ Favorite", "★ Favourites");

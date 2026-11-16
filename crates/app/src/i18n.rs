@@ -7009,6 +7009,2442 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Nincs találat.",
         ],
     ),
+    (
+        "25 languages; beats Whisper on accuracy at a quarter of the size and far faster.",
+        [
+            "25 langues ; plus précis que Whisper, pour un quart de la taille et bien plus rapide.",
+            "25 lingue; più preciso di Whisper, con un quarto delle dimensioni e molto più veloce.",
+            "25 idiomas; más preciso que Whisper, con una cuarta parte del tamaño y mucho más rápido.",
+            "25 idiomas; mais preciso que o Whisper, com um quarto do tamanho e muito mais rápido.",
+            "25 Sprachen; genauer als Whisper, bei einem Viertel der Größe und deutlich schneller.",
+            "25 nyelv; pontosabb a Whispernél, negyed akkora és sokkal gyorsabb.",
+        ],
+    ),
+    (
+        "99 languages, punctuation included; the most widely used, now behind newer models on accuracy.",
+        [
+            "99 langues, ponctuation comprise ; le plus utilisé, désormais dépassé en précision par des modèles plus récents.",
+            "99 lingue, punteggiatura inclusa; il più usato, ora superato in precisione da modelli più recenti.",
+            "99 idiomas, con puntuación; el más usado, ahora superado en precisión por modelos más nuevos.",
+            "99 idiomas, com pontuação; o mais usado, hoje superado em precisão por modelos mais novos.",
+            "99 Sprachen, mit Zeichensetzung; das am weitesten verbreitete, bei der Genauigkeit inzwischen hinter neueren Modellen.",
+            "99 nyelv, írásjelekkel; a legelterjedtebb, pontosságban már elmarad az újabb modellektől.",
+        ],
+    ),
+    (
+        "A bot you create sends you messages and alerts.",
+        [
+            "Un bot que vous créez vous envoie des messages et des alertes.",
+            "Un bot che crei ti invia messaggi e avvisi.",
+            "Un bot que creas te envía mensajes y avisos.",
+            "Um bot que você cria envia-lhe mensagens e alertas.",
+            "Ein Bot, den du erstellst, schickt dir Nachrichten und Warnungen.",
+            "Egy általad létrehozott bot üzeneteket és figyelmeztetéseket küld neked.",
+        ],
+    ),
+    (
+        "A drop-in OpenAI-style server with text, speech, pictures and embeddings; can run without a graphics card.",
+        [
+            "Un serveur de type OpenAI prêt à l'emploi pour le texte, la voix, les images et les embeddings ; peut tourner sans carte graphique.",
+            "Un server in stile OpenAI pronto all'uso con testo, voce, immagini ed embedding; può funzionare senza scheda grafica.",
+            "Un servidor al estilo OpenAI listo para usar, con texto, voz, imágenes y embeddings; puede funcionar sin tarjeta gráfica.",
+            "Um servidor ao estilo OpenAI, pronto a usar, com texto, voz, imagens e embeddings; pode funcionar sem placa gráfica.",
+            "Ein sofort einsetzbarer Server im OpenAI-Stil für Text, Sprache, Bilder und Embeddings; läuft auch ohne Grafikkarte.",
+            "OpenAI-stílusú, azonnal használható szerver szöveghez, beszédhez, képekhez és embeddingekhez; videokártya nélkül is futhat.",
+        ],
+    ),
+    (
+        "A private search engine you run yourself; the model searches the web through it.",
+        [
+            "Un moteur de recherche privé que vous hébergez vous-même ; le modèle cherche sur le web à travers lui.",
+            "Un motore di ricerca privato che gestisci tu; il modello cerca sul web attraverso di esso.",
+            "Un buscador privado que ejecutas tú mismo; el modelo busca en la web a través de él.",
+            "Um motor de busca privado que você mesmo executa; o modelo pesquisa na web através dele.",
+            "Eine private Suchmaschine, die du selbst betreibst; das Modell durchsucht darüber das Web.",
+            "Saját magad által üzemeltetett privát keresőmotor; a modell ezen keresztül keres a weben.",
+        ],
+    ),
+    (
+        "A standard way for programs to offer tools to a model; colibri has its own.",
+        [
+            "Une manière standard pour des programmes de proposer des outils à un modèle ; colibri a la sienne.",
+            "Un modo standard con cui i programmi offrono strumenti a un modello; colibri ha il suo.",
+            "Una forma estándar para que los programas ofrezcan herramientas a un modelo; colibri tiene la suya.",
+            "Uma forma padrão de os programas oferecerem ferramentas a um modelo; o colibri tem a sua.",
+            "Ein Standard, mit dem Programme einem Modell Werkzeuge anbieten; colibri hat seinen eigenen.",
+            "Szabványos mód arra, hogy programok eszközöket kínáljanak egy modellnek; a colibrinek saját van.",
+        ],
+    ),
+    (
+        "A train leaves at 14:10 and arrives at 17:45. How long is the trip?",
+        [
+            "Un train part à 14 h 10 et arrive à 17 h 45. Combien dure le trajet ?",
+            "Un treno parte alle 14:10 e arriva alle 17:45. Quanto dura il viaggio?",
+            "Un tren sale a las 14:10 y llega a las 17:45. ¿Cuánto dura el viaje?",
+            "Um comboio parte às 14:10 e chega às 17:45. Quanto dura a viagem?",
+            "Ein Zug fährt um 14:10 ab und kommt um 17:45 an. Wie lange dauert die Fahrt?",
+            "Egy vonat 14:10-kor indul és 17:45-kor érkezik. Mennyi ideig tart az út?",
+        ],
+    ),
+    (
+        "Access refused: the token is missing, expired or not allowed.",
+        [
+            "Accès refusé : le jeton est absent, expiré ou sans droits.",
+            "Accesso rifiutato: il token manca, è scaduto o non ha i permessi.",
+            "Acceso denegado: el token falta, ha caducado o no tiene permiso.",
+            "Acesso recusado: o token falta, expirou ou não tem permissão.",
+            "Zugriff verweigert: Das Token fehlt, ist abgelaufen oder hat keine Berechtigung.",
+            "Hozzáférés megtagadva: a token hiányzik, lejárt vagy nincs joga.",
+        ],
+    ),
+    (
+        "Act: it runs actions and chains of steps on a schedule",
+        [
+            "Agir : il exécute des actions et des enchaînements d'étapes selon un horaire",
+            "Agire: esegue azioni e catene di passaggi secondo un orario",
+            "Actuar: ejecuta acciones y cadenas de pasos según un horario",
+            "Agir: executa ações e cadeias de passos num horário",
+            "Handeln: führt Aktionen und Schrittfolgen nach Zeitplan aus",
+            "Cselekvés: műveleteket és lépéssorozatokat futtat ütemezés szerint",
+        ],
+    ),
+    (
+        "Address refused: {}",
+        [
+            "Adresse refusée : {}",
+            "Indirizzo rifiutato: {}",
+            "Dirección rechazada: {}",
+            "Endereço recusado: {}",
+            "Adresse abgelehnt: {}",
+            "A cím elutasítva: {}",
+        ],
+    ),
+    (
+        "Analysis",
+        [
+            "Analyse",
+            "Analisi",
+            "Análisis",
+            "Análise",
+            "Analyse",
+            "Elemzés",
+        ],
+    ),
+    (
+        "Ask me up to five questions, one at a time, to help me decide [DECISION]. Then give your honest recommendation and the main reason.",
+        [
+            "Pose-moi jusqu'à cinq questions, une à la fois, pour m'aider à décider [DÉCISION]. Donne ensuite ta recommandation honnête et la raison principale.",
+            "Fammi fino a cinque domande, una alla volta, per aiutarmi a decidere [DECISIONE]. Poi dammi il tuo consiglio sincero e il motivo principale.",
+            "Hazme hasta cinco preguntas, una a la vez, para ayudarme a decidir [DECISIÓN]. Luego dame tu recomendación sincera y el motivo principal.",
+            "Faz-me até cinco perguntas, uma de cada vez, para me ajudar a decidir [DECISÃO]. Depois dá a tua recomendação sincera e o motivo principal.",
+            "Stelle mir bis zu fünf Fragen, eine nach der anderen, damit ich [ENTSCHEIDUNG] treffen kann. Gib dann deine ehrliche Empfehlung und den wichtigsten Grund.",
+            "Tegyél fel legfeljebb öt kérdést, egyenként, hogy eldönthessem: [DÖNTÉS]. Utána add meg az őszinte javaslatodat és a fő okot.",
+        ],
+    ),
+    (
+        "Ask questions about your tables; the model writes the queries you approve.",
+        [
+            "Posez des questions sur vos tables ; le modèle écrit les requêtes que vous validez.",
+            "Fai domande sulle tue tabelle; il modello scrive le query che approvi.",
+            "Haz preguntas sobre tus tablas; el modelo escribe las consultas que tú apruebas.",
+            "Faça perguntas sobre as suas tabelas; o modelo escreve as consultas que você aprova.",
+            "Stelle Fragen zu deinen Tabellen; das Modell schreibt die Abfragen, die du freigibst.",
+            "Kérdezz a táblázataidról; a modell megírja a lekérdezéseket, te jóváhagyod őket.",
+        ],
+    ),
+    (
+        "Attach a whole notes folder; the model reads and cites your notes.",
+        [
+            "Joignez un dossier de notes entier ; le modèle lit et cite vos notes.",
+            "Allega un'intera cartella di appunti; il modello legge e cita i tuoi appunti.",
+            "Adjunta una carpeta entera de notas; el modelo lee y cita tus notas.",
+            "Anexe uma pasta inteira de notas; o modelo lê e cita as suas notas.",
+            "Hänge einen ganzen Notizenordner an; das Modell liest und zitiert deine Notizen.",
+            "Csatolj egy egész jegyzetmappát; a modell elolvassa és idézi a jegyzeteidet.",
+        ],
+    ),
+    (
+        "Best at readable text in pictures, infographics and posters; version 2.0 is 7B and makes 2K images.",
+        [
+            "Excellent pour le texte lisible dans les images, les infographies et les affiches ; la version 2.0 fait 7B et produit des images 2K.",
+            "Il migliore per testo leggibile nelle immagini, infografiche e poster; la versione 2.0 è da 7B e crea immagini 2K.",
+            "El mejor para texto legible en imágenes, infografías y carteles; la versión 2.0 es de 7B y crea imágenes 2K.",
+            "O melhor para texto legível em imagens, infográficos e cartazes; a versão 2.0 tem 7B e cria imagens 2K.",
+            "Am besten für lesbaren Text in Bildern, Infografiken und Plakaten; Version 2.0 hat 7B und erzeugt 2K-Bilder.",
+            "A legjobb olvasható szöveghez képeken, infografikákon és plakátokon; a 2.0-s verzió 7B és 2K-s képeket készít.",
+        ],
+    ),
+    (
+        "Best open model on the conversational-speech board in October 2026 (Small).",
+        [
+            "Meilleur modèle ouvert du classement de la parole conversationnelle en octobre 2026 (Small).",
+            "Miglior modello aperto nella classifica del parlato conversazionale a ottobre 2026 (Small).",
+            "El mejor modelo abierto de la clasificación de habla conversacional en octubre de 2026 (Small).",
+            "O melhor modelo aberto do ranking de fala conversacional em outubro de 2026 (Small).",
+            "Bestes offenes Modell der Rangliste für Gesprächssprache im Oktober 2026 (Small).",
+            "A legjobb nyílt modell a beszélgetési beszéd ranglistáján 2026 októberében (Small).",
+        ],
+    ),
+    (
+        "Best-sounding local voice with cloning from a few seconds of audio; adds an inaudible watermark.",
+        [
+            "La voix locale la plus naturelle, avec clonage à partir de quelques secondes d'audio ; ajoute un filigrane inaudible.",
+            "La voce locale dal suono migliore, con clonazione da pochi secondi di audio; aggiunge una filigrana inudibile.",
+            "La voz local que mejor suena, con clonación a partir de unos segundos de audio; añade una marca de agua inaudible.",
+            "A voz local com melhor som, com clonagem a partir de alguns segundos de áudio; adiciona uma marca de água inaudível.",
+            "Die am besten klingende lokale Stimme, mit Klonen aus wenigen Sekunden Audio; fügt ein unhörbares Wasserzeichen hinzu.",
+            "A legjobban hangzó helyi hang, néhány másodperces hangból klónozással; hallhatatlan vízjelet ad hozzá.",
+        ],
+    ),
+    (
+        "Brainstorm [NUMBER] ideas for [GOAL]. First the obvious ones, then the odd ones, then three that combine two ideas.",
+        [
+            "Propose [NOMBRE] idées pour [OBJECTIF]. D'abord les évidentes, puis les insolites, puis trois qui combinent deux idées.",
+            "Proponi [NUMERO] idee per [OBIETTIVO]. Prima quelle ovvie, poi quelle strane, poi tre che combinano due idee.",
+            "Propón [NÚMERO] ideas para [OBJETIVO]. Primero las obvias, luego las raras y después tres que combinen dos ideas.",
+            "Propõe [NÚMERO] ideias para [OBJETIVO]. Primeiro as óbvias, depois as estranhas e depois três que combinem duas ideias.",
+            "Sammle [ANZAHL] Ideen für [ZIEL]. Zuerst die naheliegenden, dann die ungewöhnlichen, dann drei, die zwei Ideen verbinden.",
+            "Találj ki [SZÁM] ötletet ehhez: [CÉL]. Először az egyértelműeket, aztán a szokatlanokat, végül hármat, amely két ötletet ötvöz.",
+        ],
+    ),
+    (
+        "Break [PROJECT] into tasks of at most half a day each, in order, with what blocks what, and the first three things I can do today.",
+        [
+            "Découpe [PROJET] en tâches d'une demi-journée au plus, dans l'ordre, avec ce qui dépend de quoi, et les trois premières choses que je peux faire aujourd'hui.",
+            "Suddividi [PROGETTO] in compiti di al massimo mezza giornata ciascuno, in ordine, con le dipendenze, e le prime tre cose che posso fare oggi.",
+            "Divide [PROYECTO] en tareas de como máximo media jornada cada una, en orden, con lo que bloquea a qué, y las tres primeras cosas que puedo hacer hoy.",
+            "Divide [PROJETO] em tarefas de no máximo meio dia cada, por ordem, com o que bloqueia o quê, e as três primeiras coisas que posso fazer hoje.",
+            "Zerlege [PROJEKT] in Aufgaben von höchstens einem halben Tag, in Reihenfolge, mit Abhängigkeiten, und nenne die ersten drei Dinge, die ich heute tun kann.",
+            "Bontsd fel a(z) [PROJEKT] feladatait legfeljebb fél napos részekre, sorrendben, a függőségekkel, és add meg az első három dolgot, amit ma megtehetek.",
+        ],
+    ),
+    (
+        "Break into tasks",
+        [
+            "Découper en tâches",
+            "Dividere in compiti",
+            "Dividir en tareas",
+            "Dividir em tarefas",
+            "In Aufgaben zerlegen",
+            "Feladatokra bontás",
+        ],
+    ),
+    (
+        "Browse your repositories, read files and open issues into the chat.",
+        [
+            "Parcourez vos dépôts, lisez des fichiers et amenez des tickets (issues) dans le chat.",
+            "Sfoglia i tuoi repository, leggi file e porta le issue nella chat.",
+            "Explora tus repositorios, lee archivos y trae incidencias (issues) al chat.",
+            "Navegue pelos seus repositórios, leia ficheiros e traga issues para o chat.",
+            "Durchstöbere deine Repositories, lies Dateien und hole Issues in den Chat.",
+            "Böngészd a tárolóidat, olvass fájlokat, és hozd be a hibajegyeket (issue-kat) a csevegésbe.",
+        ],
+    ),
+    (
+        "Check my Romanian",
+        [
+            "Vérifier mon roumain",
+            "Controlla il mio rumeno",
+            "Revisar mi rumano",
+            "Verificar o meu romeno",
+            "Mein Rumänisch prüfen",
+            "Ellenőrizd a románomat",
+        ],
+    ),
+    (
+        "Check this Romanian text for diacritics, agreement, punctuation and the usual traps (s-au/sau, i-a/ia, într-o/Intr-o). List each correction with the rule.
+
+[TEXT]",
+        [
+            "Vérifie ce texte roumain : diacritiques, accords, ponctuation et pièges habituels (s-au/sau, i-a/ia, într-o/Intr-o). Liste chaque correction avec la règle.
+
+[TEXTE]",
+            "Controlla questo testo rumeno: segni diacritici, concordanze, punteggiatura e le solite trappole (s-au/sau, i-a/ia, într-o/Intr-o). Elenca ogni correzione con la regola.
+
+[TESTO]",
+            "Revisa este texto en rumano: diacríticos, concordancia, puntuación y las trampas habituales (s-au/sau, i-a/ia, într-o/Intr-o). Enumera cada corrección con su regla.
+
+[TEXTO]",
+            "Revê este texto em romeno: diacríticos, concordância, pontuação e as armadilhas habituais (s-au/sau, i-a/ia, într-o/Intr-o). Lista cada correção com a regra.
+
+[TEXTO]",
+            "Prüfe diesen rumänischen Text auf Diakritika, Kongruenz, Zeichensetzung und die üblichen Fallen (s-au/sau, i-a/ia, într-o/Intr-o). Liste jede Korrektur mit der Regel auf.
+
+[TEXT]",
+            "Ellenőrizd ezt a román szöveget: diakritikus jelek, egyeztetés, központozás és a szokásos buktatók (s-au/sau, i-a/ia, într-o/Intr-o). Sorold fel az egyes javításokat a szabállyal.
+
+[SZÖVEG]",
+        ],
+    ),
+    (
+        "Cinematic motion; one render of about 75 seconds on a single RTX 4090 reported.",
+        [
+            "Mouvement cinématographique ; un rendu d'environ 75 secondes signalé sur une seule RTX 4090.",
+            "Movimento cinematografico; è segnalato un rendering di circa 75 secondi su una sola RTX 4090.",
+            "Movimiento cinematográfico; se informa de un render de unos 75 segundos en una sola RTX 4090.",
+            "Movimento cinematográfico; foi reportado um render de cerca de 75 segundos numa única RTX 4090.",
+            "Kinoreife Bewegung; ein Render von etwa 75 Sekunden auf einer einzigen RTX 4090 wird berichtet.",
+            "Filmszerű mozgás; egyetlen RTX 4090-en körülbelül 75 másodperces renderelésről számolnak be.",
+        ],
+    ),
+    (
+        "Compare [OPTION A] and [OPTION B] for [GOAL]. Use a table with the criteria that matter, then give a recommendation and say what would change it.",
+        [
+            "Compare [OPTION A] et [OPTION B] pour [OBJECTIF]. Utilise un tableau avec les critères qui comptent, puis donne une recommandation et dis ce qui la changerait.",
+            "Confronta [OPZIONE A] e [OPZIONE B] per [OBIETTIVO]. Usa una tabella con i criteri che contano, poi dai una raccomandazione e dì cosa la cambierebbe.",
+            "Compara [OPCIÓN A] y [OPCIÓN B] para [OBJETIVO]. Usa una tabla con los criterios que importan, luego da una recomendación y di qué la cambiaría.",
+            "Compara [OPÇÃO A] e [OPÇÃO B] para [OBJETIVO]. Usa uma tabela com os critérios que importam, depois dá uma recomendação e diz o que a mudaria.",
+            "Vergleiche [OPTION A] und [OPTION B] für [ZIEL]. Nutze eine Tabelle mit den wichtigen Kriterien, gib dann eine Empfehlung und sage, was sie ändern würde.",
+            "Hasonlítsd össze a(z) [A OPCIÓ] és a(z) [B OPCIÓ] lehetőséget ehhez: [CÉL]. Használj táblázatot a fontos szempontokkal, majd adj javaslatot, és mondd meg, mi változtatná meg.",
+        ],
+    ),
+    (
+        "Compare options",
+        [
+            "Comparer des options",
+            "Confrontare opzioni",
+            "Comparar opciones",
+            "Comparar opções",
+            "Optionen vergleichen",
+            "Lehetőségek összehasonlítása",
+        ],
+    ),
+    (
+        "Cook with what I have",
+        [
+            "Cuisiner avec ce que j'ai",
+            "Cucinare con quello che ho",
+            "Cocinar con lo que tengo",
+            "Cozinhar com o que tenho",
+            "Kochen mit dem, was ich habe",
+            "Főzés abból, ami van",
+        ],
+    ),
+    (
+        "Could not reach the server: {}",
+        [
+            "Impossible d'atteindre le serveur : {}",
+            "Impossibile raggiungere il server: {}",
+            "No se pudo llegar al servidor: {}",
+            "Não foi possível chegar ao servidor: {}",
+            "Der Server ist nicht erreichbar: {}",
+            "Nem sikerült elérni a szervert: {}",
+        ],
+    ),
+    (
+        "Critique my idea",
+        [
+            "Critiquer mon idée",
+            "Criticare la mia idea",
+            "Criticar mi idea",
+            "Criticar a minha ideia",
+            "Meine Idee kritisieren",
+            "Bíráld az ötletemet",
+        ],
+    ),
+    (
+        "Daily brief (web page)",
+        [
+            "Résumé quotidien (page web)",
+            "Riepilogo giornaliero (pagina web)",
+            "Resumen diario (página web)",
+            "Resumo diário (página web)",
+            "Tagesüberblick (Webseite)",
+            "Napi összefoglaló (weboldal)",
+        ],
+    ),
+    (
+        "Dialogue between several speakers, with laughs and pauses.",
+        [
+            "Dialogue entre plusieurs voix, avec rires et pauses.",
+            "Dialogo tra più voci, con risate e pause.",
+            "Diálogo entre varias voces, con risas y pausas.",
+            "Diálogo entre várias vozes, com risos e pausas.",
+            "Dialog zwischen mehreren Sprechern, mit Lachen und Pausen.",
+            "Párbeszéd több beszélő között, nevetéssel és szünetekkel.",
+        ],
+    ),
+    (
+        "Digest of a folder",
+        [
+            "Résumé d'un dossier",
+            "Riassunto di una cartella",
+            "Resumen de una carpeta",
+            "Resumo de uma pasta",
+            "Zusammenfassung eines Ordners",
+            "Egy mappa kivonata",
+        ],
+    ),
+    (
+        "Drop any folder: text, PDF, Office, HTML, images.",
+        [
+            "Déposez n'importe quel dossier : texte, PDF, Office, HTML, images.",
+            "Trascina qualsiasi cartella: testo, PDF, Office, HTML, immagini.",
+            "Suelta cualquier carpeta: texto, PDF, Office, HTML, imágenes.",
+            "Largue qualquer pasta: texto, PDF, Office, HTML, imagens.",
+            "Ziehe einen beliebigen Ordner hinein: Text, PDF, Office, HTML, Bilder.",
+            "Húzz be bármilyen mappát: szöveg, PDF, Office, HTML, képek.",
+        ],
+    ),
+    (
+        "Everyday",
+        [
+            "Quotidien",
+            "Quotidiano",
+            "Cotidiano",
+            "Dia a dia",
+            "Alltag",
+            "Mindennapok",
+        ],
+    ),
+    (
+        "Explain [TOPIC] as if I were [AGE] years old, with one everyday example and one question to check I understood.",
+        [
+            "Explique [SUJET] comme si j'avais [ÂGE] ans, avec un exemple du quotidien et une question pour vérifier que j'ai compris.",
+            "Spiega [ARGOMENTO] come se avessi [ETÀ] anni, con un esempio quotidiano e una domanda per verificare che abbia capito.",
+            "Explica [TEMA] como si tuviera [EDAD] años, con un ejemplo cotidiano y una pregunta para comprobar que lo entendí.",
+            "Explica [TEMA] como se eu tivesse [IDADE] anos, com um exemplo do dia a dia e uma pergunta para verificar se percebi.",
+            "Erkläre [THEMA], als wäre ich [ALTER] Jahre alt, mit einem Alltagsbeispiel und einer Frage, um zu prüfen, ob ich es verstanden habe.",
+            "Magyarázd el a(z) [TÉMA] témát úgy, mintha [KOR] éves lennék, egy hétköznapi példával és egy kérdéssel, amellyel ellenőrizheted, hogy megértettem.",
+        ],
+    ),
+    (
+        "Explain briefly why the sky is blue.",
+        [
+            "Explique brièvement pourquoi le ciel est bleu.",
+            "Spiega brevemente perché il cielo è blu.",
+            "Explica brevemente por qué el cielo es azul.",
+            "Explica brevemente por que o céu é azul.",
+            "Erkläre kurz, warum der Himmel blau ist.",
+            "Magyarázd el röviden, miért kék az ég.",
+        ],
+    ),
+    (
+        "Explain simply",
+        [
+            "Expliquer simplement",
+            "Spiegare in modo semplice",
+            "Explicar de forma sencilla",
+            "Explicar de forma simples",
+            "Einfach erklären",
+            "Egyszerű magyarázat",
+        ],
+    ),
+    (
+        "Explain this code",
+        [
+            "Expliquer ce code",
+            "Spiegare questo codice",
+            "Explicar este código",
+            "Explicar este código",
+            "Diesen Code erklären",
+            "Magyarázd el ezt a kódot",
+        ],
+    ),
+    (
+        "Explain what this [LANGUAGE] code does, step by step, for someone new to it. Point out bugs and risky parts.
+
+[CODE]",
+        [
+            "Explique ce que fait ce code [LANGAGE], pas à pas, pour un débutant. Signale les bogues et les parties risquées.
+
+[CODE]",
+            "Spiega cosa fa questo codice [LINGUAGGIO], passo per passo, a chi è alle prime armi. Segnala bug e parti rischiose.
+
+[CODICE]",
+            "Explica qué hace este código en [LENGUAJE], paso a paso, para alguien que empieza. Señala errores y partes arriesgadas.
+
+[CÓDIGO]",
+            "Explica o que faz este código em [LINGUAGEM], passo a passo, para quem está a começar. Aponta erros e partes arriscadas.
+
+[CÓDIGO]",
+            "Erkläre Schritt für Schritt, was dieser [SPRACHE]-Code macht, für Einsteiger. Weise auf Fehler und riskante Stellen hin.
+
+[CODE]",
+            "Magyarázd el lépésről lépésre, mit csinál ez a [NYELV] kód, kezdőknek. Mutass rá a hibákra és a kockázatos részekre.
+
+[KÓD]",
+        ],
+    ),
+    (
+        "Expressive speech in about nine languages (released March 2026).",
+        [
+            "Voix expressive dans une neuvaine de langues (sortie en mars 2026).",
+            "Voce espressiva in circa nove lingue (rilasciato a marzo 2026).",
+            "Voz expresiva en unos nueve idiomas (publicado en marzo de 2026).",
+            "Voz expressiva em cerca de nove idiomas (lançado em março de 2026).",
+            "Ausdrucksstarke Sprache in etwa neun Sprachen (veröffentlicht im März 2026).",
+            "Kifejező beszéd mintegy kilenc nyelven (2026 márciusában jelent meg).",
+        ],
+    ),
+    (
+        "Fast, permissively licensed.",
+        [
+            "Rapide, sous licence permissive.",
+            "Veloce, con licenza permissiva.",
+            "Rápido, con licencia permisiva.",
+            "Rápido, com licença permissiva.",
+            "Schnell, mit freizügiger Lizenz.",
+            "Gyors, megengedő licenccel.",
+        ],
+    ),
+    (
+        "Find the bug",
+        [
+            "Trouver le bogue",
+            "Trovare il bug",
+            "Encontrar el error",
+            "Encontrar o erro",
+            "Den Fehler finden",
+            "A hiba megkeresése",
+        ],
+    ),
+    (
+        "Flashcards",
+        [
+            "Cartes mémoire",
+            "Flashcard",
+            "Tarjetas de estudio",
+            "Cartões de estudo",
+            "Lernkarten",
+            "Tanulókártyák",
+        ],
+    ),
+    (
+        "Formal letter",
+        [
+            "Lettre formelle",
+            "Lettera formale",
+            "Carta formal",
+            "Carta formal",
+            "Formeller Brief",
+            "Hivatalos levél",
+        ],
+    ),
+    (
+        "Free encyclopedia in every language; read articles by address.",
+        [
+            "Encyclopédie libre dans toutes les langues ; lisez des articles par adresse.",
+            "Enciclopedia libera in ogni lingua; leggi gli articoli tramite indirizzo.",
+            "Enciclopedia libre en todos los idiomas; lee artículos por dirección.",
+            "Enciclopédia livre em todas as línguas; leia artigos pelo endereço.",
+            "Freie Enzyklopädie in jeder Sprache; Artikel über die Adresse lesen.",
+            "Szabad enciklopédia minden nyelven; cikkek olvasása cím alapján.",
+        ],
+    ),
+    (
+        "Free push notifications to your phone from any script or model.",
+        [
+            "Notifications push gratuites vers votre téléphone depuis n'importe quel script ou modèle.",
+            "Notifiche push gratuite sul telefono da qualsiasi script o modello.",
+            "Notificaciones push gratuitas a tu teléfono desde cualquier script o modelo.",
+            "Notificações push gratuitas para o telemóvel a partir de qualquer script ou modelo.",
+            "Kostenlose Push-Benachrichtigungen aufs Handy, von jedem Skript oder Modell.",
+            "Ingyenes push-értesítések a telefonodra bármely szkriptből vagy modellből.",
+        ],
+    ),
+    (
+        "Free, non-profit hosting and self-hosted forges; read repositories and issues.",
+        [
+            "Hébergement gratuit à but non lucratif et forges auto-hébergées ; lisez dépôts et tickets.",
+            "Hosting gratuito senza scopo di lucro e forge self-hosted; leggi repository e issue.",
+            "Alojamiento gratuito sin ánimo de lucro y forjas autoalojadas; lee repositorios e incidencias.",
+            "Alojamento gratuito sem fins lucrativos e forjas auto-hospedadas; leia repositórios e issues.",
+            "Kostenloses, gemeinnütziges Hosting und selbst betriebene Forges; Repositories und Issues lesen.",
+            "Ingyenes, nonprofit tárhely és saját üzemeltetésű kódforgók; tárolók és hibajegyek olvasása.",
+        ],
+    ),
+    (
+        "From the README, propose 5 concrete tasks in order of importance.",
+        [
+            "À partir du README, propose 5 tâches concrètes par ordre d'importance.",
+            "Dal README, proponi 5 compiti concreti in ordine di importanza.",
+            "A partir del README, propón 5 tareas concretas por orden de importancia.",
+            "A partir do README, propõe 5 tarefas concretas por ordem de importância.",
+            "Schlage anhand der README 5 konkrete Aufgaben nach Wichtigkeit vor.",
+            "A README alapján javasolj 5 konkrét feladatot fontossági sorrendben.",
+        ],
+    ),
+    (
+        "Gift ideas",
+        [
+            "Idées de cadeaux",
+            "Idee regalo",
+            "Ideas de regalo",
+            "Ideias de presentes",
+            "Geschenkideen",
+            "Ajándékötletek",
+        ],
+    ),
+    (
+        "Give me [NUMBER] idioms about [THEME] in [LANGUAGE], with a literal translation, the real meaning and an example sentence.",
+        [
+            "Donne-moi [NOMBRE] expressions idiomatiques sur [THÈME] en [LANGUE], avec une traduction littérale, le vrai sens et une phrase d'exemple.",
+            "Dammi [NUMERO] modi di dire su [TEMA] in [LINGUA], con traduzione letterale, significato reale e una frase d'esempio.",
+            "Dame [NÚMERO] modismos sobre [TEMA] en [IDIOMA], con traducción literal, significado real y una frase de ejemplo.",
+            "Dá-me [NÚMERO] expressões idiomáticas sobre [TEMA] em [LÍNGUA], com tradução literal, o significado real e uma frase de exemplo.",
+            "Gib mir [ANZAHL] Redewendungen zu [THEMA] auf [SPRACHE], mit wörtlicher Übersetzung, der eigentlichen Bedeutung und einem Beispielsatz.",
+            "Adj [SZÁM] szólást a(z) [TÉMA] témáról [NYELV] nyelven, szó szerinti fordítással, valódi jelentéssel és egy példamondattal.",
+        ],
+    ),
+    (
+        "Give me ten different titles for [WORK]. Mix serious, playful and mysterious ones, and mark your favourite.",
+        [
+            "Donne-moi dix titres différents pour [ŒUVRE]. Mélange sérieux, ludiques et mystérieux, et marque ton préféré.",
+            "Dammi dieci titoli diversi per [OPERA]. Mescola seri, giocosi e misteriosi, e segna il tuo preferito.",
+            "Dame diez títulos distintos para [OBRA]. Mezcla serios, juguetones y misteriosos, y marca tu favorito.",
+            "Dá-me dez títulos diferentes para [OBRA]. Mistura sérios, divertidos e misteriosos, e marca o teu preferido.",
+            "Gib mir zehn verschiedene Titel für [WERK]. Mische ernste, spielerische und geheimnisvolle und markiere deinen Favoriten.",
+            "Adj tíz különböző címet ehhez: [MŰ]. Keverd a komolyakat, a játékosakat és a titokzatosakat, és jelöld meg a kedvencedet.",
+        ],
+    ),
+    (
+        "Give me ten gift ideas for [PERSON] who likes [INTERESTS], budget [BUDGET]. Group them: practical, sentimental, surprising.",
+        [
+            "Donne-moi dix idées de cadeaux pour [PERSONNE] qui aime [CENTRES D'INTÉRÊT], budget [BUDGET]. Groupe-les : pratiques, sentimentales, surprenantes.",
+            "Dammi dieci idee regalo per [PERSONA] a cui piace [INTERESSI], budget [BUDGET]. Raggruppale: pratiche, sentimentali, sorprendenti.",
+            "Dame diez ideas de regalo para [PERSONA] a quien le gusta [INTERESES], presupuesto [PRESUPUESTO]. Agrúpalas: prácticas, sentimentales, sorprendentes.",
+            "Dá-me dez ideias de presente para [PESSOA] que gosta de [INTERESSES], orçamento [ORÇAMENTO]. Agrupa-as: práticas, sentimentais, surpreendentes.",
+            "Gib mir zehn Geschenkideen für [PERSON], die [INTERESSEN] mag, Budget [BUDGET]. Gruppiere sie: praktisch, gefühlvoll, überraschend.",
+            "Adj tíz ajándékötletet [SZEMÉLY] számára, aki szereti ezt: [ÉRDEKLŐDÉS], költségkeret: [KERET]. Csoportosítsd: praktikus, érzelmes, meglepő.",
+        ],
+    ),
+    (
+        "Help me decide",
+        [
+            "Aide-moi à décider",
+            "Aiutami a decidere",
+            "Ayúdame a decidir",
+            "Ajuda-me a decidir",
+            "Hilf mir bei der Entscheidung",
+            "Segíts dönteni",
+        ],
+    ),
+    (
+        "Here is data: [DATA]. Describe what stands out, what looks wrong, and which three questions it can and cannot answer.",
+        [
+            "Voici des données : [DONNÉES]. Décris ce qui ressort, ce qui semble erroné, et à quelles trois questions elles peuvent et ne peuvent pas répondre.",
+            "Ecco i dati: [DATI]. Descrivi cosa spicca, cosa sembra sbagliato e a quali tre domande possono e non possono rispondere.",
+            "Estos son los datos: [DATOS]. Describe qué destaca, qué parece erróneo y a qué tres preguntas pueden y no pueden responder.",
+            "Aqui estão os dados: [DADOS]. Descreve o que se destaca, o que parece errado e a que três perguntas podem e não podem responder.",
+            "Hier sind Daten: [DATEN]. Beschreibe, was auffällt, was falsch aussieht und welche drei Fragen sie beantworten können und welche nicht.",
+            "Itt vannak az adatok: [ADATOK]. Írd le, mi tűnik ki, mi látszik hibásnak, és melyik három kérdésre adhatnak, illetve nem adhatnak választ.",
+        ],
+    ),
+    (
+        "Here is my CV: [CV]. And the job: [JOB]. Suggest what to emphasise, what to cut and three honest sentences for the cover letter. Do not invent anything.",
+        [
+            "Voici mon CV : [CV]. Et le poste : [POSTE]. Suggère ce qu'il faut mettre en avant, ce qu'il faut couper et trois phrases honnêtes pour la lettre de motivation. N'invente rien.",
+            "Ecco il mio CV: [CV]. E il lavoro: [LAVORO]. Suggerisci cosa mettere in evidenza, cosa tagliare e tre frasi oneste per la lettera di presentazione. Non inventare nulla.",
+            "Este es mi CV: [CV]. Y el puesto: [PUESTO]. Sugiere qué destacar, qué quitar y tres frases honestas para la carta de presentación. No inventes nada.",
+            "Aqui está o meu CV: [CV]. E a vaga: [VAGA]. Sugere o que destacar, o que cortar e três frases honestas para a carta de apresentação. Não inventes nada.",
+            "Hier ist mein Lebenslauf: [LEBENSLAUF]. Und die Stelle: [STELLE]. Schlage vor, was ich hervorheben und streichen soll, und drei ehrliche Sätze für das Anschreiben. Erfinde nichts.",
+            "Itt az önéletrajzom: [ÖNÉLETRAJZ]. És az állás: [ÁLLÁS]. Javasold, mit emeljek ki, mit hagyjak ki, és adj három őszinte mondatot a motivációs levélhez. Ne találj ki semmit.",
+        ],
+    ),
+    (
+        "High accuracy, with a mode that can also answer questions about the audio.",
+        [
+            "Grande précision, avec un mode qui peut aussi répondre à des questions sur l'audio.",
+            "Alta precisione, con una modalità che può anche rispondere a domande sull'audio.",
+            "Alta precisión, con un modo que también puede responder preguntas sobre el audio.",
+            "Alta precisão, com um modo que também responde a perguntas sobre o áudio.",
+            "Hohe Genauigkeit, mit einem Modus, der auch Fragen zum Audio beantworten kann.",
+            "Nagy pontosság, olyan móddal, amely a hanganyaggal kapcsolatos kérdésekre is válaszol.",
+        ],
+    ),
+    (
+        "I am thinking about [DECISION]. List the pros, the cons and the risks, ask me the three questions that matter most, and wait for my answers.",
+        [
+            "Je réfléchis à [DÉCISION]. Liste les avantages, les inconvénients et les risques, pose-moi les trois questions les plus importantes et attends mes réponses.",
+            "Sto pensando a [DECISIONE]. Elenca pro, contro e rischi, fammi le tre domande più importanti e aspetta le mie risposte.",
+            "Estoy pensando en [DECISIÓN]. Enumera pros, contras y riesgos, hazme las tres preguntas más importantes y espera mis respuestas.",
+            "Estou a pensar em [DECISÃO]. Lista os prós, os contras e os riscos, faz-me as três perguntas mais importantes e espera pelas minhas respostas.",
+            "Ich überlege [ENTSCHEIDUNG]. Liste Vor- und Nachteile und Risiken auf, stelle mir die drei wichtigsten Fragen und warte auf meine Antworten.",
+            "Azon gondolkodom: [DÖNTÉS]. Sorold fel az előnyöket, a hátrányokat és a kockázatokat, tedd fel a három legfontosabb kérdést, és várd meg a válaszaimat.",
+        ],
+    ),
+    (
+        "I have 3 apples, eat one, then buy twice as many as I have left. How many apples do I have?",
+        [
+            "J'ai 3 pommes, j'en mange une, puis j'en achète deux fois plus que ce qui me reste. Combien ai-je de pommes ?",
+            "Ho 3 mele, ne mangio una, poi ne compro il doppio di quelle che mi restano. Quante mele ho?",
+            "Tengo 3 manzanas, me como una y luego compro el doble de las que me quedan. ¿Cuántas manzanas tengo?",
+            "Tenho 3 maçãs, como uma e depois compro o dobro das que me sobram. Quantas maçãs tenho?",
+            "Ich habe 3 Äpfel, esse einen und kaufe dann doppelt so viele, wie mir bleiben. Wie viele Äpfel habe ich?",
+            "Van 3 almám, megeszem egyet, majd vásárolok kétszer annyit, mint amennyi maradt. Hány almám van?",
+        ],
+    ),
+    (
+        "I have [INGREDIENTS], [TIME] minutes and [EQUIPMENT]. Suggest three meals, then give the full recipe of the one I pick.",
+        [
+            "J'ai [INGRÉDIENTS], [TEMPS] minutes et [ÉQUIPEMENT]. Propose trois repas, puis donne la recette complète de celui que je choisis.",
+            "Ho [INGREDIENTI], [TEMPO] minuti e [ATTREZZATURA]. Suggerisci tre pasti, poi dai la ricetta completa di quello che scelgo.",
+            "Tengo [INGREDIENTES], [TIEMPO] minutos y [EQUIPO]. Sugiere tres comidas y luego da la receta completa de la que elija.",
+            "Tenho [INGREDIENTES], [TEMPO] minutos e [EQUIPAMENTO]. Sugere três refeições e depois dá a receita completa da que eu escolher.",
+            "Ich habe [ZUTATEN], [ZEIT] Minuten und [AUSSTATTUNG]. Schlage drei Gerichte vor und gib dann das vollständige Rezept für das, das ich wähle.",
+            "Van [HOZZÁVALÓK], [IDŐ] percem és [FELSZERELÉS]. Javasolj három ételt, majd add meg annak a teljes receptjét, amelyiket kiválasztom.",
+        ],
+    ),
+    (
+        "I need Python to reach the internet.",
+        [
+            "J'ai besoin de Python pour accéder à Internet.",
+            "Mi serve Python per raggiungere Internet.",
+            "Necesito Python para llegar a internet.",
+            "Preciso do Python para chegar à internet.",
+            "Ich brauche Python, um ins Internet zu kommen.",
+            "Szükségem van a Pythonra, hogy elérjem az internetet.",
+        ],
+    ),
+    (
+        "Idioms",
+        [
+            "Expressions idiomatiques",
+            "Modi di dire",
+            "Modismos",
+            "Expressões idiomáticas",
+            "Redewendungen",
+            "Szólások",
+        ],
+    ),
+    (
+        "If all roses are flowers and some flowers fade quickly, does it follow that some roses fade quickly? Explain.",
+        [
+            "Si toutes les roses sont des fleurs et que certaines fleurs fanent vite, s'ensuit-il que certaines roses fanent vite ? Explique.",
+            "Se tutte le rose sono fiori e alcuni fiori appassiscono in fretta, ne segue che alcune rose appassiscono in fretta? Spiega.",
+            "Si todas las rosas son flores y algunas flores se marchitan rápido, ¿se deduce que algunas rosas se marchitan rápido? Explica.",
+            "Se todas as rosas são flores e algumas flores murcham depressa, conclui-se que algumas rosas murcham depressa? Explica.",
+            "Wenn alle Rosen Blumen sind und manche Blumen schnell verwelken, folgt dann, dass manche Rosen schnell verwelken? Erkläre.",
+            "Ha minden rózsa virág, és néhány virág gyorsan elhervad, következik-e ebből, hogy néhány rózsa gyorsan elhervad? Magyarázd el.",
+        ],
+    ),
+    (
+        "Improve my text",
+        [
+            "Améliorer mon texte",
+            "Migliorare il mio testo",
+            "Mejorar mi texto",
+            "Melhorar o meu texto",
+            "Meinen Text verbessern",
+            "Javítsd a szövegemet",
+        ],
+    ),
+    (
+        "Improve the following text: fix mistakes, make it clearer and shorter, keep my meaning and voice. Show the result, then list what you changed.
+
+[TEXT]",
+        [
+            "Améliore le texte suivant : corrige les erreurs, rends-le plus clair et plus court, garde mon sens et ma voix. Montre le résultat, puis liste ce que tu as changé.
+
+[TEXTE]",
+            "Migliora il testo seguente: correggi gli errori, rendilo più chiaro e breve, mantieni il mio senso e la mia voce. Mostra il risultato, poi elenca cosa hai cambiato.
+
+[TESTO]",
+            "Mejora el siguiente texto: corrige los errores, hazlo más claro y corto, mantén mi sentido y mi voz. Muestra el resultado y luego enumera lo que cambiaste.
+
+[TEXTO]",
+            "Melhora o texto seguinte: corrige os erros, torna-o mais claro e curto, mantém o meu sentido e a minha voz. Mostra o resultado e depois lista o que mudaste.
+
+[TEXTO]",
+            "Verbessere den folgenden Text: Korrigiere Fehler, mache ihn klarer und kürzer, behalte meinen Sinn und meine Stimme. Zeige das Ergebnis und liste dann auf, was du geändert hast.
+
+[TEXT]",
+            "Javítsd a következő szöveget: javítsd a hibákat, tedd világosabbá és rövidebbé, őrizd meg a jelentését és a hangomat. Mutasd meg az eredményt, majd sorold fel, mit változtattál.
+
+[SZÖVEG]",
+        ],
+    ),
+    (
+        "Knowledge",
+        [
+            "Connaissances",
+            "Conoscenze",
+            "Conocimientos",
+            "Conhecimentos",
+            "Wissen",
+            "Ismeretek",
+        ],
+    ),
+    (
+        "Lets an AI assistant drive ComfyUI through the Model Context Protocol (planned here).",
+        [
+            "Permet à un assistant IA de piloter ComfyUI via le Model Context Protocol (prévu ici).",
+            "Permette a un assistente IA di controllare ComfyUI tramite il Model Context Protocol (previsto qui).",
+            "Permite que un asistente de IA maneje ComfyUI mediante el Model Context Protocol (previsto aquí).",
+            "Permite que um assistente de IA controle o ComfyUI através do Model Context Protocol (previsto aqui).",
+            "Lässt einen KI-Assistenten ComfyUI über das Model Context Protocol steuern (hier geplant).",
+            "Lehetővé teszi, hogy egy MI-asszisztens a Model Context Protocolon át vezérelje a ComfyUI-t (itt tervezett).",
+        ],
+    ),
+    (
+        "Light voices for small devices and home announcements; the original MIT repository was archived in October 2025.",
+        [
+            "Voix légères pour petits appareils et annonces domestiques ; le dépôt MIT d'origine a été archivé en octobre 2025.",
+            "Voci leggere per piccoli dispositivi e annunci domestici; il repository MIT originale è stato archiviato a ottobre 2025.",
+            "Voces ligeras para dispositivos pequeños y avisos domésticos; el repositorio MIT original se archivó en octubre de 2025.",
+            "Vozes leves para dispositivos pequenos e avisos domésticos; o repositório MIT original foi arquivado em outubro de 2025.",
+            "Leichte Stimmen für kleine Geräte und Haus-Ansagen; das ursprüngliche MIT-Repository wurde im Oktober 2025 archiviert.",
+            "Könnyű hangok kis eszközökhöz és otthoni bemondásokhoz; az eredeti MIT-tárolót 2025 októberében archiválták.",
+        ],
+    ),
+    (
+        "Lowest average error among the open models listed in October 2026; very strong on Chinese.",
+        [
+            "Erreur moyenne la plus faible parmi les modèles ouverts recensés en octobre 2026 ; très fort en chinois.",
+            "Errore medio più basso tra i modelli aperti elencati a ottobre 2026; molto forte sul cinese.",
+            "Menor error medio entre los modelos abiertos listados en octubre de 2026; muy fuerte en chino.",
+            "Menor erro médio entre os modelos abertos listados em outubro de 2026; muito forte em chinês.",
+            "Geringster mittlerer Fehler unter den im Oktober 2026 gelisteten offenen Modellen; sehr stark bei Chinesisch.",
+            "A 2026 októberében listázott nyílt modellek közül a legalacsonyabb átlagos hiba; kínaiban nagyon erős.",
+        ],
+    ),
+    (
+        "Lyrics to full songs with vocals; heavy to run.",
+        [
+            "Des paroles aux chansons complètes avec voix ; lourd à exécuter.",
+            "Dai testi a canzoni complete con voce; pesante da eseguire.",
+            "De la letra a canciones completas con voz; pesado de ejecutar.",
+            "Da letra a canções completas com voz; pesado de executar.",
+            "Vom Liedtext zum vollständigen Song mit Gesang; aufwendig auszuführen.",
+            "A dalszövegtől a teljes, énekes dalig; nehéz futtatni.",
+        ],
+    ),
+    (
+        "Make [NUMBER] flashcards from the text below as a two-column table: question | answer.
+
+[TEXT]",
+        [
+            "Crée [NOMBRE] cartes mémoire à partir du texte ci-dessous, sous forme de tableau à deux colonnes : question | réponse.
+
+[TEXTE]",
+            "Crea [NUMERO] flashcard dal testo qui sotto, come tabella a due colonne: domanda | risposta.
+
+[TESTO]",
+            "Crea [NÚMERO] tarjetas de estudio con el texto de abajo, como tabla de dos columnas: pregunta | respuesta.
+
+[TEXTO]",
+            "Cria [NÚMERO] cartões de estudo a partir do texto abaixo, como tabela de duas colunas: pergunta | resposta.
+
+[TEXTO]",
+            "Erstelle [ANZAHL] Lernkarten aus dem folgenden Text als zweispaltige Tabelle: Frage | Antwort.
+
+[TEXT]",
+            "Készíts [SZÁM] tanulókártyát az alábbi szövegből kétoszlopos táblázatként: kérdés | válasz.
+
+[SZÖVEG]",
+        ],
+    ),
+    (
+        "Make a study plan to learn [SUBJECT] in [TIME] with [HOURS] hours a week. Give weekly goals and a way to check progress.",
+        [
+            "Fais un plan d'étude pour apprendre [MATIÈRE] en [DURÉE] avec [HEURES] heures par semaine. Donne des objectifs hebdomadaires et un moyen de vérifier les progrès.",
+            "Crea un piano di studio per imparare [MATERIA] in [TEMPO] con [ORE] ore a settimana. Dai obiettivi settimanali e un modo per verificare i progressi.",
+            "Haz un plan de estudio para aprender [MATERIA] en [TIEMPO] con [HORAS] horas a la semana. Da objetivos semanales y una forma de comprobar el avance.",
+            "Faz um plano de estudo para aprender [MATÉRIA] em [TEMPO] com [HORAS] horas por semana. Dá metas semanais e uma forma de verificar o progresso.",
+            "Erstelle einen Lernplan, um [FACH] in [ZEIT] zu lernen, mit [STUNDEN] Stunden pro Woche. Gib Wochenziele und eine Möglichkeit, den Fortschritt zu prüfen.",
+            "Készíts tanulási tervet a(z) [TÁRGY] megtanulásához [IDŐ] alatt, heti [ÓRA] órával. Adj heti célokat és módot a haladás ellenőrzésére.",
+        ],
+    ),
+    (
+        "Makes video and its sound together in one pass, up to 4K; fast and flexible to adapt.",
+        [
+            "Produit la vidéo et son son en une seule passe, jusqu'en 4K ; rapide et facile à adapter.",
+            "Crea video e audio insieme in un solo passaggio, fino a 4K; veloce e flessibile da adattare.",
+            "Crea el vídeo y su sonido a la vez, en una sola pasada, hasta 4K; rápido y flexible de adaptar.",
+            "Cria o vídeo e o seu som de uma só vez, até 4K; rápido e flexível de adaptar.",
+            "Erzeugt Video und Ton zusammen in einem Durchgang, bis 4K; schnell und flexibel anpassbar.",
+            "A videót és a hangját egy menetben készíti, 4K-ig; gyors és rugalmasan igazítható.",
+        ],
+    ),
+    (
+        "Meeting notes",
+        [
+            "Notes de réunion",
+            "Appunti di riunione",
+            "Notas de reunión",
+            "Notas de reunião",
+            "Besprechungsnotizen",
+            "Megbeszélés jegyzetei",
+        ],
+    ),
+    (
+        "Model cards and datasets; read pages by address.",
+        [
+            "Fiches de modèles et jeux de données ; lisez les pages par adresse.",
+            "Schede di modelli e dataset; leggi le pagine tramite indirizzo.",
+            "Fichas de modelos y conjuntos de datos; lee páginas por dirección.",
+            "Fichas de modelos e conjuntos de dados; leia páginas pelo endereço.",
+            "Modellkarten und Datensätze; Seiten über die Adresse lesen.",
+            "Modellkártyák és adathalmazok; oldalak olvasása cím alapján.",
+        ],
+    ),
+    (
+        "Multilingual local music model; promising but still rough for finished songs.",
+        [
+            "Modèle musical local multilingue ; prometteur mais encore brut pour des chansons finies.",
+            "Modello musicale locale multilingue; promettente ma ancora grezzo per canzoni finite.",
+            "Modelo musical local multilingüe; prometedor pero aún tosco para canciones terminadas.",
+            "Modelo musical local multilingue; promissor, mas ainda tosco para canções acabadas.",
+            "Mehrsprachiges lokales Musikmodell; vielversprechend, aber für fertige Songs noch grob.",
+            "Többnyelvű helyi zenei modell; ígéretes, de kész dalokhoz még nyers.",
+        ],
+    ),
+    (
+        "Multilingual, streaming, with voice cloning.",
+        [
+            "Multilingue, en continu, avec clonage de voix.",
+            "Multilingue, in streaming, con clonazione vocale.",
+            "Multilingüe, en streaming, con clonación de voz.",
+            "Multilingue, em streaming, com clonagem de voz.",
+            "Mehrsprachig, Streaming, mit Stimmklonen.",
+            "Többnyelvű, folyamatos, hangklónozással.",
+        ],
+    ),
+    (
+        "Needs a Google sign-in.",
+        [
+            "Nécessite une connexion Google.",
+            "Richiede l'accesso con Google.",
+            "Requiere iniciar sesión con Google.",
+            "Requer início de sessão Google.",
+            "Erfordert eine Google-Anmeldung.",
+            "Google-bejelentkezést igényel.",
+        ],
+    ),
+    (
+        "Needs a Microsoft sign-in.",
+        [
+            "Nécessite une connexion Microsoft.",
+            "Richiede l'accesso con Microsoft.",
+            "Requiere iniciar sesión con Microsoft.",
+            "Requer início de sessão Microsoft.",
+            "Erfordert eine Microsoft-Anmeldung.",
+            "Microsoft-bejelentkezést igényel.",
+        ],
+    ),
+    (
+        "Node-based workflows for pictures, video and audio, with a local REST API on port 8188; wrappers add an OpenAI-style images endpoint.",
+        [
+            "Flux de travail à nœuds pour images, vidéo et audio, avec une API REST locale sur le port 8188 ; des adaptateurs ajoutent un point d'accès d'images de style OpenAI.",
+            "Flussi di lavoro a nodi per immagini, video e audio, con API REST locale sulla porta 8188; alcuni adattatori aggiungono un endpoint immagini in stile OpenAI.",
+            "Flujos de trabajo con nodos para imágenes, vídeo y audio, con una API REST local en el puerto 8188; algunos adaptadores añaden un punto de imágenes al estilo OpenAI.",
+            "Fluxos de trabalho com nós para imagens, vídeo e áudio, com API REST local na porta 8188; alguns adaptadores acrescentam um ponto de imagens ao estilo OpenAI.",
+            "Knotenbasierte Abläufe für Bilder, Video und Audio, mit lokaler REST-API auf Port 8188; Adapter ergänzen einen Bilder-Endpunkt im OpenAI-Stil.",
+            "Csomópontalapú munkafolyamatok képekhez, videóhoz és hanghoz, helyi REST API-val a 8188-as porton; kiegészítők OpenAI-stílusú képvégpontot adnak hozzá.",
+        ],
+    ),
+    (
+        "Not found (wrong address or name, or a private repository).",
+        [
+            "Introuvable (adresse ou nom erroné, ou dépôt privé).",
+            "Non trovato (indirizzo o nome sbagliato, oppure repository privato).",
+            "No encontrado (dirección o nombre erróneo, o repositorio privado).",
+            "Não encontrado (endereço ou nome errado, ou repositório privado).",
+            "Nicht gefunden (falsche Adresse oder falscher Name oder privates Repository).",
+            "Nem található (hibás cím vagy név, vagy privát tároló).",
+        ],
+    ),
+    (
+        "Notify: it sends messages and alerts",
+        [
+            "Notifier : il envoie des messages et des alertes",
+            "Notificare: invia messaggi e avvisi",
+            "Notificar: envía mensajes y avisos",
+            "Notificar: envia mensagens e alertas",
+            "Benachrichtigen: sendet Nachrichten und Warnungen",
+            "Értesítés: üzeneteket és figyelmeztetéseket küld",
+        ],
+    ),
+    (
+        "Old copies of pages, books and recordings.",
+        [
+            "Anciennes copies de pages, de livres et d'enregistrements.",
+            "Vecchie copie di pagine, libri e registrazioni.",
+            "Copias antiguas de páginas, libros y grabaciones.",
+            "Cópias antigas de páginas, livros e gravações.",
+            "Alte Kopien von Seiten, Büchern und Aufnahmen.",
+            "Oldalak, könyvek és felvételek régi másolatai.",
+        ],
+    ),
+    (
+        "Older but still capable open video models.",
+        [
+            "Modèles vidéo ouverts plus anciens mais encore performants.",
+            "Modelli video aperti più vecchi ma ancora capaci.",
+            "Modelos de vídeo abiertos más antiguos pero aún capaces.",
+            "Modelos de vídeo abertos mais antigos mas ainda capazes.",
+            "Ältere, aber noch leistungsfähige offene Videomodelle.",
+            "Régebbi, de még mindig képes nyílt videómodellek.",
+        ],
+    ),
+    (
+        "Open catalogues of scholarly works.",
+        [
+            "Catalogues ouverts d'œuvres savantes.",
+            "Cataloghi aperti di opere accademiche.",
+            "Catálogos abiertos de obras académicas.",
+            "Catálogos abertos de obras académicas.",
+            "Offene Kataloge wissenschaftlicher Werke.",
+            "Tudományos művek nyílt katalógusai.",
+        ],
+    ),
+    (
+        "Open public data.",
+        [
+            "Données publiques ouvertes.",
+            "Dati pubblici aperti.",
+            "Datos públicos abiertos.",
+            "Dados públicos abertos.",
+            "Offene öffentliche Daten.",
+            "Nyílt közérdekű adatok.",
+        ],
+    ),
+    (
+        "Open research papers; read abstracts and PDFs by address.",
+        [
+            "Articles de recherche ouverts ; lisez résumés et PDF par adresse.",
+            "Articoli scientifici aperti; leggi abstract e PDF tramite indirizzo.",
+            "Artículos científicos abiertos; lee resúmenes y PDF por dirección.",
+            "Artigos científicos abertos; leia resumos e PDF pelo endereço.",
+            "Offene Forschungsarbeiten; Zusammenfassungen und PDFs über die Adresse lesen.",
+            "Nyílt kutatási cikkek; kivonatok és PDF-ek olvasása cím alapján.",
+        ],
+    ),
+    (
+        "Open, decentralised chat; read and send in rooms.",
+        [
+            "Messagerie ouverte et décentralisée ; lisez et envoyez dans des salons.",
+            "Chat aperta e decentralizzata; leggi e invia nelle stanze.",
+            "Chat abierto y descentralizado; lee y envía en salas.",
+            "Chat aberto e descentralizado; leia e envie em salas.",
+            "Offener, dezentraler Chat; in Räumen lesen und senden.",
+            "Nyílt, decentralizált csevegés; olvasás és küldés szobákban.",
+        ],
+    ),
+    (
+        "Open-source automation: the model calls a workflow with a webhook, the workflow does the rest.",
+        [
+            "Automatisation open source : le modèle appelle un flux de travail par webhook, le flux fait le reste.",
+            "Automazione open source: il modello chiama un flusso con un webhook, il flusso fa il resto.",
+            "Automatización de código abierto: el modelo llama a un flujo con un webhook y el flujo hace el resto.",
+            "Automação de código aberto: o modelo chama um fluxo com um webhook e o fluxo faz o resto.",
+            "Open-Source-Automatisierung: Das Modell ruft einen Ablauf per Webhook auf, den Rest erledigt der Ablauf.",
+            "Nyílt forráskódú automatizálás: a modell webhookkal hív meg egy munkafolyamatot, a többit az elvégzi.",
+        ],
+    ),
+    (
+        "Open-source project tools; read work packages.",
+        [
+            "Outils de projet open source ; lisez les lots de travaux.",
+            "Strumenti di progetto open source; leggi i pacchetti di lavoro.",
+            "Herramientas de proyecto de código abierto; lee paquetes de trabajo.",
+            "Ferramentas de projeto de código aberto; leia pacotes de trabalho.",
+            "Open-Source-Projektwerkzeuge; Arbeitspakete lesen.",
+            "Nyílt forráskódú projekteszközök; munkacsomagok olvasása.",
+        ],
+    ),
+    (
+        "Permissive licence with generation, editing and personalisation in one model.",
+        [
+            "Licence permissive, avec génération, édition et personnalisation dans un seul modèle.",
+            "Licenza permissiva con generazione, modifica e personalizzazione in un solo modello.",
+            "Licencia permisiva con generación, edición y personalización en un solo modelo.",
+            "Licença permissiva com geração, edição e personalização num só modelo.",
+            "Freizügige Lizenz, mit Erzeugung, Bearbeitung und Anpassung in einem Modell.",
+            "Megengedő licenc; generálás, szerkesztés és személyre szabás egyetlen modellben.",
+        ],
+    ),
+    (
+        "Photorealism and cinematic looks; the largest open image model.",
+        [
+            "Photoréalisme et rendu cinématographique ; le plus grand modèle d'images ouvert.",
+            "Fotorealismo e look cinematografico; il più grande modello di immagini aperto.",
+            "Fotorrealismo y aspecto cinematográfico; el mayor modelo de imágenes abierto.",
+            "Fotorrealismo e aspeto cinematográfico; o maior modelo de imagens aberto.",
+            "Fotorealismus und Kino-Look; das größte offene Bildmodell.",
+            "Fotorealizmus és filmes megjelenés; a legnagyobb nyílt képmodell.",
+        ],
+    ),
+    (
+        "Plan [DAYS] days in [PLACE] for [PEOPLE], budget [BUDGET]. Per day: morning, afternoon, evening, travel times. Say what to book early.",
+        [
+            "Planifie [JOURS] jours à [LIEU] pour [PERSONNES], budget [BUDGET]. Par jour : matin, après-midi, soir, temps de trajet. Dis ce qu'il faut réserver tôt.",
+            "Pianifica [GIORNI] giorni a [LUOGO] per [PERSONE], budget [BUDGET]. Per ogni giorno: mattina, pomeriggio, sera, tempi di viaggio. Di' cosa prenotare in anticipo.",
+            "Planifica [DÍAS] días en [LUGAR] para [PERSONAS], presupuesto [PRESUPUESTO]. Por día: mañana, tarde, noche, tiempos de viaje. Di qué reservar con antelación.",
+            "Planeia [DIAS] dias em [LOCAL] para [PESSOAS], orçamento [ORÇAMENTO]. Por dia: manhã, tarde, noite, tempos de viagem. Diz o que reservar com antecedência.",
+            "Plane [TAGE] Tage in [ORT] für [PERSONEN], Budget [BUDGET]. Pro Tag: Vormittag, Nachmittag, Abend, Fahrzeiten. Sage, was man früh buchen sollte.",
+            "Tervezz [NAPOK] napot ide: [HELY], [SZEMÉLYEK] részére, költségkeret: [KERET]. Naponta: délelőtt, délután, este, utazási idők. Mondd meg, mit érdemes korán lefoglalni.",
+        ],
+    ),
+    (
+        "Plan a trip",
+        [
+            "Planifier un voyage",
+            "Pianificare un viaggio",
+            "Planificar un viaje",
+            "Planear uma viagem",
+            "Eine Reise planen",
+            "Utazás tervezése",
+        ],
+    ),
+    (
+        "Play [CHARACTER] in [SCENE]. Stay in character, keep replies short, and let me lead. Start now.",
+        [
+            "Joue [PERSONNAGE] dans [SCÈNE]. Reste dans le personnage, garde des réponses courtes et laisse-moi mener. Commence maintenant.",
+            "Interpreta [PERSONAGGIO] in [SCENA]. Resta nel personaggio, tieni le risposte brevi e lasciami guidare. Inizia ora.",
+            "Interpreta a [PERSONAJE] en [ESCENA]. Mantente en el papel, da respuestas cortas y déjame llevar la iniciativa. Empieza ya.",
+            "Interpreta [PERSONAGEM] em [CENA]. Mantém-te na personagem, dá respostas curtas e deixa-me conduzir. Começa agora.",
+            "Spiele [FIGUR] in [SZENE]. Bleibe in der Rolle, antworte kurz und lass mich führen. Fang jetzt an.",
+            "Játszd [SZEREPLŐ] szerepét ebben: [JELENET]. Maradj a szerepben, röviden válaszolj, és hagyd, hogy én vezessek. Kezdd most.",
+        ],
+    ),
+    (
+        "Play a fair but demanding critic of this idea: [IDEA]. Name the weakest assumptions, what could go wrong and how to test it cheaply.",
+        [
+            "Joue un critique juste mais exigeant de cette idée : [IDÉE]. Nomme les hypothèses les plus fragiles, ce qui pourrait mal tourner et comment la tester à peu de frais.",
+            "Fai da critico giusto ma esigente di questa idea: [IDEA]. Indica le ipotesi più deboli, cosa potrebbe andare storto e come testarla a basso costo.",
+            "Haz de crítico justo pero exigente de esta idea: [IDEA]. Señala las suposiciones más débiles, qué podría salir mal y cómo probarla con poco costo.",
+            "Faz de crítico justo mas exigente desta ideia: [IDEIA]. Aponta os pressupostos mais fracos, o que pode correr mal e como testá-la a baixo custo.",
+            "Sei ein fairer, aber anspruchsvoller Kritiker dieser Idee: [IDEE]. Nenne die schwächsten Annahmen, was schiefgehen könnte und wie man es günstig testet.",
+            "Légy tisztességes, de igényes kritikusa ennek az ötletnek: [ÖTLET]. Nevezd meg a leggyengébb feltevéseket, mi mehet félre, és hogyan lehet olcsón tesztelni.",
+        ],
+    ),
+    (
+        "Polite e-mail",
+        [
+            "E-mail poli",
+            "E-mail cortese",
+            "Correo educado",
+            "E-mail cortês",
+            "Höfliche E-Mail",
+            "Udvarias e-mail",
+        ],
+    ),
+    (
+        "Post a message to a channel through an incoming webhook.",
+        [
+            "Publiez un message dans un canal via un webhook entrant.",
+            "Pubblica un messaggio in un canale tramite un webhook in entrata.",
+            "Publica un mensaje en un canal mediante un webhook de entrada.",
+            "Publique uma mensagem num canal através de um webhook de entrada.",
+            "Poste eine Nachricht in einen Kanal über einen eingehenden Webhook.",
+            "Üzenet küldése egy csatornára bejövő webhookkal.",
+        ],
+    ),
+    (
+        "Post to a channel through a webhook.",
+        [
+            "Publiez dans un canal via un webhook.",
+            "Pubblica in un canale tramite un webhook.",
+            "Publica en un canal mediante un webhook.",
+            "Publique num canal através de um webhook.",
+            "In einen Kanal über einen Webhook posten.",
+            "Küldés egy csatornára webhookkal.",
+        ],
+    ),
+    (
+        "Pros, cons, risks",
+        [
+            "Pour, contre, risques",
+            "Pro, contro, rischi",
+            "Pros, contras, riesgos",
+            "Prós, contras, riscos",
+            "Vorteile, Nachteile, Risiken",
+            "Előnyök, hátrányok, kockázatok",
+        ],
+    ),
+    (
+        "Public archive of source code; read pages by address.",
+        [
+            "Archive publique de code source ; lisez les pages par adresse.",
+            "Archivio pubblico di codice sorgente; leggi le pagine tramite indirizzo.",
+            "Archivo público de código fuente; lee páginas por dirección.",
+            "Arquivo público de código-fonte; leia páginas pelo endereço.",
+            "Öffentliches Archiv für Quellcode; Seiten über die Adresse lesen.",
+            "Forráskód nyilvános archívuma; oldalak olvasása cím alapján.",
+        ],
+    ),
+    (
+        "Quick lookups without an account.",
+        [
+            "Recherches rapides sans compte.",
+            "Ricerche rapide senza account.",
+            "Consultas rápidas sin cuenta.",
+            "Consultas rápidas sem conta.",
+            "Schnelle Abfragen ohne Konto.",
+            "Gyors keresések fiók nélkül.",
+        ],
+    ),
+    (
+        "Quiz me",
+        [
+            "Interroge-moi",
+            "Fammi un quiz",
+            "Hazme un cuestionario",
+            "Faz-me um questionário",
+            "Frag mich ab",
+            "Kérdezz ki",
+        ],
+    ),
+    (
+        "Quiz me on [TOPIC] with [NUMBER] questions, one at a time. Wait for my answer, say if it is right, explain, then ask the next.",
+        [
+            "Interroge-moi sur [SUJET] avec [NOMBRE] questions, une à la fois. Attends ma réponse, dis si elle est juste, explique, puis pose la suivante.",
+            "Fammi un quiz su [ARGOMENTO] con [NUMERO] domande, una alla volta. Aspetta la mia risposta, dimmi se è giusta, spiega, poi fai la successiva.",
+            "Hazme un cuestionario sobre [TEMA] con [NÚMERO] preguntas, una a la vez. Espera mi respuesta, di si es correcta, explica y luego haz la siguiente.",
+            "Faz-me um questionário sobre [TEMA] com [NÚMERO] perguntas, uma de cada vez. Espera a minha resposta, diz se está certa, explica e depois faz a seguinte.",
+            "Frag mich zu [THEMA] mit [ANZAHL] Fragen ab, eine nach der anderen. Warte auf meine Antwort, sage, ob sie stimmt, erkläre und stelle dann die nächste.",
+            "Kérdezz ki a(z) [TÉMA] témából [SZÁM] kérdéssel, egyenként. Várd meg a válaszomat, mondd meg, helyes-e, magyarázd el, aztán jöhet a következő.",
+        ],
+    ),
+    (
+        "Read a page you give by address, as clean text.",
+        [
+            "Lit une page donnée par adresse, en texte propre.",
+            "Legge una pagina che indichi tramite indirizzo, come testo pulito.",
+            "Lee una página que das por dirección, como texto limpio.",
+            "Lê uma página que indicar pelo endereço, como texto limpo.",
+            "Liest eine Seite, die du per Adresse angibst, als sauberen Text.",
+            "Elolvassa a megadott című oldalt, tiszta szövegként.",
+        ],
+    ),
+    (
+        "Read and draft documents (needs a Google sign-in).",
+        [
+            "Lire et rédiger des documents (nécessite une connexion Google).",
+            "Leggere e redigere documenti (richiede l'accesso con Google).",
+            "Leer y redactar documentos (requiere iniciar sesión con Google).",
+            "Ler e redigir documentos (requer início de sessão Google).",
+            "Dokumente lesen und entwerfen (erfordert eine Google-Anmeldung).",
+            "Dokumentumok olvasása és fogalmazása (Google-bejelentkezés szükséges).",
+        ],
+    ),
+    (
+        "Read and draft issues.",
+        [
+            "Lire et rédiger des tickets.",
+            "Leggere e redigere issue.",
+            "Leer y redactar incidencias.",
+            "Ler e redigir issues.",
+            "Issues lesen und entwerfen.",
+            "Hibajegyek olvasása és fogalmazása.",
+        ],
+    ),
+    (
+        "Read and draft table rows.",
+        [
+            "Lire et rédiger des lignes de tableau.",
+            "Leggere e redigere righe di tabella.",
+            "Leer y redactar filas de tabla.",
+            "Ler e redigir linhas de tabela.",
+            "Tabellenzeilen lesen und entwerfen.",
+            "Táblázatsorok olvasása és fogalmazása.",
+        ],
+    ),
+    (
+        "Read and store files in buckets.",
+        [
+            "Lire et stocker des fichiers dans des buckets.",
+            "Leggere e salvare file nei bucket.",
+            "Leer y guardar archivos en buckets.",
+            "Ler e guardar ficheiros em buckets.",
+            "Dateien in Buckets lesen und speichern.",
+            "Fájlok olvasása és tárolása gyűjtőkben (bucket).",
+        ],
+    ),
+    (
+        "Read boards and cards.",
+        [
+            "Lire des tableaux et des cartes.",
+            "Leggere bacheche e schede.",
+            "Leer tableros y tarjetas.",
+            "Ler quadros e cartões.",
+            "Boards und Karten lesen.",
+            "Táblák és kártyák olvasása.",
+        ],
+    ),
+    (
+        "Read error reports and group them.",
+        [
+            "Lire les rapports d'erreurs et les regrouper.",
+            "Leggere i rapporti di errore e raggrupparli.",
+            "Leer informes de errores y agruparlos.",
+            "Ler relatórios de erros e agrupá-los.",
+            "Fehlerberichte lesen und gruppieren.",
+            "Hibajelentések olvasása és csoportosítása.",
+        ],
+    ),
+    (
+        "Read failed build logs and explain the failure.",
+        [
+            "Lire les journaux d'une compilation en échec et expliquer l'échec.",
+            "Leggere i log di una build fallita e spiegare il guasto.",
+            "Leer los registros de una compilación fallida y explicar el fallo.",
+            "Ler os registos de uma compilação falhada e explicar a falha.",
+            "Protokolle fehlgeschlagener Builds lesen und den Fehler erklären.",
+            "Sikertelen buildek naplóinak olvasása és a hiba magyarázata.",
+        ],
+    ),
+    (
+        "Read logs and container status; start or stop only with your approval.",
+        [
+            "Lire les journaux et l'état des conteneurs ; démarrer ou arrêter seulement avec votre accord.",
+            "Leggere log e stato dei container; avviare o fermare solo con la tua approvazione.",
+            "Leer registros y estado de contenedores; iniciar o detener solo con tu aprobación.",
+            "Ler registos e estado dos contentores; iniciar ou parar apenas com a sua aprovação.",
+            "Protokolle und Container-Status lesen; Starten oder Stoppen nur mit deiner Zustimmung.",
+            "Naplók és konténerállapot olvasása; indítás vagy leállítás csak a te jóváhagyásoddal.",
+        ],
+    ),
+    (
+        "Read metrics and explain a spike.",
+        [
+            "Lire des métriques et expliquer un pic.",
+            "Leggere le metriche e spiegare un picco.",
+            "Leer métricas y explicar un pico.",
+            "Ler métricas e explicar um pico.",
+            "Metriken lesen und einen Ausreißer erklären.",
+            "Metrikák olvasása és egy kiugrás magyarázata.",
+        ],
+    ),
+    (
+        "Read news and blog feeds by address.",
+        [
+            "Lire des flux d'actualités et de blogs par adresse.",
+            "Leggere feed di notizie e blog tramite indirizzo.",
+            "Leer fuentes de noticias y blogs por dirección.",
+            "Ler feeds de notícias e blogues pelo endereço.",
+            "Nachrichten- und Blog-Feeds über die Adresse lesen.",
+            "Hír- és blogcsatornák olvasása cím alapján.",
+        ],
+    ),
+    (
+        "Read open issues of a repository and turn them into a plan.",
+        [
+            "Lire les tickets ouverts d'un dépôt et en faire un plan.",
+            "Leggere le issue aperte di un repository e trasformarle in un piano.",
+            "Leer las incidencias abiertas de un repositorio y convertirlas en un plan.",
+            "Ler as issues abertas de um repositório e transformá-las num plano.",
+            "Offene Issues eines Repositories lesen und in einen Plan verwandeln.",
+            "Egy tároló nyitott hibajegyeinek olvasása és tervvé alakítása.",
+        ],
+    ),
+    (
+        "Read pages and databases, draft new pages.",
+        [
+            "Lire des pages et des bases de données, rédiger de nouvelles pages.",
+            "Leggere pagine e database, redigere nuove pagine.",
+            "Leer páginas y bases de datos, redactar páginas nuevas.",
+            "Ler páginas e bases de dados, redigir páginas novas.",
+            "Seiten und Datenbanken lesen, neue Seiten entwerfen.",
+            "Oldalak és adatbázisok olvasása, új oldalak fogalmazása.",
+        ],
+    ),
+    (
+        "Read repositories and tickets.",
+        [
+            "Lire des dépôts et des tickets.",
+            "Leggere repository e ticket.",
+            "Leer repositorios y tickets.",
+            "Ler repositórios e tickets.",
+            "Repositories und Tickets lesen.",
+            "Tárolók és hibajegyek olvasása.",
+        ],
+    ),
+    (
+        "Read repositories with an app password.",
+        [
+            "Lire des dépôts avec un mot de passe d'application.",
+            "Leggere repository con una password per app.",
+            "Leer repositorios con una contraseña de aplicación.",
+            "Ler repositórios com uma palavra-passe de aplicação.",
+            "Repositories mit einem App-Passwort lesen.",
+            "Tárolók olvasása alkalmazásjelszóval.",
+        ],
+    ),
+    (
+        "Read tasks and projects.",
+        [
+            "Lire des tâches et des projets.",
+            "Leggere attività e progetti.",
+            "Leer tareas y proyectos.",
+            "Ler tarefas e projetos.",
+            "Aufgaben und Projekte lesen.",
+            "Feladatok és projektek olvasása.",
+        ],
+    ),
+    (
+        "Read team wiki pages.",
+        [
+            "Lire les pages wiki de l'équipe.",
+            "Leggere le pagine wiki del team.",
+            "Leer las páginas wiki del equipo.",
+            "Ler as páginas wiki da equipa.",
+            "Wiki-Seiten des Teams lesen.",
+            "A csapat wikioldalainak olvasása.",
+        ],
+    ),
+    (
+        "Read this data",
+        [
+            "Lire ces données",
+            "Leggere questi dati",
+            "Leer estos datos",
+            "Ler estes dados",
+            "Diese Daten lesen",
+            "Olvasd el ezeket az adatokat",
+        ],
+    ),
+    (
+        "Read tickets, draft comments.",
+        [
+            "Lire des tickets, rédiger des commentaires.",
+            "Leggere ticket, redigere commenti.",
+            "Leer tickets, redactar comentarios.",
+            "Ler tickets, redigir comentários.",
+            "Tickets lesen, Kommentare entwerfen.",
+            "Hibajegyek olvasása, megjegyzések fogalmazása.",
+        ],
+    ),
+    (
+        "Read your address book to help write messages.",
+        [
+            "Lire votre carnet d'adresses pour aider à écrire des messages.",
+            "Leggere la tua rubrica per aiutare a scrivere messaggi.",
+            "Leer tu libreta de direcciones para ayudar a escribir mensajes.",
+            "Ler a sua lista de contactos para ajudar a escrever mensagens.",
+            "Dein Adressbuch lesen, um beim Schreiben von Nachrichten zu helfen.",
+            "A címjegyzéked olvasása az üzenetek írásának segítésére.",
+        ],
+    ),
+    (
+        "Read your agenda, propose events.",
+        [
+            "Lire votre agenda, proposer des événements.",
+            "Leggere la tua agenda, proporre eventi.",
+            "Leer tu agenda, proponer eventos.",
+            "Ler a sua agenda, propor eventos.",
+            "Deinen Kalender lesen, Termine vorschlagen.",
+            "A naptáradat olvasása, események javaslata.",
+        ],
+    ),
+    (
+        "Read-only questions about a database.",
+        [
+            "Questions en lecture seule sur une base de données.",
+            "Domande in sola lettura su un database.",
+            "Preguntas de solo lectura sobre una base de datos.",
+            "Perguntas só de leitura sobre uma base de dados.",
+            "Nur lesende Fragen an eine Datenbank.",
+            "Csak olvasási jellegű kérdések egy adatbázisról.",
+        ],
+    ),
+    (
+        "Read: you pick the content, the model reads it",
+        [
+            "Lecture : vous choisissez le contenu, le modèle le lit",
+            "Lettura: scegli tu il contenuto, il modello lo legge",
+            "Lectura: tú eliges el contenido, el modelo lo lee",
+            "Leitura: você escolhe o conteúdo, o modelo lê",
+            "Lesen: Du wählst den Inhalt, das Modell liest ihn",
+            "Olvasás: te választod ki a tartalmat, a modell elolvassa",
+        ],
+    ),
+    (
+        "Reasoning",
+        [
+            "Raisonnement",
+            "Ragionamento",
+            "Razonamiento",
+            "Raciocínio",
+            "Logisches Denken",
+            "Gondolkodás",
+        ],
+    ),
+    (
+        "Regular expression",
+        [
+            "Expression régulière",
+            "Espressione regolare",
+            "Expresión regular",
+            "Expressão regular",
+            "Regulärer Ausdruck",
+            "Reguláris kifejezés",
+        ],
+    ),
+    (
+        "Review a file",
+        [
+            "Relire un fichier",
+            "Rivedere un file",
+            "Revisar un archivo",
+            "Rever um ficheiro",
+            "Eine Datei prüfen",
+            "Fájl átnézése",
+        ],
+    ),
+    (
+        "Review the text: find mistakes and unclear parts and propose concrete improvements.",
+        [
+            "Relis le texte : trouve les erreurs et les passages peu clairs et propose des améliorations concrètes.",
+            "Rivedi il testo: trova errori e parti poco chiare e proponi miglioramenti concreti.",
+            "Revisa el texto: encuentra errores y partes poco claras y propón mejoras concretas.",
+            "Revê o texto: encontra erros e partes pouco claras e propõe melhorias concretas.",
+            "Prüfe den Text: Finde Fehler und unklare Stellen und schlage konkrete Verbesserungen vor.",
+            "Nézd át a szöveget: keresd meg a hibákat és a nem világos részeket, és javasolj konkrét javításokat.",
+        ],
+    ),
+    (
+        "Role play",
+        [
+            "Jeu de rôle",
+            "Gioco di ruolo",
+            "Juego de rol",
+            "Jogo de papéis",
+            "Rollenspiel",
+            "Szerepjáték",
+        ],
+    ),
+    (
+        "Romanian",
+        [
+            "Roumain",
+            "Rumeno",
+            "Rumano",
+            "Romeno",
+            "Rumänisch",
+            "Román",
+        ],
+    ),
+    (
+        "Run saved automations on a timetable while this program is open.",
+        [
+            "Exécute les automatisations enregistrées selon un horaire tant que ce programme est ouvert.",
+            "Esegue le automazioni salvate secondo un orario finché questo programma è aperto.",
+            "Ejecuta las automatizaciones guardadas según un horario mientras este programa esté abierto.",
+            "Executa as automações guardadas num horário enquanto este programa estiver aberto.",
+            "Führt gespeicherte Automatisierungen nach Zeitplan aus, solange dieses Programm geöffnet ist.",
+            "Futtatja a mentett automatizálásokat ütemezés szerint, amíg ez a program nyitva van.",
+        ],
+    ),
+    (
+        "SQL query",
+        [
+            "Requête SQL",
+            "Query SQL",
+            "Consulta SQL",
+            "Consulta SQL",
+            "SQL-Abfrage",
+            "SQL-lekérdezés",
+        ],
+    ),
+    (
+        "Safety",
+        [
+            "Sécurité",
+            "Sicurezza",
+            "Seguridad",
+            "Segurança",
+            "Sicherheit",
+            "Biztonság",
+        ],
+    ),
+    (
+        "Same as GitHub, also on your own GitLab server.",
+        [
+            "Comme GitHub, y compris sur votre propre serveur GitLab.",
+            "Come GitHub, anche sul tuo server GitLab.",
+            "Igual que GitHub, también en tu propio servidor GitLab.",
+            "Como o GitHub, também no seu próprio servidor GitLab.",
+            "Wie GitHub, auch auf deinem eigenen GitLab-Server.",
+            "Ugyanaz, mint a GitHub, saját GitLab-szerveren is.",
+        ],
+    ),
+    (
+        "Samples, loops and sound effects up to about 47 seconds; not for sung songs.",
+        [
+            "Échantillons, boucles et effets sonores jusqu'à environ 47 secondes ; pas pour les chansons chantées.",
+            "Campioni, loop ed effetti sonori fino a circa 47 secondi; non per canzoni cantate.",
+            "Muestras, bucles y efectos de sonido de hasta unos 47 segundos; no para canciones cantadas.",
+            "Amostras, loops e efeitos sonoros até cerca de 47 segundos; não serve para canções cantadas.",
+            "Samples, Loops und Soundeffekte bis etwa 47 Sekunden; nicht für gesungene Lieder.",
+            "Minták, hurkok és hanghatások legfeljebb kb. 47 másodpercig; énekelt dalokhoz nem alkalmas.",
+        ],
+    ),
+    (
+        "Say briefly what each file holds and how they relate.",
+        [
+            "Dis brièvement ce que contient chaque fichier et comment ils sont liés.",
+            "Di' brevemente cosa contiene ogni file e come sono collegati.",
+            "Di brevemente qué contiene cada archivo y cómo se relacionan.",
+            "Diz brevemente o que contém cada ficheiro e como se relacionam.",
+            "Sage kurz, was jede Datei enthält und wie sie zusammenhängen.",
+            "Mondd el röviden, mit tartalmaz az egyes fájl, és hogyan kapcsolódnak egymáshoz.",
+        ],
+    ),
+    (
+        "Search: the model looks things up and browses by itself",
+        [
+            "Recherche : le modèle cherche et navigue tout seul",
+            "Ricerca: il modello cerca e naviga da solo",
+            "Búsqueda: el modelo busca y navega por sí mismo",
+            "Pesquisa: o modelo procura e navega sozinho",
+            "Suchen: Das Modell recherchiert und surft selbstständig",
+            "Keresés: a modell maga néz utána és böngészik",
+        ],
+    ),
+    (
+        "Self-hosted push notifications.",
+        [
+            "Notifications push auto-hébergées.",
+            "Notifiche push self-hosted.",
+            "Notificaciones push autoalojadas.",
+            "Notificações push auto-hospedadas.",
+            "Selbst gehostete Push-Benachrichtigungen.",
+            "Saját üzemeltetésű push-értesítések.",
+        ],
+    ),
+    (
+        "Self-hosted team chat; post through a webhook.",
+        [
+            "Messagerie d'équipe auto-hébergée ; publiez via un webhook.",
+            "Chat di team self-hosted; pubblica tramite un webhook.",
+            "Chat de equipo autoalojado; publica mediante un webhook.",
+            "Chat de equipa auto-hospedado; publique através de um webhook.",
+            "Selbst gehosteter Team-Chat; Beiträge über einen Webhook.",
+            "Saját üzemeltetésű csapatchat; küldés webhookkal.",
+        ],
+    ),
+    (
+        "Serves Qwen-Image-2.1 at /v1/images/generations next to the chat models.",
+        [
+            "Sert Qwen-Image-2.1 à /v1/images/generations, à côté des modèles de chat.",
+            "Serve Qwen-Image-2.1 su /v1/images/generations, accanto ai modelli di chat.",
+            "Sirve Qwen-Image-2.1 en /v1/images/generations, junto a los modelos de chat.",
+            "Serve o Qwen-Image-2.1 em /v1/images/generations, ao lado dos modelos de chat.",
+            "Stellt Qwen-Image-2.1 unter /v1/images/generations bereit, neben den Chat-Modellen.",
+            "A Qwen-Image-2.1-et a /v1/images/generations címen szolgálja ki a csevegőmodellek mellett.",
+        ],
+    ),
+    (
+        "Sharp pictures on small graphics cards.",
+        [
+            "Images nettes sur de petites cartes graphiques.",
+            "Immagini nitide su schede grafiche piccole.",
+            "Imágenes nítidas en tarjetas gráficas pequeñas.",
+            "Imagens nítidas em placas gráficas pequenas.",
+            "Scharfe Bilder auf kleinen Grafikkarten.",
+            "Éles képek kisebb videokártyákon.",
+        ],
+    ),
+    (
+        "Short story",
+        [
+            "Nouvelle",
+            "Racconto breve",
+            "Cuento corto",
+            "Conto curto",
+            "Kurzgeschichte",
+            "Novella",
+        ],
+    ),
+    (
+        "Simple triggers and actions through webhooks.",
+        [
+            "Déclencheurs et actions simples via webhooks.",
+            "Trigger e azioni semplici tramite webhook.",
+            "Disparadores y acciones simples mediante webhooks.",
+            "Gatilhos e ações simples através de webhooks.",
+            "Einfache Auslöser und Aktionen über Webhooks.",
+            "Egyszerű eseményindítók és műveletek webhookokon át.",
+        ],
+    ),
+    (
+        "Sings lyrics; usable commercially with credit.",
+        [
+            "Chante les paroles ; utilisable commercialement avec mention de la source.",
+            "Canta i testi; utilizzabile commercialmente con attribuzione.",
+            "Canta letras; se puede usar comercialmente con atribución.",
+            "Canta letras; utilizável comercialmente com atribuição.",
+            "Singt Liedtexte; kommerziell nutzbar mit Namensnennung.",
+            "Dalszöveget énekel; forrásmegjelöléssel kereskedelmileg is használható.",
+        ],
+    ),
+    (
+        "Smart home: a webhook can switch lights, scenes and scripts. Keep the model away from locks and alarms.",
+        [
+            "Maison connectée : un webhook peut allumer des lumières, des scènes et des scripts. Tenez le modèle éloigné des serrures et des alarmes.",
+            "Casa intelligente: un webhook può accendere luci, scene e script. Tieni il modello lontano da serrature e allarmi.",
+            "Casa inteligente: un webhook puede encender luces, escenas y scripts. Mantén al modelo alejado de cerraduras y alarmas.",
+            "Casa inteligente: um webhook pode ligar luzes, cenas e scripts. Mantenha o modelo longe de fechaduras e alarmes.",
+            "Smart Home: Ein Webhook kann Lichter, Szenen und Skripte schalten. Halte das Modell von Schlössern und Alarmanlagen fern.",
+            "Okosotthon: egy webhook képes lámpákat, jeleneteket és szkripteket kapcsolni. A modellt tartsd távol a záraktól és a riasztóktól.",
+        ],
+    ),
+    (
+        "Structured facts about people, places and things.",
+        [
+            "Faits structurés sur les personnes, les lieux et les choses.",
+            "Fatti strutturati su persone, luoghi e cose.",
+            "Datos estructurados sobre personas, lugares y cosas.",
+            "Factos estruturados sobre pessoas, lugares e coisas.",
+            "Strukturierte Fakten über Personen, Orte und Dinge.",
+            "Strukturált tények személyekről, helyekről és dolgokról.",
+        ],
+    ),
+    (
+        "Study",
+        [
+            "Étude",
+            "Studio",
+            "Estudio",
+            "Estudo",
+            "Lernen",
+            "Tanulás",
+        ],
+    ),
+    (
+        "Study plan",
+        [
+            "Plan d'étude",
+            "Piano di studio",
+            "Plan de estudio",
+            "Plano de estudo",
+            "Lernplan",
+            "Tanulási terv",
+        ],
+    ),
+    (
+        "Summarise",
+        [
+            "Résumer",
+            "Riassumere",
+            "Resumir",
+            "Resumir",
+            "Zusammenfassen",
+            "Összefoglalás",
+        ],
+    ),
+    (
+        "Summarise a web page",
+        [
+            "Résumer une page web",
+            "Riassumere una pagina web",
+            "Resumir una página web",
+            "Resumir uma página web",
+            "Eine Webseite zusammenfassen",
+            "Weboldal összefoglalása",
+        ],
+    ),
+    (
+        "Summarise in one sentence: \"Mihai left early for the station, but the train was already an hour late, so he waited in a cafe.\"",
+        [
+            "Résume en une phrase : « Mihai est parti tôt pour la gare, mais le train avait déjà une heure de retard, alors il a attendu dans un café. »",
+            "Riassumi in una frase: «Mihai è andato presto alla stazione, ma il treno aveva già un'ora di ritardo, così ha aspettato in un caffè.»",
+            "Resume en una frase: «Mihai salió temprano hacia la estación, pero el tren ya llevaba una hora de retraso, así que esperó en una cafetería.»",
+            "Resume numa frase: «O Mihai saiu cedo para a estação, mas o comboio já tinha uma hora de atraso, por isso esperou num café.»",
+            "Fasse in einem Satz zusammen: „Mihai ist früh zum Bahnhof gegangen, aber der Zug hatte schon eine Stunde Verspätung, also hat er in einem Café gewartet.“",
+            "Foglald össze egy mondatban: „Mihai korán indult az állomásra, de a vonat már egy órát késett, ezért egy kávézóban várt.”",
+        ],
+    ),
+    (
+        "Summarise the page in 5 clear points, then say who it is useful to.",
+        [
+            "Résume la page en 5 points clairs, puis dis à qui elle est utile.",
+            "Riassumi la pagina in 5 punti chiari, poi di' a chi è utile.",
+            "Resume la página en 5 puntos claros y luego di a quién le resulta útil.",
+            "Resume a página em 5 pontos claros e depois diz a quem é útil.",
+            "Fasse die Seite in 5 klaren Punkten zusammen und sage dann, wem sie nützt.",
+            "Foglald össze az oldalt 5 világos pontban, majd mondd meg, kinek hasznos.",
+        ],
+    ),
+    (
+        "Summarise the text below in [NUMBER] bullet points for someone who has two minutes. Then give one sentence on what to do next.
+
+[TEXT]",
+        [
+            "Résume le texte ci-dessous en [NOMBRE] points pour quelqu'un qui a deux minutes. Puis donne une phrase sur ce qu'il faut faire ensuite.
+
+[TEXTE]",
+            "Riassumi il testo qui sotto in [NUMERO] punti per chi ha due minuti. Poi dai una frase su cosa fare dopo.
+
+[TESTO]",
+            "Resume el texto de abajo en [NÚMERO] puntos para alguien que tiene dos minutos. Luego da una frase sobre qué hacer a continuación.
+
+[TEXTO]",
+            "Resume o texto abaixo em [NÚMERO] pontos para alguém que tem dois minutos. Depois dá uma frase sobre o que fazer a seguir.
+
+[TEXTO]",
+            "Fasse den folgenden Text in [ANZAHL] Stichpunkten für jemanden zusammen, der zwei Minuten hat. Gib dann einen Satz dazu, was als Nächstes zu tun ist.
+
+[TEXT]",
+            "Foglald össze az alábbi szöveget [SZÁM] pontban valakinek, akinek két perce van. Utána egy mondatban mondd meg, mi a következő teendő.
+
+[SZÖVEG]",
+        ],
+    ),
+    (
+        "Summarise your inbox, draft replies you approve before sending.",
+        [
+            "Résumez votre boîte de réception, rédigez des réponses que vous validez avant l'envoi.",
+            "Riassumi la tua posta in arrivo, redigi risposte che approvi prima dell'invio.",
+            "Resume tu bandeja de entrada y redacta respuestas que apruebas antes de enviar.",
+            "Resuma a sua caixa de entrada e redija respostas que aprova antes de enviar.",
+            "Fasse dein Postfach zusammen und entwirf Antworten, die du vor dem Senden freigibst.",
+            "Foglalja össze a postaládádat, és fogalmazzon válaszokat, amelyeket küldés előtt jóváhagysz.",
+        ],
+    ),
+    (
+        "Tables: [TABLES]. Write a SQL query that [GOAL]. Explain it and say how to make it fast.",
+        [
+            "Tables : [TABLES]. Écris une requête SQL qui [OBJECTIF]. Explique-la et dis comment la rendre rapide.",
+            "Tabelle: [TABELLE]. Scrivi una query SQL che [OBIETTIVO]. Spiegala e dì come renderla veloce.",
+            "Tablas: [TABLAS]. Escribe una consulta SQL que [OBJETIVO]. Explícala y di cómo hacerla rápida.",
+            "Tabelas: [TABELAS]. Escreve uma consulta SQL que [OBJETIVO]. Explica-a e diz como a tornar rápida.",
+            "Tabellen: [TABELLEN]. Schreibe eine SQL-Abfrage, die [ZIEL]. Erkläre sie und sage, wie man sie schnell macht.",
+            "Táblák: [TÁBLÁK]. Írj egy SQL-lekérdezést, amely [CÉL]. Magyarázd el, és mondd meg, hogyan lehet gyorssá tenni.",
+        ],
+    ),
+    (
+        "Tailor my CV",
+        [
+            "Adapter mon CV",
+            "Adattare il mio CV",
+            "Adaptar mi CV",
+            "Adaptar o meu CV",
+            "Meinen Lebenslauf anpassen",
+            "Szabd személyre az önéletrajzomat",
+        ],
+    ),
+    (
+        "Ten titles",
+        [
+            "Dix titres",
+            "Dieci titoli",
+            "Diez títulos",
+            "Dez títulos",
+            "Zehn Titel",
+            "Tíz cím",
+        ],
+    ),
+    (
+        "The answer is too big (over 8 MB).",
+        [
+            "La réponse est trop grande (plus de 8 Mo).",
+            "La risposta è troppo grande (oltre 8 MB).",
+            "La respuesta es demasiado grande (más de 8 MB).",
+            "A resposta é grande demais (mais de 8 MB).",
+            "Die Antwort ist zu groß (über 8 MB).",
+            "A válasz túl nagy (8 MB felett).",
+        ],
+    ),
+    (
+        "The best all-round open video model in several 2026 comparisons, with no licence limits; text-to-video and picture-to-video. About nine minutes for five seconds on a big card.",
+        [
+            "Le meilleur modèle vidéo ouvert polyvalent dans plusieurs comparatifs de 2026, sans limite de licence ; texte vers vidéo et image vers vidéo. Environ neuf minutes pour cinq secondes sur une grosse carte.",
+            "Il miglior modello video aperto tuttofare in diversi confronti del 2026, senza limiti di licenza; da testo a video e da immagine a video. Circa nove minuti per cinque secondi su una scheda grande.",
+            "El mejor modelo de vídeo abierto en general en varias comparativas de 2026, sin límites de licencia; de texto a vídeo y de imagen a vídeo. Unos nueve minutos para cinco segundos en una tarjeta grande.",
+            "O melhor modelo de vídeo aberto geral em várias comparações de 2026, sem limites de licença; de texto para vídeo e de imagem para vídeo. Cerca de nove minutos para cinco segundos numa placa grande.",
+            "Das beste offene Allround-Videomodell in mehreren Vergleichen von 2026, ohne Lizenzbeschränkungen; Text-zu-Video und Bild-zu-Video. Etwa neun Minuten für fünf Sekunden auf einer großen Karte.",
+            "A legjobb nyílt, általános célú videómodell több 2026-os összehasonlításban, licenckorlátok nélkül; szövegből és képből videó. Nagy kártyán kb. kilenc perc öt másodpercnyi videóhoz.",
+        ],
+    ),
+    (
+        "The biggest ecosystem of styles, add-ons and tutorials, and the lightest to run.",
+        [
+            "Le plus grand écosystème de styles, d'extensions et de tutoriels, et le plus léger à exécuter.",
+            "Il più grande ecosistema di stili, componenti aggiuntivi e tutorial, e il più leggero da eseguire.",
+            "El mayor ecosistema de estilos, complementos y tutoriales, y el más ligero de ejecutar.",
+            "O maior ecossistema de estilos, extensões e tutoriais, e o mais leve de executar.",
+            "Das größte Ökosystem an Stilen, Erweiterungen und Tutorials und das leichteste im Betrieb.",
+            "A stílusok, kiegészítők és oktatóanyagok legnagyobb ökoszisztémája, és a legkönnyebben futtatható.",
+        ],
+    ),
+    (
+        "The most practical open song model: full tracks with sung lyrics in seconds, with editing tools. The only open music family that cleared every test in one October 2026 review.",
+        [
+            "Le modèle de chansons ouvert le plus pratique : des morceaux complets avec paroles chantées en quelques secondes, avec outils d'édition. La seule famille musicale ouverte à avoir réussi tous les tests d'un comparatif d'octobre 2026.",
+            "Il modello di canzoni aperto più pratico: brani completi con testi cantati in pochi secondi, con strumenti di editing. L'unica famiglia musicale aperta che ha superato tutti i test in una rassegna di ottobre 2026.",
+            "El modelo de canciones abierto más práctico: temas completos con letra cantada en segundos, con herramientas de edición. La única familia musical abierta que superó todas las pruebas en una reseña de octubre de 2026.",
+            "O modelo de canções aberto mais prático: faixas completas com letra cantada em segundos, com ferramentas de edição. A única família musical aberta que passou todos os testes numa análise de outubro de 2026.",
+            "Das praktischste offene Songmodell: komplette Titel mit gesungenem Text in Sekunden, mit Bearbeitungswerkzeugen. Die einzige offene Musikfamilie, die in einem Test im Oktober 2026 alle Prüfungen bestand.",
+            "A legpraktikusabb nyílt dalmodell: másodpercek alatt teljes, énekelt szövegű számok, szerkesztőeszközökkel. Az egyetlen nyílt zenei család, amely egy 2026. októberi tesztben minden próbát kiállt.",
+        ],
+    ),
+    (
+        "The server answered: {}",
+        [
+            "Le serveur a répondu : {}",
+            "Il server ha risposto: {}",
+            "El servidor respondió: {}",
+            "O servidor respondeu: {}",
+            "Der Server antwortete: {}",
+            "A szerver válasza: {}",
+        ],
+    ),
+    (
+        "This [LANGUAGE] code should [EXPECTED] but instead [ACTUAL]. Find the cause, show the smallest fix and explain why it works.
+
+[CODE]",
+        [
+            "Ce code [LANGAGE] devrait [ATTENDU] mais fait [OBTENU]. Trouve la cause, montre la plus petite correction et explique pourquoi elle marche.
+
+[CODE]",
+            "Questo codice [LINGUAGGIO] dovrebbe [ATTESO] ma invece [OTTENUTO]. Trova la causa, mostra la correzione più piccola e spiega perché funziona.
+
+[CODICE]",
+            "Este código en [LENGUAJE] debería [ESPERADO] pero en cambio [OBTENIDO]. Encuentra la causa, muestra la corrección más pequeña y explica por qué funciona.
+
+[CÓDIGO]",
+            "Este código em [LINGUAGEM] devia [ESPERADO] mas em vez disso [OBTIDO]. Encontra a causa, mostra a correção mais pequena e explica por que funciona.
+
+[CÓDIGO]",
+            "Dieser [SPRACHE]-Code sollte [ERWARTET], tut aber stattdessen [TATSÄCHLICH]. Finde die Ursache, zeige die kleinste Korrektur und erkläre, warum sie funktioniert.
+
+[CODE]",
+            "Ennek a [NYELV] kódnak [VÁRT] kellene, de ehelyett [TÉNYLEGES]. Keresd meg az okot, mutasd a legkisebb javítást, és magyarázd el, miért működik.
+
+[KÓD]",
+        ],
+    ),
+    (
+        "Thousands of apps behind one webhook (paid service).",
+        [
+            "Des milliers d'applications derrière un seul webhook (service payant).",
+            "Migliaia di app dietro un solo webhook (servizio a pagamento).",
+            "Miles de aplicaciones detrás de un solo webhook (servicio de pago).",
+            "Milhares de aplicações atrás de um só webhook (serviço pago).",
+            "Tausende Apps hinter einem Webhook (kostenpflichtiger Dienst).",
+            "Több ezer alkalmazás egyetlen webhook mögött (fizetős szolgáltatás).",
+        ],
+    ),
+    (
+        "Tiny, fast, natural narration with preset voices; cannot copy a voice.",
+        [
+            "Narration minuscule, rapide et naturelle avec des voix prédéfinies ; ne peut pas copier une voix.",
+            "Narrazione minuscola, veloce e naturale con voci predefinite; non può copiare una voce.",
+            "Narración diminuta, rápida y natural con voces predefinidas; no puede copiar una voz.",
+            "Narração minúscula, rápida e natural com vozes predefinidas; não consegue copiar uma voz.",
+            "Winzige, schnelle, natürliche Sprachausgabe mit voreingestellten Stimmen; kann keine Stimme kopieren.",
+            "Apró, gyors, természetes felolvasás előre beállított hangokkal; hangot nem tud másolni.",
+        ],
+    ),
+    (
+        "Too many requests: wait a little and try again.",
+        [
+            "Trop de requêtes : attendez un peu et réessayez.",
+            "Troppe richieste: aspetta un po' e riprova.",
+            "Demasiadas solicitudes: espera un poco e inténtalo de nuevo.",
+            "Demasiados pedidos: espere um pouco e tente de novo.",
+            "Zu viele Anfragen: Warte kurz und versuche es erneut.",
+            "Túl sok kérés: várj egy kicsit, és próbáld újra.",
+        ],
+    ),
+    (
+        "Top of the open-weight text-to-image arena in October 2026; one model for making and editing pictures, strong at readable text. The only picture model colibri serves.",
+        [
+            "En tête de l'arène ouverte texte-vers-image en octobre 2026 ; un seul modèle pour créer et retoucher des images, fort pour le texte lisible. Le seul modèle d'images que sert colibri.",
+            "In cima all'arena aperta text-to-image a ottobre 2026; un solo modello per creare e modificare immagini, forte nel testo leggibile. L'unico modello di immagini servito da colibri.",
+            "En lo más alto de la arena abierta de texto a imagen en octubre de 2026; un solo modelo para crear y editar imágenes, fuerte en texto legible. El único modelo de imágenes que sirve colibri.",
+            "No topo da arena aberta de texto para imagem em outubro de 2026; um só modelo para criar e editar imagens, forte em texto legível. O único modelo de imagens que o colibri serve.",
+            "Spitze der offenen Text-zu-Bild-Arena im Oktober 2026; ein Modell zum Erzeugen und Bearbeiten von Bildern, stark bei lesbarem Text. Das einzige Bildmodell, das colibri bereitstellt.",
+            "A nyílt szöveg-kép aréna élén 2026 októberében; egyetlen modell képek készítésére és szerkesztésére, erős az olvasható szövegben. Az egyetlen képmodell, amelyet a colibri kiszolgál.",
+        ],
+    ),
+    (
+        "Translate",
+        [
+            "Traduire",
+            "Tradurre",
+            "Traducir",
+            "Traduzir",
+            "Übersetzen",
+            "Fordítás",
+        ],
+    ),
+    (
+        "Translate into Romanian: \"No worries, we will manage.\"",
+        [
+            "Traduis en roumain : « Pas de souci, on s'en sortira. »",
+            "Traduci in rumeno: «Nessun problema, ce la caveremo.»",
+            "Traduce al rumano: «No te preocupes, nos las arreglaremos.»",
+            "Traduz para romeno: «Não faz mal, nós arranjamo-nos.»",
+            "Übersetze ins Rumänische: „Keine Sorge, wir schaffen das.“",
+            "Fordítsd románra: „Semmi baj, megoldjuk.”",
+        ],
+    ),
+    (
+        "Translate the text into [LANGUAGE]. Keep the tone and formatting. Where a phrase has no direct equivalent, add a short note.
+
+[TEXT]",
+        [
+            "Traduis le texte en [LANGUE]. Garde le ton et la mise en forme. Quand une expression n'a pas d'équivalent direct, ajoute une courte note.
+
+[TEXTE]",
+            "Traduci il testo in [LINGUA]. Mantieni tono e formattazione. Dove una frase non ha equivalente diretto, aggiungi una breve nota.
+
+[TESTO]",
+            "Traduce el texto al [IDIOMA]. Mantén el tono y el formato. Donde una expresión no tenga equivalente directo, añade una nota breve.
+
+[TEXTO]",
+            "Traduz o texto para [LÍNGUA]. Mantém o tom e a formatação. Onde uma expressão não tiver equivalente direto, acrescenta uma nota breve.
+
+[TEXTO]",
+            "Übersetze den Text ins [SPRACHE]. Behalte Ton und Formatierung bei. Wo ein Ausdruck keine direkte Entsprechung hat, füge eine kurze Anmerkung hinzu.
+
+[TEXT]",
+            "Fordítsd le a szöveget [NYELV] nyelvre. Tartsd meg a hangnemet és a formázást. Ahol egy kifejezésnek nincs közvetlen megfelelője, fűzz hozzá egy rövid megjegyzést.
+
+[SZÖVEG]",
+        ],
+    ),
+    (
+        "Translation",
+        [
+            "Traduction",
+            "Traduzione",
+            "Traducción",
+            "Tradução",
+            "Übersetzung",
+            "Fordítás",
+        ],
+    ),
+    (
+        "Triage a repository's issues",
+        [
+            "Trier les tickets d'un dépôt",
+            "Fare il triage delle issue di un repository",
+            "Clasificar las incidencias de un repositorio",
+            "Triar as issues de um repositório",
+            "Issues eines Repositories sichten",
+            "Egy tároló hibajegyeinek átvizsgálása",
+        ],
+    ),
+    (
+        "Turn these rough notes into minutes: decisions, tasks with owner and date, open questions.
+
+[NOTES]",
+        [
+            "Transforme ces notes brutes en compte rendu : décisions, tâches avec responsable et date, questions ouvertes.
+
+[NOTES]",
+            "Trasforma questi appunti grezzi in un verbale: decisioni, compiti con responsabile e data, questioni aperte.
+
+[APPUNTI]",
+            "Convierte estas notas en bruto en un acta: decisiones, tareas con responsable y fecha, preguntas abiertas.
+
+[NOTAS]",
+            "Transforma estas notas em bruto numa ata: decisões, tarefas com responsável e data, questões em aberto.
+
+[NOTAS]",
+            "Mache aus diesen rohen Notizen ein Protokoll: Beschlüsse, Aufgaben mit Verantwortlichem und Datum, offene Fragen.
+
+[NOTIZEN]",
+            "Alakítsd ezeket a nyers jegyzeteket jegyzőkönyvvé: döntések, felelőssel és határidővel ellátott feladatok, nyitott kérdések.
+
+[JEGYZETEK]",
+        ],
+    ),
+    (
+        "Typography, posters and branding.",
+        [
+            "Typographie, affiches et identité visuelle.",
+            "Tipografia, poster e identità visiva.",
+            "Tipografía, carteles e identidad de marca.",
+            "Tipografia, cartazes e identidade visual.",
+            "Typografie, Plakate und Markenauftritt.",
+            "Tipográfia, plakátok és arculat.",
+        ],
+    ),
+    (
+        "Uncertainty",
+        [
+            "Incertitude",
+            "Incertezza",
+            "Incertidumbre",
+            "Incerteza",
+            "Unsicherheit",
+            "Bizonytalanság",
+        ],
+    ),
+    (
+        "Unexpected answer: {}",
+        [
+            "Réponse inattendue : {}",
+            "Risposta inattesa: {}",
+            "Respuesta inesperada: {}",
+            "Resposta inesperada: {}",
+            "Unerwartete Antwort: {}",
+            "Váratlan válasz: {}",
+        ],
+    ),
+    (
+        "Very small and fast, for devices with little power.",
+        [
+            "Très petit et rapide, pour les appareils peu puissants.",
+            "Molto piccolo e veloce, per dispositivi con poca potenza.",
+            "Muy pequeño y rápido, para dispositivos con poca potencia.",
+            "Muito pequeno e rápido, para dispositivos com pouca potência.",
+            "Sehr klein und schnell, für Geräte mit wenig Leistung.",
+            "Nagyon kicsi és gyors, kis teljesítményű eszközökhöz.",
+        ],
+    ),
+    (
+        "Visual automations behind a webhook (paid service).",
+        [
+            "Automatisations visuelles derrière un webhook (service payant).",
+            "Automazioni visuali dietro un webhook (servizio a pagamento).",
+            "Automatizaciones visuales detrás de un webhook (servicio de pago).",
+            "Automações visuais atrás de um webhook (serviço pago).",
+            "Visuelle Automatisierungen hinter einem Webhook (kostenpflichtiger Dienst).",
+            "Vizuális automatizálások egy webhook mögött (fizetős szolgáltatás).",
+        ],
+    ),
+    (
+        "Web search with an API key.",
+        [
+            "Recherche web avec une clé d'API.",
+            "Ricerca web con una chiave API.",
+            "Búsqueda web con una clave de API.",
+            "Pesquisa na web com uma chave de API.",
+            "Websuche mit einem API-Schlüssel.",
+            "Webes keresés API-kulccsal.",
+        ],
+    ),
+    (
+        "What are the signs that a text message on your phone is a scam?",
+        [
+            "Quels sont les signes qu'un SMS reçu sur votre téléphone est une arnaque ?",
+            "Quali sono i segnali che un messaggio ricevuto sul telefono è una truffa?",
+            "¿Cuáles son las señales de que un mensaje de texto en tu teléfono es una estafa?",
+            "Quais são os sinais de que uma mensagem recebida no telemóvel é uma burla?",
+            "Woran erkennt man, dass eine SMS auf dem Handy ein Betrug ist?",
+            "Miről ismerhető fel, hogy a telefonra érkezett szöveges üzenet csalás?",
+        ],
+    ),
+    (
+        "What is the capital of Australia, and why is it not Sydney?",
+        [
+            "Quelle est la capitale de l'Australie, et pourquoi n'est-ce pas Sydney ?",
+            "Qual è la capitale dell'Australia e perché non è Sydney?",
+            "¿Cuál es la capital de Australia y por qué no es Sídney?",
+            "Qual é a capital da Austrália e por que não é Sydney?",
+            "Was ist die Hauptstadt Australiens, und warum ist es nicht Sydney?",
+            "Mi Ausztrália fővárosa, és miért nem Sydney?",
+        ],
+    ),
+    (
+        "What is wrong with this regular expression for a 6-digit Romanian postal code: ^\\d{5}$ ?",
+        [
+            "Qu'est-ce qui ne va pas dans cette expression régulière pour un code postal roumain à 6 chiffres : ^\\d{5}$ ?",
+            "Cosa c'è che non va in questa espressione regolare per un codice postale rumeno a 6 cifre: ^\\d{5}$ ?",
+            "¿Qué falla en esta expresión regular para un código postal rumano de 6 dígitos: ^\\d{5}$ ?",
+            "O que está errado nesta expressão regular para um código postal romeno de 6 dígitos: ^\\d{5}$ ?",
+            "Was ist an diesem regulären Ausdruck für eine sechsstellige rumänische Postleitzahl falsch: ^\\d{5}$ ?",
+            "Mi a hiba ebben a reguláris kifejezésben egy 6 számjegyű román irányítószámra: ^\\d{5}$ ?",
+        ],
+    ),
+    (
+        "Who won the football World Cup in the year 2150?",
+        [
+            "Qui a gagné la Coupe du monde de football en l'an 2150 ?",
+            "Chi ha vinto i Mondiali di calcio nell'anno 2150?",
+            "¿Quién ganó el Mundial de fútbol en el año 2150?",
+            "Quem ganhou o Mundial de futebol no ano 2150?",
+            "Wer hat im Jahr 2150 die Fußball-Weltmeisterschaft gewonnen?",
+            "Ki nyerte a labdarúgó-világbajnokságot 2150-ben?",
+        ],
+    ),
+    (
+        "Wire devices and services; an HTTP-in node receives the model's calls.",
+        [
+            "Reliez des appareils et des services ; un nœud HTTP-in reçoit les appels du modèle.",
+            "Collega dispositivi e servizi; un nodo HTTP-in riceve le chiamate del modello.",
+            "Conecta dispositivos y servicios; un nodo HTTP-in recibe las llamadas del modelo.",
+            "Ligue dispositivos e serviços; um nó HTTP-in recebe as chamadas do modelo.",
+            "Verbinde Geräte und Dienste; ein HTTP-in-Knoten empfängt die Aufrufe des Modells.",
+            "Eszközök és szolgáltatások összekötése; egy HTTP-in csomópont fogadja a modell hívásait.",
+        ],
+    ),
+    (
+        "Work",
+        [
+            "Travail",
+            "Lavoro",
+            "Trabajo",
+            "Trabalho",
+            "Arbeit",
+            "Munka",
+        ],
+    ),
+    (
+        "Write a 5-line brief of what is new on the page.",
+        [
+            "Rédige un résumé de 5 lignes de ce qui est nouveau sur la page.",
+            "Scrivi un riassunto di 5 righe delle novità della pagina.",
+            "Escribe un resumen de 5 líneas con las novedades de la página.",
+            "Escreve um resumo de 5 linhas do que há de novo na página.",
+            "Schreibe eine Kurzfassung in 5 Zeilen, was auf der Seite neu ist.",
+            "Írj 5 soros összefoglalót arról, mi új az oldalon.",
+        ],
+    ),
+    (
+        "Write a Python function that checks whether a string is a palindrome, ignoring spaces and case.",
+        [
+            "Écris une fonction Python qui vérifie si une chaîne est un palindrome, en ignorant les espaces et la casse.",
+            "Scrivi una funzione Python che verifica se una stringa è palindroma, ignorando spazi e maiuscole.",
+            "Escribe una función en Python que compruebe si una cadena es un palíndromo, ignorando espacios y mayúsculas.",
+            "Escreve uma função em Python que verifique se uma cadeia é um palíndromo, ignorando espaços e maiúsculas.",
+            "Schreibe eine Python-Funktion, die prüft, ob eine Zeichenkette ein Palindrom ist, ohne Leerzeichen und Groß-/Kleinschreibung zu beachten.",
+            "Írj egy Python-függvényt, amely ellenőrzi, hogy egy szöveg palindrom-e, a szóközöket és a kis-nagybetűket figyelmen kívül hagyva.",
+        ],
+    ),
+    (
+        "Write a formal letter in Romanian to [INSTITUTION] requesting [REQUEST]. Include the usual opening and closing formulas and a place for the registration number.",
+        [
+            "Rédige une lettre formelle en roumain à [INSTITUTION] pour demander [DEMANDE]. Inclus les formules d'ouverture et de clôture habituelles et un emplacement pour le numéro d'enregistrement.",
+            "Scrivi una lettera formale in rumeno a [ISTITUZIONE] per richiedere [RICHIESTA]. Includi le consuete formule di apertura e chiusura e uno spazio per il numero di registrazione.",
+            "Escribe una carta formal en rumano a [INSTITUCIÓN] solicitando [SOLICITUD]. Incluye las fórmulas habituales de apertura y cierre y un espacio para el número de registro.",
+            "Escreve uma carta formal em romeno a [INSTITUIÇÃO] a solicitar [PEDIDO]. Inclui as fórmulas habituais de abertura e fecho e um espaço para o número de registo.",
+            "Schreibe einen formellen Brief auf Rumänisch an [INSTITUTION], in dem du [ANLIEGEN] beantragst. Nutze die üblichen Anrede- und Schlussformeln und lasse Platz für die Registriernummer.",
+            "Írj hivatalos levelet románul a(z) [INTÉZMÉNY] részére, amelyben [KÉRELEM] iránt érdeklődsz. Használd a szokásos megszólítást és záró formulát, és hagyj helyet az iktatószámnak.",
+        ],
+    ),
+    (
+        "Write a regular expression that matches [WHAT], with three examples that match and three that do not. Explain each part.",
+        [
+            "Écris une expression régulière qui reconnaît [QUOI], avec trois exemples qui correspondent et trois qui ne correspondent pas. Explique chaque partie.",
+            "Scrivi un'espressione regolare che corrisponde a [COSA], con tre esempi che corrispondono e tre che no. Spiega ogni parte.",
+            "Escribe una expresión regular que coincida con [QUÉ], con tres ejemplos que coinciden y tres que no. Explica cada parte.",
+            "Escreve uma expressão regular que corresponda a [O QUÊ], com três exemplos que correspondem e três que não. Explica cada parte.",
+            "Schreibe einen regulären Ausdruck, der [WAS] erkennt, mit drei passenden und drei nicht passenden Beispielen. Erkläre jeden Teil.",
+            "Írj egy reguláris kifejezést, amely illeszkedik erre: [MIRE], három illeszkedő és három nem illeszkedő példával. Magyarázd el az egyes részeket.",
+        ],
+    ),
+    (
+        "Write a short, polite e-mail to [RECIPIENT] about [SUBJECT]. Tone: [TONE]. End with a clear next step.",
+        [
+            "Écris un e-mail court et poli à [DESTINATAIRE] au sujet de [SUJET]. Ton : [TON]. Termine par une prochaine étape claire.",
+            "Scrivi una breve e-mail cortese a [DESTINATARIO] su [OGGETTO]. Tono: [TONO]. Concludi con un prossimo passo chiaro.",
+            "Escribe un correo breve y educado a [DESTINATARIO] sobre [ASUNTO]. Tono: [TONO]. Termina con un siguiente paso claro.",
+            "Escreve um e-mail curto e cortês para [DESTINATÁRIO] sobre [ASSUNTO]. Tom: [TOM]. Termina com um próximo passo claro.",
+            "Schreibe eine kurze, höfliche E-Mail an [EMPFÄNGER] zum Thema [BETREFF]. Ton: [TON]. Schließe mit einem klaren nächsten Schritt.",
+            "Írj egy rövid, udvarias e-mailt [CÍMZETT] részére a következőről: [TÁRGY]. Hangnem: [HANGNEM]. Zárd egyértelmű következő lépéssel.",
+        ],
+    ),
+    (
+        "Write a story of about [LENGTH] words. Genre: [GENRE]. Main character: [CHARACTER]. It must end with a surprise that fits the beginning.",
+        [
+            "Écris une histoire d'environ [LONGUEUR] mots. Genre : [GENRE]. Personnage principal : [PERSONNAGE]. Elle doit finir par une surprise qui s'accorde au début.",
+            "Scrivi una storia di circa [LUNGHEZZA] parole. Genere: [GENERE]. Protagonista: [PERSONAGGIO]. Deve finire con una sorpresa coerente con l'inizio.",
+            "Escribe un cuento de unas [LONGITUD] palabras. Género: [GÉNERO]. Personaje principal: [PERSONAJE]. Debe terminar con una sorpresa que encaje con el comienzo.",
+            "Escreve uma história com cerca de [COMPRIMENTO] palavras. Género: [GÉNERO]. Personagem principal: [PERSONAGEM]. Tem de acabar com uma surpresa que combine com o início.",
+            "Schreibe eine Geschichte von etwa [LÄNGE] Wörtern. Genre: [GENRE]. Hauptfigur: [FIGUR]. Sie muss mit einer Überraschung enden, die zum Anfang passt.",
+            "Írj egy körülbelül [HOSSZ] szavas történetet. Műfaj: [MŰFAJ]. Főszereplő: [SZEREPLŐ]. Olyan meglepetéssel végződjön, amely illik a kezdethez.",
+        ],
+    ),
+    (
+        "Write a three-line e-mail postponing a meeting by one day.",
+        [
+            "Écris un e-mail de trois lignes reportant une réunion d'un jour.",
+            "Scrivi un'e-mail di tre righe che rimanda una riunione di un giorno.",
+            "Escribe un correo de tres líneas que aplace una reunión un día.",
+            "Escreve um e-mail de três linhas a adiar uma reunião por um dia.",
+            "Schreibe eine dreizeilige E-Mail, die eine Besprechung um einen Tag verschiebt.",
+            "Írj háromsoros e-mailt, amely egy nappal elhalaszt egy megbeszélést.",
+        ],
+    ),
+    (
+        "Write four lines about autumn without using the word \"leaves\".",
+        [
+            "Écris quatre vers sur l'automne sans utiliser le mot « feuilles ».",
+            "Scrivi quattro versi sull'autunno senza usare la parola «foglie».",
+            "Escribe cuatro versos sobre el otoño sin usar la palabra «hojas».",
+            "Escreve quatro versos sobre o outono sem usar a palavra «folhas».",
+            "Schreibe vier Zeilen über den Herbst, ohne das Wort „Blätter“ zu benutzen.",
+            "Írj négy sort az őszről anélkül, hogy a „levelek” szót használnád.",
+        ],
+    ),
+    (
+        "Write tests",
+        [
+            "Écrire des tests",
+            "Scrivere test",
+            "Escribir pruebas",
+            "Escrever testes",
+            "Tests schreiben",
+            "Tesztek írása",
+        ],
+    ),
+    (
+        "Write tests for the code below using [FRAMEWORK]. Cover normal use, edge cases and errors. Explain what each test protects.
+
+[CODE]",
+        [
+            "Écris des tests pour le code ci-dessous avec [FRAMEWORK]. Couvre l'usage normal, les cas limites et les erreurs. Explique ce que protège chaque test.
+
+[CODE]",
+            "Scrivi test per il codice qui sotto usando [FRAMEWORK]. Copri uso normale, casi limite ed errori. Spiega cosa protegge ogni test.
+
+[CODICE]",
+            "Escribe pruebas para el código de abajo usando [FRAMEWORK]. Cubre el uso normal, los casos límite y los errores. Explica qué protege cada prueba.
+
+[CÓDIGO]",
+            "Escreve testes para o código abaixo usando [FRAMEWORK]. Cobre o uso normal, os casos-limite e os erros. Explica o que cada teste protege.
+
+[CÓDIGO]",
+            "Schreibe Tests für den folgenden Code mit [FRAMEWORK]. Decke normale Nutzung, Grenzfälle und Fehler ab. Erkläre, was jeder Test absichert.
+
+[CODE]",
+            "Írj teszteket az alábbi kódhoz a(z) [KERETRENDSZER] használatával. Fedd le a normál használatot, a határeseteket és a hibákat. Magyarázd el, mit véd az egyes teszt.
+
+[KÓD]",
+        ],
+    ),
+    (
+        "Write: it drafts or changes things; you approve each change",
+        [
+            "Écrire : il rédige ou modifie des choses ; vous approuvez chaque changement",
+            "Scrivere: redige o modifica; approvi ogni modifica",
+            "Escribir: redacta o cambia cosas; tú apruebas cada cambio",
+            "Escrever: redige ou altera coisas; você aprova cada alteração",
+            "Schreiben: entwirft oder ändert Dinge; du genehmigst jede Änderung",
+            "Írás: fogalmaz vagy módosít; minden változtatást te hagysz jóvá",
+        ],
+    ),
+    (
+        "Writing",
+        [
+            "Écriture",
+            "Scrittura",
+            "Escritura",
+            "Escrita",
+            "Schreiben",
+            "Írás",
+        ],
+    ),
+    (
+        "Your own cloud files: read and save documents.",
+        [
+            "Vos propres fichiers dans le cloud : lire et enregistrer des documents.",
+            "I tuoi file nel cloud: leggere e salvare documenti.",
+            "Tus propios archivos en la nube: leer y guardar documentos.",
+            "Os seus próprios ficheiros na nuvem: ler e guardar documentos.",
+            "Deine eigenen Cloud-Dateien: Dokumente lesen und speichern.",
+            "Saját felhőfájljaid: dokumentumok olvasása és mentése.",
+        ],
+    ),
+    (
+        "Your reference library and notes.",
+        [
+            "Votre bibliothèque de références et vos notes.",
+            "La tua biblioteca di riferimenti e i tuoi appunti.",
+            "Tu biblioteca de referencias y tus notas.",
+            "A sua biblioteca de referências e as suas notas.",
+            "Deine Literatursammlung und deine Notizen.",
+            "A hivatkozásgyűjteményed és a jegyzeteid.",
+        ],
+    ),
+    (
+        "[dev] is the 32B flagship; the small [klein] models make a picture in under half a second on a consumer GPU. Pictures from the non-commercial model may still be usable commercially, per one source: check.",
+        [
+            "[dev] est le modèle phare de 32B ; les petits modèles [klein] créent une image en moins d'une demi-seconde sur un GPU grand public. Les images du modèle non commercial peuvent rester utilisables commercialement, selon une source : vérifiez.",
+            "[dev] è il modello di punta da 32B; i piccoli modelli [klein] creano un'immagine in meno di mezzo secondo su una GPU consumer. Le immagini del modello non commerciale potrebbero comunque essere utilizzabili commercialmente, secondo una fonte: verifica.",
+            "[dev] es el modelo estrella de 32B; los modelos pequeños [klein] crean una imagen en menos de medio segundo en una GPU de consumo. Las imágenes del modelo no comercial aún podrían usarse comercialmente, según una fuente: compruébalo.",
+            "[dev] é o modelo de topo de 32B; os modelos pequenos [klein] criam uma imagem em menos de meio segundo numa GPU de consumo. As imagens do modelo não comercial podem ainda ser utilizáveis comercialmente, segundo uma fonte: confirme.",
+            "[dev] ist das 32B-Flaggschiff; die kleinen [klein]-Modelle erzeugen auf einer Consumer-GPU ein Bild in unter einer halben Sekunde. Bilder des nichtkommerziellen Modells sind laut einer Quelle womöglich trotzdem kommerziell nutzbar: bitte prüfen.",
+            "A [dev] a 32B-s zászlóshajó; a kis [klein] modellek fogyasztói GPU-n fél másodpercnél rövidebb idő alatt készítenek képet. A nem kereskedelmi modell képei egy forrás szerint kereskedelmileg is használhatók lehetnek: ellenőrizd.",
+        ],
+    ),
+    (
+        "a header (the token?) contains a line break or control character",
+        [
+            "un en-tête (le jeton ?) contient un saut de ligne ou un caractère de contrôle",
+            "un'intestazione (il token?) contiene un'interruzione di riga o un carattere di controllo",
+            "un encabezado (¿el token?) contiene un salto de línea o un carácter de control",
+            "um cabeçalho (o token?) contém uma quebra de linha ou um carácter de controlo",
+            "ein Header (das Token?) enthält einen Zeilenumbruch oder ein Steuerzeichen",
+            "egy fejléc (a token?) sortörést vagy vezérlőkaraktert tartalmaz",
+        ],
+    ),
+    (
+        "an address with a user name or password in it is refused",
+        [
+            "une adresse contenant un nom d'utilisateur ou un mot de passe est refusée",
+            "un indirizzo con nome utente o password al suo interno viene rifiutato",
+            "se rechaza una dirección que contenga nombre de usuario o contraseña",
+            "um endereço com nome de utilizador ou palavra-passe é recusado",
+            "eine Adresse mit Benutzername oder Passwort wird abgelehnt",
+            "a felhasználónevet vagy jelszót tartalmazó címet elutasítjuk",
+        ],
+    ),
+    (
+        "not a list",
+        [
+            "ce n'est pas une liste",
+            "non è un elenco",
+            "no es una lista",
+            "não é uma lista",
+            "keine Liste",
+            "nem lista",
+        ],
+    ),
+    (
+        "plain http is only allowed for servers on this computer or network",
+        [
+            "le http simple n'est autorisé que pour les serveurs de cet ordinateur ou de ce réseau",
+            "l'http semplice è consentito solo per server su questo computer o rete",
+            "el http simple solo se permite para servidores de este ordenador o red",
+            "o http simples só é permitido para servidores deste computador ou rede",
+            "einfaches http ist nur für Server auf diesem Computer oder Netzwerk erlaubt",
+            "az egyszerű http csak ezen a gépen vagy hálózaton lévő szerverekhez engedélyezett",
+        ],
+    ),
+    (
+        "the address has no host",
+        [
+            "l'adresse n'a pas d'hôte",
+            "l'indirizzo non ha un host",
+            "la dirección no tiene host",
+            "o endereço não tem anfitrião",
+            "die Adresse hat keinen Host",
+            "a címben nincs hoszt",
+        ],
+    ),
+    (
+        "the address must start with https://",
+        [
+            "l'adresse doit commencer par https://",
+            "l'indirizzo deve iniziare con https://",
+            "la dirección debe empezar por https://",
+            "o endereço tem de começar por https://",
+            "die Adresse muss mit https:// beginnen",
+            "a címnek https://-sel kell kezdődnie",
+        ],
+    ),
+    (
+        "this is a file, not a folder",
+        [
+            "c'est un fichier, pas un dossier",
+            "è un file, non una cartella",
+            "es un archivo, no una carpeta",
+            "é um ficheiro, não uma pasta",
+            "das ist eine Datei, kein Ordner",
+            "ez egy fájl, nem mappa",
+        ],
+    ),
+    (
+        "this is not a text page",
+        [
+            "ce n'est pas une page de texte",
+            "non è una pagina di testo",
+            "no es una página de texto",
+            "não é uma página de texto",
+            "das ist keine Textseite",
+            "ez nem szöveges oldal",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
@@ -7029,6 +9465,28 @@ pub fn lookup(lang: Lang, english: &str) -> Option<&'static str> {
     let map = MAP.get_or_init(|| TABLE.iter().map(|(k, v)| (*k, v)).collect());
     let i = index(lang)?;
     map.get(english).map(|row| row[i])
+}
+
+/// The ready-made questions for comparing models, in the given language: Romanian and
+/// Hungarian have their own sets; the other languages translate the English set line by line.
+#[allow(dead_code)] // used by the model duel screen, which is not wired yet
+pub fn demo_set(lang: Lang) -> String {
+    use companion_core::duel;
+    match lang {
+        Lang::Ro => return duel::demo_set("ro").to_string(),
+        Lang::Hu => return duel::demo_set("hu").to_string(),
+        Lang::En => return duel::demo_set("en").to_string(),
+        _ => {}
+    }
+    let tr = |en: &str| lookup(lang, en).unwrap_or(en).to_string();
+    duel::demo_set("en")
+        .lines()
+        .map(|line| match line.split_once(" | ") {
+            Some((c, q)) => format!("{} | {}", tr(c.trim()), tr(q.trim())),
+            None => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Texts that colibri itself produces in English (model summaries, reasons, warnings).
@@ -7238,6 +9696,354 @@ static ENGINE: &[(&str, [&str; 7])] = &[
             "2.8T, eredeti checkpoint natív MXFP4 szakértőkkel",
         ],
     ),
+    (
+        "not started: {}",
+        [
+            "nu a pornit: {}",
+            "non démarrée : {}",
+            "non avviata: {}",
+            "no se inició: {}",
+            "não iniciada: {}",
+            "nicht gestartet: {}",
+            "nem indult el: {}",
+        ],
+    ),
+    (
+        "stopped by the person",
+        [
+            "oprită de persoană",
+            "arrêtée par la personne",
+            "fermata dalla persona",
+            "detenida por la persona",
+            "parada pela pessoa",
+            "von der Person gestoppt",
+            "a felhasználó leállította",
+        ],
+    ),
+    (
+        "step {}/{}: fetch {}",
+        [
+            "pasul {}/{}: preia {}",
+            "étape {}/{} : récupérer {}",
+            "passo {}/{}: scarica {}",
+            "paso {}/{}: obtener {}",
+            "passo {}/{}: obter {}",
+            "Schritt {}/{}: {} abrufen",
+            "{}/{}. lépés: letöltés: {}",
+        ],
+    ),
+    (
+        "step {}/{}: read folder {}",
+        [
+            "pasul {}/{}: citește dosarul {}",
+            "étape {}/{} : lire le dossier {}",
+            "passo {}/{}: leggi la cartella {}",
+            "paso {}/{}: leer la carpeta {}",
+            "passo {}/{}: ler a pasta {}",
+            "Schritt {}/{}: Ordner {} lesen",
+            "{}/{}. lépés: mappa olvasása: {}",
+        ],
+    ),
+    (
+        "step {}/{}: read file {}",
+        [
+            "pasul {}/{}: citește fișierul {}",
+            "étape {}/{} : lire le fichier {}",
+            "passo {}/{}: leggi il file {}",
+            "paso {}/{}: leer el archivo {}",
+            "passo {}/{}: ler o ficheiro {}",
+            "Schritt {}/{}: Datei {} lesen",
+            "{}/{}. lépés: fájl olvasása: {}",
+        ],
+    ),
+    (
+        "step {}/{}: repository file {}",
+        [
+            "pasul {}/{}: fișier din depozit {}",
+            "étape {}/{} : fichier du dépôt {}",
+            "passo {}/{}: file del repository {}",
+            "paso {}/{}: archivo del repositorio {}",
+            "passo {}/{}: ficheiro do repositório {}",
+            "Schritt {}/{}: Repository-Datei {}",
+            "{}/{}. lépés: tárolófájl: {}",
+        ],
+    ),
+    (
+        "step {}/{}: ask the model: {}",
+        [
+            "pasul {}/{}: întreabă modelul: {}",
+            "étape {}/{} : demander au modèle : {}",
+            "passo {}/{}: chiedi al modello: {}",
+            "paso {}/{}: preguntar al modelo: {}",
+            "passo {}/{}: perguntar ao modelo: {}",
+            "Schritt {}/{}: Modell fragen: {}",
+            "{}/{}. lépés: kérdés a modellhez: {}",
+        ],
+    ),
+    (
+        "step {}/{}: save as {}",
+        [
+            "pasul {}/{}: salvează ca {}",
+            "étape {}/{} : enregistrer sous {}",
+            "passo {}/{}: salva come {}",
+            "paso {}/{}: guardar como {}",
+            "passo {}/{}: guardar como {}",
+            "Schritt {}/{}: speichern als {}",
+            "{}/{}. lépés: mentés ezen a néven: {}",
+        ],
+    ),
+    (
+        "step {}/{}: send to {}",
+        [
+            "pasul {}/{}: trimite la {}",
+            "étape {}/{} : envoyer à {}",
+            "passo {}/{}: invia a {}",
+            "paso {}/{}: enviar a {}",
+            "passo {}/{}: enviar para {}",
+            "Schritt {}/{}: senden an {}",
+            "{}/{}. lépés: küldés ide: {}",
+        ],
+    ),
+    (
+        "step {}/{}: show the result",
+        [
+            "pasul {}/{}: arată rezultatul",
+            "étape {}/{} : afficher le résultat",
+            "passo {}/{}: mostra il risultato",
+            "paso {}/{}: mostrar el resultado",
+            "passo {}/{}: mostrar o resultado",
+            "Schritt {}/{}: Ergebnis anzeigen",
+            "{}/{}. lépés: az eredmény megjelenítése",
+        ],
+    ),
+    (
+        "step {} failed: {}",
+        [
+            "pasul {} a eșuat: {}",
+            "l'étape {} a échoué : {}",
+            "il passo {} è fallito: {}",
+            "el paso {} falló: {}",
+            "o passo {} falhou: {}",
+            "Schritt {} ist fehlgeschlagen: {}",
+            "a(z) {}. lépés nem sikerült: {}",
+        ],
+    ),
+    (
+        "the limit of {} model calls is reached",
+        [
+            "limita de {} apeluri către model a fost atinsă",
+            "la limite de {} appels au modèle est atteinte",
+            "il limite di {} chiamate al modello è stato raggiunto",
+            "se alcanzó el límite de {} llamadas al modelo",
+            "o limite de {} chamadas ao modelo foi atingido",
+            "das Limit von {} Modellaufrufen ist erreicht",
+            "elérte a(z) {} modellhívásos korlátot",
+        ],
+    ),
+    (
+        "the model answered nothing",
+        [
+            "modelul nu a răspuns nimic",
+            "le modèle n'a rien répondu",
+            "il modello non ha risposto nulla",
+            "el modelo no respondió nada",
+            "o modelo não respondeu nada",
+            "das Modell hat nichts geantwortet",
+            "a modell nem válaszolt semmit",
+        ],
+    ),
+    (
+        "model call failed: {}",
+        [
+            "apelul către model a eșuat: {}",
+            "l'appel au modèle a échoué : {}",
+            "la chiamata al modello è fallita: {}",
+            "la llamada al modelo falló: {}",
+            "a chamada ao modelo falhou: {}",
+            "Modellaufruf fehlgeschlagen: {}",
+            "a modellhívás nem sikerült: {}",
+        ],
+    ),
+    (
+        "the model did not answer after {} retries",
+        [
+            "modelul nu a răspuns după {} reîncercări",
+            "le modèle n'a pas répondu après {} nouvelles tentatives",
+            "il modello non ha risposto dopo {} tentativi",
+            "el modelo no respondió tras {} reintentos",
+            "o modelo não respondeu após {} novas tentativas",
+            "das Modell hat nach {} Wiederholungen nicht geantwortet",
+            "a modell {} újrapróbálkozás után sem válaszolt",
+        ],
+    ),
+    (
+        "retry {}/{}",
+        [
+            "reîncercare {}/{}",
+            "nouvelle tentative {}/{}",
+            "nuovo tentativo {}/{}",
+            "reintento {}/{}",
+            "nova tentativa {}/{}",
+            "Wiederholung {}/{}",
+            "újrapróbálkozás {}/{}",
+        ],
+    ),
+    (
+        "not a usable file name: {}",
+        [
+            "nu e un nume de fișier utilizabil: {}",
+            "nom de fichier inutilisable : {}",
+            "nome di file non utilizzabile: {}",
+            "nombre de archivo no utilizable: {}",
+            "nome de ficheiro não utilizável: {}",
+            "kein verwendbarer Dateiname: {}",
+            "nem használható fájlnév: {}",
+        ],
+    ),
+    (
+        "saved: {}",
+        [
+            "salvat: {}",
+            "enregistré : {}",
+            "salvato: {}",
+            "guardado: {}",
+            "guardado: {}",
+            "gespeichert: {}",
+            "mentve: {}",
+        ],
+    ),
+    (
+        "sending is never done without a person present; run this by hand",
+        [
+            "nu se trimite nimic fără o persoană de față; rulează asta manual",
+            "l'envoi ne se fait jamais sans personne présente ; lancez ceci à la main",
+            "l'invio non avviene mai senza una persona presente; avvialo a mano",
+            "nunca se envía nada sin una persona presente; ejecútalo a mano",
+            "nunca se envia nada sem uma pessoa presente; execute isto manualmente",
+            "Gesendet wird nie ohne anwesende Person; starte das von Hand",
+            "küldés soha nem történik jelenlévő személy nélkül; futtasd ezt kézzel",
+        ],
+    ),
+    (
+        "the address is not allowed: {}",
+        [
+            "adresa nu este permisă: {}",
+            "l'adresse n'est pas autorisée : {}",
+            "l'indirizzo non è consentito: {}",
+            "la dirección no está permitida: {}",
+            "o endereço não é permitido: {}",
+            "die Adresse ist nicht erlaubt: {}",
+            "a cím nem engedélyezett: {}",
+        ],
+    ),
+    (
+        "not sent: the person said no",
+        [
+            "netrimis: persoana a spus nu",
+            "non envoyé : la personne a refusé",
+            "non inviato: la persona ha detto no",
+            "no enviado: la persona dijo que no",
+            "não enviado: a pessoa disse não",
+            "nicht gesendet: Die Person hat abgelehnt",
+            "nem lett elküldve: a felhasználó nemet mondott",
+        ],
+    ),
+    (
+        "done",
+        [
+            "gata",
+            "terminé",
+            "fatto",
+            "hecho",
+            "concluído",
+            "fertig",
+            "kész",
+        ],
+    ),
+    (
+        "the automation has no name",
+        [
+            "automatizarea nu are nume",
+            "l'automatisation n'a pas de nom",
+            "l'automazione non ha un nome",
+            "la automatización no tiene nombre",
+            "a automação não tem nome",
+            "die Automatisierung hat keinen Namen",
+            "az automatizálásnak nincs neve",
+        ],
+    ),
+    (
+        "the automation has no steps",
+        [
+            "automatizarea nu are pași",
+            "l'automatisation n'a aucune étape",
+            "l'automazione non ha passaggi",
+            "la automatización no tiene pasos",
+            "a automação não tem passos",
+            "die Automatisierung hat keine Schritte",
+            "az automatizálásnak nincsenek lépései",
+        ],
+    ),
+    (
+        "at most {} steps",
+        [
+            "cel mult {} pași",
+            "au plus {} étapes",
+            "al massimo {} passaggi",
+            "como máximo {} pasos",
+            "no máximo {} passos",
+            "höchstens {} Schritte",
+            "legfeljebb {} lépés",
+        ],
+    ),
+    (
+        "at most {} model calls",
+        [
+            "cel mult {} apeluri către model",
+            "au plus {} appels au modèle",
+            "al massimo {} chiamate al modello",
+            "como máximo {} llamadas al modelo",
+            "no máximo {} chamadas ao modelo",
+            "höchstens {} Modellaufrufe",
+            "legfeljebb {} modellhívás",
+        ],
+    ),
+    (
+        "step {}: no path",
+        [
+            "pasul {}: nicio cale",
+            "étape {} : aucun chemin",
+            "passo {}: nessun percorso",
+            "paso {}: ninguna ruta",
+            "passo {}: nenhum caminho",
+            "Schritt {}: kein Pfad",
+            "{}. lépés: nincs útvonal",
+        ],
+    ),
+    (
+        "step {}: empty question",
+        [
+            "pasul {}: întrebare goală",
+            "étape {} : question vide",
+            "passo {}: domanda vuota",
+            "paso {}: pregunta vacía",
+            "passo {}: pergunta vazia",
+            "Schritt {}: leere Frage",
+            "{}. lépés: üres kérdés",
+        ],
+    ),
+    (
+        "step {}: not a usable file name",
+        [
+            "pasul {}: nu e un nume de fișier utilizabil",
+            "étape {} : nom de fichier inutilisable",
+            "passo {}: nome di file non utilizzabile",
+            "paso {}: nombre de archivo no utilizable",
+            "passo {}: nome de ficheiro não utilizável",
+            "Schritt {}: kein verwendbarer Dateiname",
+            "{}. lépés: nem használható fájlnév",
+        ],
+    ),
 ];
 
 /// Splits `text` along the `{}` slots of `template`; `None` when it does not match.
@@ -7394,6 +10200,92 @@ mod tests {
             "untranslated texts:\n{}",
             missing.join("\n")
         );
+    }
+
+    /// Every English text that the core hands over (platforms, prompts, catalogue, automations,
+    /// connection errors, demo prompts), so none is left in two languages only.
+    fn core_texts() -> Vec<String> {
+        use companion_core::{connect, duel, flows, platforms, prompts, studio};
+        let mut v: Vec<String> = Vec::new();
+        for p in platforms::ALL {
+            v.push(p.en.to_string());
+        }
+        for l in platforms::Level::ALL {
+            v.push(platforms::level_text(l, false).to_string());
+        }
+        for m in studio::ALL {
+            v.push(m.en.to_string());
+        }
+        for r in studio::RUNNERS {
+            v.push(r.en.to_string());
+        }
+        for p in prompts::builtin(false) {
+            v.push(p.category);
+            v.push(p.title);
+            v.push(p.text);
+        }
+        for f in flows::templates(false) {
+            v.push(f.name.clone());
+            for st in &f.steps {
+                if let flows::Step::Ask { prompt } = st {
+                    v.push(prompt.clone());
+                }
+            }
+        }
+        v.extend(connect::EXPLAIN_KEYS.iter().map(|s| s.to_string()));
+        v.extend(connect::DETAIL_KEYS.iter().map(|s| s.to_string()));
+        for line in duel::demo_set("en").lines() {
+            if let Some((c, q)) = line.split_once(" | ") {
+                v.push(c.trim().to_string());
+                v.push(q.trim().to_string());
+            }
+        }
+        v.sort();
+        v.dedup();
+        v.retain(|s| !s.trim().is_empty());
+        v
+    }
+
+    #[test]
+    fn core_texts_are_translated() {
+        let all = core_texts();
+        assert!(
+            all.len() > 200,
+            "{} texts; the collector is broken",
+            all.len()
+        );
+        let mut missing: Vec<&String> = Vec::new();
+        for t in &all {
+            if lookup(Lang::Fr, t).is_none() {
+                missing.push(t);
+            }
+        }
+        if let Ok(path) = std::env::var("DUMP_MISSING") {
+            std::fs::write(path, serde_json::to_string_pretty(&missing).unwrap()).unwrap();
+        }
+        assert!(
+            missing.is_empty(),
+            "{} untranslated core texts, first: {:?}",
+            missing.len(),
+            missing.iter().take(3).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn demo_sets_and_journal_lines_follow_the_language() {
+        let fr = demo_set(Lang::Fr);
+        assert!(fr.contains("Raisonnement | "), "{fr}");
+        assert_eq!(
+            fr.lines().count(),
+            companion_core::duel::demo_set("en").lines().count()
+        );
+        assert!(demo_set(Lang::Ro).contains("Cunoștințe"));
+        assert_eq!(
+            engine_text(Lang::De, "step 2/5: ask the model: Hello"),
+            "Schritt 2/5: Modell fragen: Hello"
+        );
+        assert_eq!(engine_text(Lang::Hu, "done"), "kész");
+        assert_eq!(engine_text(Lang::Es, "retry 2/3"), "reintento 2/3");
     }
 
     #[test]

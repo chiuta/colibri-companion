@@ -147,7 +147,6 @@ impl CompanionApp {
             return;
         }
         let p = self.p;
-        let ro = self.is_ro();
         let mut open = true;
         let l_commercial = self.t(
             "Doar ce se poate folosi comercial",
@@ -193,7 +192,7 @@ impl CompanionApp {
                             ui.label(RichText::new(t).small().color(c));
                         });
                         muted(ui, &p, &format!("{} · {}", x.licence, x.needs));
-                        ui.label(if ro { x.ro } else { x.en });
+                        ui.label(self.t(x.ro, x.en));
                         ui.add_space(6.0);
                     }
                     ui.separator();
@@ -205,7 +204,7 @@ impl CompanionApp {
                                 companion_core::proc::open_externally(r.url);
                             }
                         });
-                        muted(ui, &p, if ro { r.ro } else { r.en });
+                        muted(ui, &p, self.t(r.ro, r.en));
                     }
                 });
                 ui.separator();

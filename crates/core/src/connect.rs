@@ -406,46 +406,66 @@ pub fn send(python: Option<&PythonCmd>, req: &Request) -> Result<Vec<u8>, Connec
     Err(ConnectError::Network(err))
 }
 
+/// Every message `explain` can give, in English; `{}` stands for the detail that is copied over.
+pub const EXPLAIN_KEYS: &[&str] = &[
+    "Address refused: {}",
+    "I need Python to reach the internet.",
+    "Access refused: the token is missing, expired or not allowed.",
+    "Not found (wrong address or name, or a private repository).",
+    "Too many requests: wait a little and try again.",
+    "The server answered: {}",
+    "Could not reach the server: {}",
+    "The answer is too big (over 8 MB).",
+    "Unexpected answer: {}",
+];
+
+/// The short reasons that go into the `{}` of `explain` (English; the app translates them).
+pub const DETAIL_KEYS: &[&str] = &[
+    "the address must start with https://",
+    "the address has no host",
+    "an address with a user name or password in it is refused",
+    "plain http is only allowed for servers on this computer or network",
+    "a header (the token?) contains a line break or control character",
+    "not a list",
+    "this is a file, not a folder",
+    "this is not a text page",
+];
+
+/// The English message of an error (one of `EXPLAIN_KEYS`) and the detail for its `{}`.
+pub fn explain_key(e: &ConnectError) -> (&'static str, String) {
+    match e {
+        ConnectError::BadUrl(m) => (EXPLAIN_KEYS[0], m.to_string()),
+        ConnectError::NeedsPython => (EXPLAIN_KEYS[1], String::new()),
+        ConnectError::Http(401 | 403, _) => (EXPLAIN_KEYS[2], String::new()),
+        ConnectError::Http(404, _) => (EXPLAIN_KEYS[3], String::new()),
+        ConnectError::Http(429, _) => (EXPLAIN_KEYS[4], String::new()),
+        ConnectError::Http(_, m) => (EXPLAIN_KEYS[5], m.to_string()),
+        ConnectError::Network(m) => (EXPLAIN_KEYS[6], m.to_string()),
+        ConnectError::TooBig => (EXPLAIN_KEYS[7], String::new()),
+        ConnectError::Parse(m) => (EXPLAIN_KEYS[8], m.to_string()),
+    }
+}
+
 pub fn explain(e: &ConnectError, romanian: bool) -> String {
-    let (ro, en): (String, String) = match e {
-        ConnectError::BadUrl(m) => (
-            format!("Adresă refuzată: {m}"),
-            format!("Address refused: {m}"),
-        ),
-        ConnectError::NeedsPython => (
-            "Îmi trebuie Python ca să ajung pe internet.".into(),
-            "I need Python to reach the internet.".into(),
-        ),
-        ConnectError::Http(401 | 403, _) => (
-            "Acces refuzat: tokenul lipsește, a expirat sau nu are dreptul.".into(),
-            "Access refused: the token is missing, expired or not allowed.".into(),
-        ),
-        ConnectError::Http(404, _) => (
-            "Nu am găsit ce am cerut (adresă sau nume greșit, sau depozit privat).".into(),
-            "Not found (wrong address or name, or a private repository).".into(),
-        ),
-        ConnectError::Http(429, _) => (
-            "Prea multe cereri: așteaptă puțin și încearcă din nou.".into(),
-            "Too many requests: wait a little and try again.".into(),
-        ),
-        ConnectError::Http(_, m) => (
-            format!("Serverul a răspuns: {m}"),
-            format!("The server answered: {m}"),
-        ),
-        ConnectError::Network(m) => (
-            format!("Nu am ajuns la server: {m}"),
-            format!("Could not reach the server: {m}"),
-        ),
-        ConnectError::TooBig => (
-            "Răspunsul e prea mare (peste 8 MB).".into(),
-            "The answer is too big (over 8 MB).".into(),
-        ),
-        ConnectError::Parse(m) => (
-            format!("Răspuns neașteptat: {m}"),
-            format!("Unexpected answer: {m}"),
-        ),
+    let (en, detail) = explain_key(e);
+    let ro = match en {
+        "Address refused: {}" => "Adresă refuzată: {}",
+        "I need Python to reach the internet." => "Îmi trebuie Python ca să ajung pe internet.",
+        "Access refused: the token is missing, expired or not allowed." => {
+            "Acces refuzat: tokenul lipsește, a expirat sau nu are dreptul."
+        }
+        "Not found (wrong address or name, or a private repository)." => {
+            "Nu am găsit ce am cerut (adresă sau nume greșit, sau depozit privat)."
+        }
+        "Too many requests: wait a little and try again." => {
+            "Prea multe cereri: așteaptă puțin și încearcă din nou."
+        }
+        "The server answered: {}" => "Serverul a răspuns: {}",
+        "Could not reach the server: {}" => "Nu am ajuns la server: {}",
+        "The answer is too big (over 8 MB)." => "Răspunsul e prea mare (peste 8 MB).",
+        _ => "Răspuns neașteptat: {}",
     };
-    if romanian { ro } else { en }
+    (if romanian { ro } else { en }).replace("{}", &detail)
 }
 
 // ------------------------------------------------------------------ reading the answers
