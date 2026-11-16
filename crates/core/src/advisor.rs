@@ -291,11 +291,11 @@ pub enum Why {
 /// Without a fast drive (or before the drive was tested) only models that run from memory are
 /// offered; with a fast drive a streaming model is offered when memory reaches colibri's "good".
 /// "Most capable" is taken as the largest download, the only size the catalogue gives.
-pub fn recommend<'a>(
-    models: &'a [crate::coli::ModelInfo],
+pub fn recommend(
+    models: &[crate::coli::ModelInfo],
     ram_total_gb: f64,
     drive: Option<crate::diskbench::DiskClass>,
-) -> Option<(&'a crate::coli::ModelInfo, Why)> {
+) -> Option<(&crate::coli::ModelInfo, Why)> {
     let usable = usable_ram_gb(ram_total_gb);
     let chat = |m: &&crate::coli::ModelInfo| m.is_chat_model() && m.status != "unsupported";
     let in_memory = models
