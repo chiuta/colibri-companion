@@ -365,6 +365,8 @@ pub struct StoredMessage {
     pub display: String,
     /// Document passages this answer was written from, numbered like [1], [2] in the text.
     pub sources: Vec<String>,
+    /// What this answer cost (tokens, speed, machine load); absent on older conversations.
+    pub stats: Option<crate::meter::AnswerStats>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

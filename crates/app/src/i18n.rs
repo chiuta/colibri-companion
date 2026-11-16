@@ -8,6 +8,281 @@ use std::sync::OnceLock;
 
 static TABLE: &[(&str, [&str; 6])] = &[
     (
+        "Close",
+        [
+            "Fermer",
+            "Chiudi",
+            "Cerrar",
+            "Fechar",
+            "Schließen",
+            "Bezárás",
+        ],
+    ),
+    (
+        "Usage for this answer",
+        [
+            "Consommation pour cette réponse",
+            "Consumo per questa risposta",
+            "Consumo de esta respuesta",
+            "Consumo desta resposta",
+            "Verbrauch für diese Antwort",
+            "Ennek a válasznak a fogyasztása",
+        ],
+    ),
+    (
+        "Time elapsed",
+        [
+            "Temps écoulé",
+            "Tempo trascorso",
+            "Tiempo transcurrido",
+            "Tempo decorrido",
+            "Verstrichene Zeit",
+            "Eltelt idő",
+        ],
+    ),
+    (
+        "First token after",
+        [
+            "Premier jeton après",
+            "Primo token dopo",
+            "Primer token tras",
+            "Primeiro token após",
+            "Erstes Token nach",
+            "Az első token ennyi után",
+        ],
+    ),
+    (
+        "Tokens in (question and context)",
+        [
+            "Jetons en entrée (question et contexte)",
+            "Token in ingresso (domanda e contesto)",
+            "Tokens de entrada (pregunta y contexto)",
+            "Tokens de entrada (pergunta e contexto)",
+            "Tokens hinein (Frage und Kontext)",
+            "Bemeneti tokenek (kérdés és kontextus)",
+        ],
+    ),
+    (
+        "Tokens out",
+        [
+            "Jetons produits",
+            "Token prodotti",
+            "Tokens producidos",
+            "Tokens produzidos",
+            "Erzeugte Tokens",
+            "Előállított tokenek",
+        ],
+    ),
+    (
+        "Speed now",
+        [
+            "Vitesse actuelle",
+            "Velocità attuale",
+            "Velocidad actual",
+            "Velocidade atual",
+            "Aktuelle Geschwindigkeit",
+            "Jelenlegi sebesség",
+        ],
+    ),
+    (
+        "Average speed",
+        [
+            "Vitesse moyenne",
+            "Velocità media",
+            "Velocidad media",
+            "Velocidade média",
+            "Durchschnittsgeschwindigkeit",
+            "Átlagos sebesség",
+        ],
+    ),
+    (
+        "Peak speed",
+        [
+            "Vitesse maximale",
+            "Velocità massima",
+            "Velocidad máxima",
+            "Velocidade máxima",
+            "Höchstgeschwindigkeit",
+            "Csúcssebesség",
+        ],
+    ),
+    (
+        "Share of the text that is thinking",
+        [
+            "Part du texte qui est de la réflexion",
+            "Quota del testo che è ragionamento",
+            "Parte del texto que es razonamiento",
+            "Parte do texto que é raciocínio",
+            "Anteil des Textes, der Nachdenken ist",
+            "A szövegnek a gondolkodás-része",
+        ],
+    ),
+    (
+        "Context used",
+        [
+            "Contexte utilisé",
+            "Contesto usato",
+            "Contexto usado",
+            "Contexto usado",
+            "Genutzter Kontext",
+            "Felhasznált kontextus",
+        ],
+    ),
+    (
+        "Speed over time (tokens/s)",
+        [
+            "Vitesse dans le temps (jetons/s)",
+            "Velocità nel tempo (token/s)",
+            "Velocidad en el tiempo (tokens/s)",
+            "Velocidade ao longo do tempo (tokens/s)",
+            "Geschwindigkeit im Zeitverlauf (Tokens/s)",
+            "Sebesség az időben (token/s)",
+        ],
+    ),
+    (
+        "The machine while writing",
+        [
+            "L'ordinateur pendant l'écriture",
+            "Il computer durante la scrittura",
+            "El ordenador mientras escribe",
+            "O computador durante a escrita",
+            "Der Rechner während des Schreibens",
+            "A gép az írás közben",
+        ],
+    ),
+    (
+        "Engine processor now (cores busy)",
+        [
+            "Processeur du moteur maintenant (cœurs occupés)",
+            "Processore del motore ora (core occupati)",
+            "Procesador del motor ahora (núcleos ocupados)",
+            "Processador do motor agora (núcleos ocupados)",
+            "Prozessor des Motors jetzt (Kerne ausgelastet)",
+            "A motor processzora most (foglalt magok)",
+        ],
+    ),
+    (
+        "Memory used now",
+        [
+            "Mémoire utilisée maintenant",
+            "Memoria usata ora",
+            "Memoria usada ahora",
+            "Memória usada agora",
+            "Aktuell genutzter Speicher",
+            "Jelenleg használt memória",
+        ],
+    ),
+    (
+        "Processor, whole machine (average / peak)",
+        [
+            "Processeur, tout l'ordinateur (moyenne / pic)",
+            "Processore, tutto il computer (media / picco)",
+            "Procesador, todo el ordenador (media / pico)",
+            "Processador, todo o computador (média / pico)",
+            "Prozessor, ganzer Rechner (Mittel / Spitze)",
+            "Processzor, az egész gép (átlag / csúcs)",
+        ],
+    ),
+    (
+        "Engine processor, peak (cores)",
+        [
+            "Processeur du moteur, pic (cœurs)",
+            "Processore del motore, picco (core)",
+            "Procesador del motor, pico (núcleos)",
+            "Processador do motor, pico (núcleos)",
+            "Prozessor des Motors, Spitze (Kerne)",
+            "A motor processzora, csúcs (magok)",
+        ],
+    ),
+    (
+        "Engine memory, peak",
+        [
+            "Mémoire du moteur, pic",
+            "Memoria del motore, picco",
+            "Memoria del motor, pico",
+            "Memória do motor, pico",
+            "Speicher des Motors, Spitze",
+            "A motor memóriája, csúcs",
+        ],
+    ),
+    (
+        "Memory used, peak",
+        [
+            "Mémoire utilisée, pic",
+            "Memoria usata, picco",
+            "Memoria usada, pico",
+            "Memória usada, pico",
+            "Genutzter Speicher, Spitze",
+            "Használt memória, csúcs",
+        ],
+    ),
+    (
+        "Swap used, peak",
+        [
+            "Swap utilisé, pic",
+            "Swap usato, picco",
+            "Swap usado, pico",
+            "Swap usado, pico",
+            "Genutzter Swap, Spitze",
+            "Használt swap, csúcs",
+        ],
+    ),
+    (
+        "Graphics card (average / peak)",
+        [
+            "Carte graphique (moyenne / pic)",
+            "Scheda video (media / picco)",
+            "Tarjeta gráfica (media / pico)",
+            "Placa gráfica (média / pico)",
+            "Grafikkarte (Mittel / Spitze)",
+            "Videókártya (átlag / csúcs)",
+        ],
+    ),
+    (
+        "Graphics memory, peak",
+        [
+            "Mémoire graphique, pic",
+            "Memoria video, picco",
+            "Memoria gráfica, pico",
+            "Memória gráfica, pico",
+            "Grafikspeicher, Spitze",
+            "Videomemória, csúcs",
+        ],
+    ),
+    (
+        "The machine's load is read here once a second. A server on another computer is measured by speed and tokens only.",
+        [
+            "La charge de l'ordinateur est lue ici une fois par seconde. Un serveur sur un autre ordinateur n'est mesuré que par la vitesse et les jetons.",
+            "Il carico del computer viene letto qui una volta al secondo. Un server su un altro computer è misurato solo da velocità e token.",
+            "La carga del ordenador se lee aquí una vez por segundo. Un servidor en otro ordenador solo se mide por velocidad y tokens.",
+            "A carga do computador é lida aqui uma vez por segundo. Um servidor noutro computador só é medido pela velocidade e pelos tokens.",
+            "Die Last des Rechners wird hier einmal pro Sekunde gelesen. Ein Server auf einem anderen Rechner wird nur über Geschwindigkeit und Tokens gemessen.",
+            "A gép terhelését itt másodpercenként egyszer olvassuk ki. Másik számítógépen futó szervert csak sebességgel és tokenekkel mérünk.",
+        ],
+    ),
+    (
+        "Figures with ≈ are estimated from the pieces received; the server did not report them.",
+        [
+            "Les chiffres avec ≈ sont estimés d'après les morceaux reçus ; le serveur ne les a pas communiqués.",
+            "Le cifre con ≈ sono stimate dai pezzi ricevuti; il server non le ha comunicate.",
+            "Las cifras con ≈ se estiman a partir de los fragmentos recibidos; el servidor no las informó.",
+            "Os números com ≈ são estimados a partir dos pedaços recebidos; o servidor não os comunicou.",
+            "Zahlen mit ≈ sind aus den empfangenen Stücken geschätzt; der Server hat sie nicht gemeldet.",
+            "A ≈ jelű számok a kapott darabokból becsültek; a szerver nem jelentette őket.",
+        ],
+    ),
+    (
+        "Usage",
+        [
+            "Consommation",
+            "Consumo",
+            "Consumo",
+            "Consumo",
+            "Verbrauch",
+            "Fogyasztás",
+        ],
+    ),
+    (
         "Check citations",
         [
             "Vérifier les citations",
@@ -13331,6 +13606,7 @@ mod tests {
             include_str!("speed_tools_ui.rs"),
             include_str!("light_ui.rs"),
             include_str!("verify_ui.rs"),
+            include_str!("meter_ui.rs"),
         ];
         let (mut checked, mut missing) = (0, Vec::new());
         for src in sources {

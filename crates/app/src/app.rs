@@ -149,6 +149,10 @@ pub enum Event {
         turn: u64,
         result: Result<StreamSummary, ChatError>,
     },
+    MeterSample {
+        turn: u64,
+        sample: companion_core::meter::Sample,
+    },
 }
 
 /// One reading for the "Resources and privacy" window.
@@ -405,6 +409,7 @@ pub struct CompanionApp {
     pub logs_view: Option<String>,
 
     pub chat: ChatState,
+    pub meter: crate::meter_ui::MeterState,
     pub store: ConversationStore,
     pub toasts: Vec<Toast>,
 }
@@ -547,6 +552,7 @@ impl CompanionApp {
                 renaming: None,
                 search_cache: None,
             },
+            meter: crate::meter_ui::MeterState::default(),
             store,
             toasts: Vec::new(),
         };
@@ -2029,6 +2035,7 @@ impl CompanionApp {
             cancel: cancel.clone(),
             started: Instant::now(),
         });
+        self.begin_meter(turn);
         let (client, tx, ctx) = (self.client(), self.tx.clone(), self.ctx.clone());
         thread::spawn(move || {
             let result = client.stream_chat(&req, &cancel, |ev| {
@@ -2046,6 +2053,7 @@ impl CompanionApp {
     pub fn stop_generation(&mut self) {
         if let Some(g) = self.chat.generating.take() {
             g.cancel.cancel();
+            self.finish_meter(None);
             if let Some(last) = self
                 .chat
                 .conv
@@ -2364,12 +2372,21 @@ impl CompanionApp {
                 }
             }
             Event::Logs(text) => self.logs_view = Some(text),
+            Event::MeterSample { turn, sample } => self.meter_sample(turn, sample),
             Event::ChatDelta { turn, ev } => {
                 if self.chat.generating.as_ref().is_some_and(|g| g.id == turn) {
                     if let Some(m) = self.chat.conv.messages.last_mut() {
-                        match ev {
-                            StreamEvent::Content(t) => m.content.push_str(&t),
-                            StreamEvent::Reasoning(t) => m.reasoning.push_str(&t),
+                        match &ev {
+                            StreamEvent::Content(t) => m.content.push_str(t),
+                            StreamEvent::Reasoning(t) => m.reasoning.push_str(t),
+                        }
+                    }
+                    match &ev {
+                        StreamEvent::Content(t) => {
+                            self.meter_delta(turn, companion_core::meter::Kind::Answer, t)
+                        }
+                        StreamEvent::Reasoning(t) => {
+                            self.meter_delta(turn, companion_core::meter::Kind::Reasoning, t)
                         }
                     }
                 }
@@ -2377,6 +2394,7 @@ impl CompanionApp {
             Event::ChatDone { turn, result } => {
                 if self.chat.generating.as_ref().is_some_and(|g| g.id == turn) {
                     self.chat.generating = None;
+                    self.finish_meter(result.as_ref().ok());
                     match result {
                         Ok(summary) => {
                             if let Some(m) = self.chat.conv.messages.last_mut() {

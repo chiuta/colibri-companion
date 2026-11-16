@@ -24,6 +24,7 @@ pub mod light_models;
 pub mod locate;
 pub mod mcp;
 pub mod memory;
+pub mod meter;
 pub mod models;
 pub mod net;
 pub mod npu;

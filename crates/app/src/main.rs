@@ -14,6 +14,7 @@ mod i18n;
 mod light_ui;
 mod mcp_ui;
 mod memory_ui;
+mod meter_ui;
 mod models_ui;
 mod online_ui;
 mod prompts_ui;

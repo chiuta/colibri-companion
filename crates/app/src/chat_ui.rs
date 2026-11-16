@@ -22,6 +22,7 @@ enum MsgAction {
     Preview(companion_core::blocks::Block),
     Ask(usize, usize),
     CancelAsk,
+    Usage(Box<companion_core::meter::AnswerStats>),
 }
 
 impl CompanionApp {
@@ -32,6 +33,13 @@ impl CompanionApp {
             .min_size(200.0)
             .frame(Frame::new().fill(p.panel).inner_margin(Margin::same(10)))
             .show(ui, |ui| self.sidebar(ui));
+        if self.show_meter() {
+            Panel::right("meter")
+                .default_size(290.0)
+                .min_size(220.0)
+                .frame(Frame::new().fill(p.panel).inner_margin(Margin::same(10)))
+                .show(ui, |ui| self.meter_panel(ui));
+        }
         egui::CentralPanel::default()
             .frame(Frame::new().fill(p.bg))
             .show(ui, |ui| self.chat_main(ui));
@@ -360,6 +368,7 @@ impl CompanionApp {
         let w_sources = self.t("Surse din documente", "Sources from your documents");
         let w_edit = self.t("Editează", "Edit");
         let w_branch = self.t("Ramifică de aici", "Branch from here");
+        let w_usage = self.t("Consum", "Usage");
         let w_speak = self.t("Citește cu voce tare", "Read aloud");
         let w_pin = self.t("Reține", "Remember");
         let w_unspeak = self.t("Oprește citirea", "Stop reading");
@@ -551,6 +560,11 @@ impl CompanionApp {
                                 if let Some(stats) = stats_text(m, tokens_word) {
                                     ui.label(RichText::new(stats).small().color(p.muted));
                                 }
+                                if let Some(st) = &m.stats
+                                    && ui.small_button(w_usage).clicked()
+                                {
+                                    action = Some(MsgAction::Usage(Box::new(st.clone())));
+                                }
                             });
                         }
                     });
@@ -565,6 +579,11 @@ impl CompanionApp {
             Some(MsgAction::Copy(text)) => {
                 ui.ctx().copy_text(text);
                 self.toast(self.t("Copiat în clipboard", "Copied to the clipboard"));
+            }
+            Some(MsgAction::Usage(st)) => {
+                self.meter.shown = Some(*st);
+                self.meter.shown_history.clear();
+                self.meter.open = true;
             }
             Some(MsgAction::Pin(text)) => self.pin_text(&text),
             Some(MsgAction::Speak(text)) => self.speak(&text),
@@ -951,6 +970,39 @@ mod perf {
             });
         }
         c
+    }
+
+    #[test]
+    fn the_usage_panel_draws_while_writing_and_afterwards() {
+        use companion_core::meter::{Kind, Meter, Sample};
+        let mut a = app();
+        a.chat.conv = conversation(3);
+        let mut m = Meter::new(Some(4096));
+        for i in 0..40 {
+            m.delta(100 + i * 60, Kind::Answer, "word ");
+        }
+        m.sample(Sample {
+            cpu_percent: 55.0,
+            engine_cores: Some(6.5),
+            engine_rss_gb: Some(9.0),
+            ram_used_gb: 12.0,
+            ram_total_gb: 16.0,
+            gpu_util_percent: Some(30.0),
+            vram_used_gb: Some(2.0),
+            vram_total_gb: Some(8.0),
+            ..Sample::default()
+        });
+        a.meter.run = Some((1, m.clone(), Instant::now()));
+        a.meter.open = true;
+        assert!(a.show_meter());
+        frame(&mut a, 1400.0, 800.0);
+        // afterwards: the finished figures, with and without server usage
+        a.meter.run = None;
+        a.meter.shown = Some(m.finish(2600, None));
+        frame(&mut a, 1400.0, 800.0);
+        // a narrow window and an empty stats record must not panic either
+        a.meter.shown = Some(Default::default());
+        frame(&mut a, 700.0, 500.0);
     }
 
     fn frame(app: &mut CompanionApp, w: f32, h: f32) -> f64 {
