@@ -37,6 +37,17 @@ The offline-optimal column sees the future, so it is a ceiling, not a target.
   their experts). On the sampled profile it does not pay off; a pessimistic bound if real
   consecutive tokens overlap more than sampled ones (unmeasured) (`--example speculative`). A
   trace shorter than one pass gives NaN (no data), never 0.
+  An optional per-layer expert BUDGET (`verify_pass`, `--budget 1,1.5,2`, multiples of the experts
+  one token uses per layer) follows MoE-Spec (arXiv 2602.16052, training-free): each layer loads
+  only the experts that most tokens of the window route to, ties to the lower id, and drops the
+  tail. Read the loads together with the printed share of routed slots dropped. On a trace whose
+  tokens do not overlap, a tight budget "saves" loads only by dropping most of the work
+  (e.g. 55-77% of slots at 1x for k=4..8 on the synthetic and correlated traces); that is a
+  warning, not a gain. The paper reports 10-30% more throughput at maintained quality on ITS
+  models; this model measures neither quality nor how the acceptance rate would change, so
+  nothing here supports or refutes that for any model. Sampled traces (`.coli_usage`) overlap
+  only through popularity and so understate the window overlap; a real `ROUTE_TRACE` is needed.
+  `locality_trace` is a synthetic drifting-pool trace that exists to exercise the code.
 - `ioplan`: tokens/s from drive speed, expert size and overlap of I/O with compute. The
   "overlapped" figure is a ceiling that assumes a perfect prefetcher. Defaults are
   assumptions, not measurements; `--measured-mbs` takes the app's drive-test result (`--example ioplan`).

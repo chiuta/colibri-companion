@@ -19,6 +19,7 @@ mod prompts_ui;
 mod resources_ui;
 mod screens;
 mod sheets_ui;
+mod speed_tools_ui;
 mod studio_ui;
 mod theme;
 mod widgets;

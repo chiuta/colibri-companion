@@ -346,6 +346,7 @@ impl CompanionApp {
                 "Applies the next time the model starts.",
             ),
         );
+        self.speed_tools(ui);
     }
 
     /// What a shorter conversation memory would buy: colibri's planner at several context lengths.

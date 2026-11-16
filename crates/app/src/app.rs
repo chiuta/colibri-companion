@@ -50,6 +50,13 @@ pub enum Event {
         result: Result<companion_core::coli::PlanSummary, String>,
     },
     Tuned(Result<companion_core::coli::TuneOutcome, String>),
+    Captured(Result<Box<companion_core::capture::Report>, String>),
+    AutoTuneProgress {
+        done: usize,
+        max: usize,
+        best: Option<f64>,
+    },
+    AutoTuneDone(Result<crate::speed_tools_ui::TuneSummary, String>),
     CtxPlans {
         dir: PathBuf,
         rows: Vec<(u32, Result<companion_core::coli::PlanSummary, String>)>,
@@ -368,6 +375,7 @@ pub struct CompanionApp {
     pub ctx_auto_done: bool,
     pub disk_speed: Option<Result<f64, String>>,
     pub disk_busy: bool,
+    pub tools: crate::speed_tools_ui::ToolsState,
     pub upd: UpdateState,
     update_after_stop: bool,
     pub res: Option<ResView>,
@@ -490,6 +498,7 @@ impl CompanionApp {
             ctx_auto_done: false,
             disk_speed: None,
             disk_busy: false,
+            tools: Default::default(),
             upd: UpdateState::default(),
             update_after_stop: false,
             res: None,
@@ -1215,6 +1224,13 @@ impl CompanionApp {
     /// The switches that turn on colibri's Metal backend (Apple Silicon) or its experimental NPU
     /// path (AMD, Windows). Both are colibri's own opt-ins, passed as it documents.
     pub fn accel_env(&self) -> Vec<(String, String)> {
+        let mut env = self.accel_env_base();
+        env.extend(self.tools_env());
+        env
+    }
+
+    /// The switches without the recording and the searched settings (the search's baseline).
+    pub fn accel_env_base(&self) -> Vec<(String, String)> {
         let mut env = Vec::new();
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) && self.s.apple_gpu {
             env.push(("COLI_METAL".to_string(), "1".to_string()));
@@ -2056,8 +2072,14 @@ impl CompanionApp {
                 self.disk_busy = false;
                 self.disk_speed = Some(r);
             }
+            Event::Captured(r) => self.captured(r),
+            Event::AutoTuneProgress { done, max, best } => self.autotune_progress(done, max, best),
+            Event::AutoTuneDone(r) => self.autotune_done(r),
             Event::CtxApplied(r) => {
                 self.ctx_busy = false;
+                if let Ok(n) = &r {
+                    self.remember_context(*n);
+                }
                 self.ctx_rows = None;
                 self.ctx_auto_done = true;
                 self.plan = None;
@@ -2284,6 +2306,7 @@ impl CompanionApp {
             }
             Event::ServerAction { what, result } => {
                 self.busy = None;
+                self.tools_server_changed();
                 if what == ServerAction::Stop {
                     self.health = Health::Down;
                     self.starting_since = None;
@@ -2387,6 +2410,7 @@ impl CompanionApp {
             self.applied_look = Some(look);
         }
         self.flows_tick();
+        self.tools_tick();
         self.memory_tick();
         self.sync_poller();
         if self.show_resources {

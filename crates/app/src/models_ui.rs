@@ -320,6 +320,9 @@ impl CompanionApp {
                 self.t("recomandat", "recommended"),
                 fmt_gb(m.ram_good_gb)
             ));
+            if m.fits {
+                self.estimate_card_line(ui, m);
+            }
             if !m.fits && !m.reason.is_empty() {
                 ui.label(
                     RichText::new(crate::i18n::engine_text(self.s.lang, &m.reason))
