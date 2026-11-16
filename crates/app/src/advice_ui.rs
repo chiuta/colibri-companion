@@ -327,6 +327,7 @@ impl CompanionApp {
         if let Some(note) = self.tune_note.clone() {
             ui.label(note);
         }
+        self.context_table(ui);
         let label = self.t(
             "Adaptează cache-ul de experți la conversația curentă (politica «balanced» din colibri; nu schimbă răspunsurile)",
             "Adapt the expert cache to the current conversation (colibri's “balanced” policy; it does not change answers)",
@@ -343,5 +344,82 @@ impl CompanionApp {
                 "Applies the next time the model starts.",
             ),
         );
+    }
+
+    /// What a shorter conversation memory would buy: colibri's planner at several context lengths.
+    fn context_table(&mut self, ui: &mut Ui) {
+        let p = self.p;
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(self.t(
+                "Context mai scurt, model mai rapid",
+                "A shorter context, a faster model",
+            ))
+            .semibold(),
+        );
+        muted(
+            ui,
+            &p,
+            self.t(
+                "Fiecare jeton de context ocupă memorie care altfel ar ține experții modelului. Un context mai scurt lasă mai mult loc experților și reduce citirile de pe disc, dar conversațiile foarte lungi pierd începutul mai devreme.",
+                "Every token of context takes memory that would otherwise hold the model's experts. A shorter context leaves more room for experts and cuts disk reads, but very long conversations lose their beginning sooner.",
+            ),
+        );
+        if self.ctx_rows.is_none() {
+            ui.horizontal(|ui| {
+                let label = self.t("Calculează pentru 4k–64k", "Work it out for 4k–64k");
+                if ui
+                    .add_enabled(!self.ctx_busy, egui::Button::new(label))
+                    .clicked()
+                {
+                    self.compare_contexts();
+                }
+                if self.ctx_busy {
+                    ui.add(egui::Spinner::new());
+                }
+            });
+            return;
+        }
+        let rows = self.ctx_rows.clone().unwrap_or_default();
+        let mut apply = None;
+        egui::Grid::new("ctx_plan_rows")
+            .num_columns(4)
+            .show(ui, |ui| {
+                for (n, plan) in &rows {
+                    ui.label(format!("{n}"));
+                    match plan {
+                        Ok(pl) => {
+                            ui.label(format!(
+                                "{} {:.1} GB",
+                                self.t("cache de experți", "expert cache"),
+                                pl.cache_gb
+                            ));
+                            ui.label(format!(
+                                "{:.0}% {}",
+                                pl.hit_rate * 100.0,
+                                self.t("în memorie", "in memory")
+                            ));
+                            if ui
+                                .add_enabled(
+                                    !self.ctx_busy,
+                                    egui::Button::new(self.t("Utilizați", "Use")),
+                                )
+                                .clicked()
+                            {
+                                apply = Some(*n);
+                            }
+                        }
+                        Err(_) => {
+                            ui.label("—");
+                            ui.label("");
+                            ui.label("");
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+        if let Some(n) = apply {
+            self.apply_context(n);
+        }
     }
 }

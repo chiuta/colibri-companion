@@ -41,6 +41,11 @@ pub enum Event {
         result: Result<companion_core::coli::PlanSummary, String>,
     },
     Tuned(Result<companion_core::coli::TuneOutcome, String>),
+    CtxPlans {
+        dir: PathBuf,
+        rows: Vec<(u32, Result<companion_core::coli::PlanSummary, String>)>,
+    },
+    CtxApplied(Result<u32, String>),
     Status(Result<StatusReport, String>),
     Health(Health),
     ModelIds(Vec<String>),
@@ -344,6 +349,9 @@ pub struct CompanionApp {
     pub plan_asked: Option<PathBuf>,
     pub tuning: bool,
     pub tune_note: Option<String>,
+    /// What colibri's planner gives at several context lengths: (tokens, plan).
+    pub ctx_rows: Option<Vec<(u32, Result<companion_core::coli::PlanSummary, String>)>>,
+    pub ctx_busy: bool,
     pub upd: UpdateState,
     update_after_stop: bool,
     pub res: Option<ResView>,
@@ -460,6 +468,8 @@ impl CompanionApp {
             plan_asked: None,
             tuning: false,
             tune_note: None,
+            ctx_rows: None,
+            ctx_busy: false,
             upd: UpdateState::default(),
             update_after_stop: false,
             res: None,
@@ -858,7 +868,7 @@ impl CompanionApp {
                     }
                 }
             }
-            match coli.spawn_use_dir(&dir, backend, &log) {
+            match coli.spawn_use_dir(&dir, backend, None, &log) {
                 Ok(mut child) => {
                     let _ = tx.send(Event::InstallSpawned(Ok(())));
                     let code = child.wait().ok().and_then(|s| s.code());
@@ -1220,6 +1230,53 @@ impl CompanionApp {
         self.spawn(move |tx| {
             let result = coli.plan(&dir);
             let _ = tx.send(Event::Plan { dir, result });
+        });
+    }
+
+    /// Asks colibri's planner what each of a few context lengths would leave for the expert cache.
+    pub fn compare_contexts(&mut self) {
+        let (Some(dir), Some(mut coli)) = (self.active_model_dir(), self.coli.clone()) else {
+            return;
+        };
+        if self.ctx_busy {
+            return;
+        }
+        coli.env = self.accel_env();
+        self.ctx_busy = true;
+        self.ctx_rows = None;
+        self.spawn(move |tx| {
+            let rows = [4096u32, 8192, 16384, 32768, 65536]
+                .into_iter()
+                .map(|n| (n, coli.plan_ctx(&dir, n)))
+                .collect();
+            let _ = tx.send(Event::CtxPlans { dir, rows });
+        });
+    }
+
+    /// Keeps `ctx` as the context colibri starts with (its own `setup --ctx`), then restarts it.
+    pub fn apply_context(&mut self, ctx: u32) {
+        let (Some(dir), Some(mut coli)) = (self.active_model_dir(), self.coli.clone()) else {
+            return;
+        };
+        if self.ctx_busy || self.tuning {
+            return;
+        }
+        coli.env = self.accel_env();
+        let backend = self.s.backend.as_arg();
+        self.ctx_busy = true;
+        self.stop_generation();
+        let log = paths::logs_dir().join("context.log");
+        self.spawn(move |tx| {
+            let _ = coli.stop_server();
+            let result = match coli.spawn_use_dir(&dir, backend, Some(ctx), &log) {
+                Ok(mut child) => match child.wait() {
+                    Ok(st) if st.success() => Ok(ctx),
+                    _ => Err(coli_last_log(&log)),
+                },
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = coli.start_server();
+            let _ = tx.send(Event::CtxApplied(result));
         });
     }
 
@@ -1929,6 +1986,26 @@ impl CompanionApp {
                     self.plan = Some(result);
                 }
             }
+            Event::CtxPlans { dir, rows } => {
+                if self.active_model_dir().as_deref() == Some(dir.as_path()) {
+                    self.ctx_rows = Some(rows);
+                }
+                self.ctx_busy = false;
+            }
+            Event::CtxApplied(r) => {
+                self.ctx_busy = false;
+                self.plan = None;
+                self.plan_asked = None;
+                self.tune_note = Some(match r {
+                    Ok(n) => self
+                        .t(
+                            "Contextul este acum de {} de jetoane; modelul a fost repornit.",
+                            "The context is now {} tokens; the model was restarted.",
+                        )
+                        .replacen("{}", &n.to_string(), 1),
+                    Err(e) => e,
+                });
+            }
             Event::Tuned(r) => {
                 use companion_core::coli::TuneOutcome;
                 self.tuning = false;
@@ -2410,4 +2487,9 @@ pub fn explain_in(lang: Lang, e: &companion_core::connect::ConnectError) -> Stri
                 .replace("{}", &detail)
         }
     }
+}
+
+fn coli_last_log(log: &std::path::Path) -> String {
+    let t = std::fs::read_to_string(log).unwrap_or_default();
+    companion_core::coli::last_lines(&t, 4)
 }

@@ -11227,6 +11227,83 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A modell következő indításakor lép érvénybe.",
         ],
     ),
+    (
+        "The context is now {} tokens; the model was restarted.",
+        [
+            "Le contexte est maintenant de {} jetons ; le modèle a été redémarré.",
+            "Il contesto è ora di {} token; il modello è stato riavviato.",
+            "El contexto es ahora de {} tokens; el modelo se reinició.",
+            "O contexto é agora de {} tokens; o modelo foi reiniciado.",
+            "Der Kontext beträgt jetzt {} Token; das Modell wurde neu gestartet.",
+            "A kontextus mérete most {} token; a modell újraindult.",
+        ],
+    ),
+    (
+        "A shorter context, a faster model",
+        [
+            "Un contexte plus court, un modèle plus rapide",
+            "Un contesto più breve, un modello più veloce",
+            "Un contexto más corto, un modelo más rápido",
+            "Um contexto mais curto, um modelo mais rápido",
+            "Ein kürzerer Kontext, ein schnelleres Modell",
+            "Rövidebb kontextus, gyorsabb modell",
+        ],
+    ),
+    (
+        "Every token of context takes memory that would otherwise hold the model's experts. A shorter context leaves more room for experts and cuts disk reads, but very long conversations lose their beginning sooner.",
+        [
+            "Chaque jeton de contexte occupe de la mémoire qui servirait sinon aux experts du modèle. Un contexte plus court laisse plus de place aux experts et réduit les lectures sur le disque, mais les très longues conversations perdent leur début plus tôt.",
+            "Ogni token di contesto occupa memoria che altrimenti ospiterebbe gli esperti del modello. Un contesto più breve lascia più spazio agli esperti e riduce le letture dal disco, ma le conversazioni molto lunghe perdono prima il proprio inizio.",
+            "Cada token de contexto ocupa memoria que de otro modo albergaría a los expertos del modelo. Un contexto más corto deja más espacio a los expertos y reduce las lecturas del disco, pero las conversaciones muy largas pierden antes su comienzo.",
+            "Cada token de contexto ocupa memória que, de outro modo, serviria para os especialistas do modelo. Um contexto mais curto deixa mais espaço aos especialistas e reduz as leituras do disco, mas as conversas muito longas perdem mais cedo o seu início.",
+            "Jedes Token Kontext belegt Speicher, der sonst die Experten des Modells aufnehmen würde. Ein kürzerer Kontext lässt mehr Platz für Experten und verringert das Lesen von der Festplatte, doch sehr lange Unterhaltungen verlieren ihren Anfang früher.",
+            "A kontextus minden tokenje olyan memóriát foglal, amely máskülönben a modell szakértőit tárolná. A rövidebb kontextus több helyet hagy a szakértőknek, és csökkenti a lemezolvasást, de a nagyon hosszú beszélgetések előbb elvesztik az elejüket.",
+        ],
+    ),
+    (
+        "Work it out for 4k–64k",
+        [
+            "Calculer pour 4k–64k",
+            "Calcola per 4k–64k",
+            "Calcular para 4k–64k",
+            "Calcular para 4k–64k",
+            "Für 4k–64k berechnen",
+            "Számítás 4k–64k között",
+        ],
+    ),
+    (
+        "expert cache",
+        [
+            "cache d'experts",
+            "cache degli esperti",
+            "caché de expertos",
+            "cache de especialistas",
+            "Experten-Cache",
+            "szakértői gyorsítótár",
+        ],
+    ),
+    (
+        "in memory",
+        [
+            "en mémoire",
+            "in memoria",
+            "en memoria",
+            "em memória",
+            "im Speicher",
+            "a memóriában",
+        ],
+    ),
+    (
+        "Use",
+        [
+            "Utiliser",
+            "Usa",
+            "Usar",
+            "Usar",
+            "Verwenden",
+            "Használat",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

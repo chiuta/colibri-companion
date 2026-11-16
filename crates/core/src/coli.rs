@@ -404,6 +404,8 @@ pub struct PlanSummary {
     pub cold_gb: f64,
     /// Memory colibri reserves for the expert cache.
     pub cache_gb: f64,
+    /// Memory the conversation itself takes at the planned context length.
+    pub state_gb: f64,
     pub warnings: Vec<String>,
 }
 
@@ -433,6 +435,7 @@ impl PlanSummary {
                 .unwrap_or(1.0),
             cold_gb: gb("/tiers/disk/cold_expert_bytes"),
             cache_gb: gb("/tiers/ram/expert_cache_bytes"),
+            state_gb: gb("/tiers/ram/sequence_state_bytes"),
             warnings: v
                 .pointer("/warnings")
                 .and_then(serde_json::Value::as_array)
@@ -665,6 +668,7 @@ impl Coli {
         &self,
         model_dir: &Path,
         backend: Option<&str>,
+        ctx: Option<u32>,
         log: &Path,
     ) -> io::Result<Child> {
         if let Some(dir) = log.parent() {
@@ -683,6 +687,9 @@ impl Coli {
         if let Some(b) = backend {
             c.arg("--backend").arg(b);
         }
+        if let Some(n) = ctx {
+            c.arg("--ctx").arg(n.to_string());
+        }
         c.stdin(Stdio::null()).stdout(out).stderr(err);
         hide_window(&mut c);
         c.spawn()
@@ -690,11 +697,18 @@ impl Coli {
 
     /// `coli plan --model DIR --json`: colibri's own placement plan for this computer.
     pub fn plan(&self, model_dir: &Path) -> Result<PlanSummary, String> {
+        self.plan_ctx(model_dir, 0)
+    }
+
+    /// The same plan for a given context length (0: colibri's automatic choice).
+    pub fn plan_ctx(&self, model_dir: &Path, ctx: u32) -> Result<PlanSummary, String> {
         let dir = model_dir.to_string_lossy();
-        let text = self.run(
-            &["plan", "--model", dir.as_ref(), "--json"],
-            Duration::from_secs(90),
-        )?;
+        let n = ctx.to_string();
+        let mut args = vec!["plan", "--model", dir.as_ref(), "--json"];
+        if ctx > 0 {
+            args.extend(["--ctx", n.as_str()]);
+        }
+        let text = self.run(&args, Duration::from_secs(90))?;
         PlanSummary::from_json(&text)
     }
 
