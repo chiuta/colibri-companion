@@ -45,3 +45,6 @@ pub use locate::PythonCmd;
 pub use store::{
     Backend, Conversation, ConversationStore, Lang, Settings, StoredMessage, Style, Theme,
 };
+pub mod autotune;
+pub mod capture;
+pub mod estimate;

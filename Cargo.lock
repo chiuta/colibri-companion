@@ -611,6 +611,7 @@ dependencies = [
 name = "companion-core"
 version = "0.1.0-alpha.4"
 dependencies = [
+ "expert-streamer",
  "serde",
  "serde_json",
  "sysinfo",

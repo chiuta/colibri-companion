@@ -9,6 +9,7 @@ description = "Engine-facing logic of Colibri Companion: discovery, setup, statu
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+expert-streamer = { path = "../streamer" }
 sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
 
 [dev-dependencies]
