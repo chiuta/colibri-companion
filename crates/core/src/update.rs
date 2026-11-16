@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn decides_whether_colibri_is_outdated() {
-        let base = std::env::temp_dir().join(format!("cc-upd-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("cc-upd-compare-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         let up = Upstream {
             sha: "new".into(),
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn a_foreign_update_folder_is_never_deleted() {
-        let base = std::env::temp_dir().join(format!("cc-upd-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("cc-upd-foreign-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         let theirs = base.join("colibri-update");
         fs::create_dir_all(&theirs).unwrap();

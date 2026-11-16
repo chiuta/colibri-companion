@@ -162,13 +162,22 @@ mod tests {
 
     #[test]
     fn a_hundred_thousand_collisions_stay_fast_and_unique() {
-        let mut ks = KeySet::new();
         let x = e("Smith, Jane", "2019");
-        let t = std::time::Instant::now();
-        let mut seen = HashSet::new();
-        for _ in 0..100_000 {
-            assert!(seen.insert(ks.unique(&x, "")));
-        }
-        assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
+        let run = |n: usize| {
+            let mut ks = KeySet::new();
+            let mut seen = HashSet::new();
+            let t = std::time::Instant::now();
+            for _ in 0..n {
+                assert!(seen.insert(ks.unique(&x, "")));
+            }
+            t.elapsed()
+        };
+        // Doubling the work must not much more than double the time (a quadratic search for a
+        // free suffix would quadruple it); a ratio does not depend on how slow the machine is.
+        let (small, big) = (run(50_000), run(100_000));
+        assert!(
+            big.as_secs_f64() < small.as_secs_f64() * 3.2 + 0.05,
+            "not linear: {small:?} then {big:?}"
+        );
     }
 }
