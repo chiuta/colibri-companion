@@ -1,0 +1,17 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:18.800
+Modell-Duelle: zwei Modelle treten bei derselben Frage gegeneinander an.
+
+2
+00:00:19.000 --> 00:00:34.800
+Tippe eine Frage und starte. Beide Antworten erscheinen live, nur mit A und B beschriftet.
+
+3
+00:00:35.000 --> 00:00:42.800
+Stimme für die bessere ab, mit den Schaltflächen oder den Tasten 1 bis 4. Erst danach siehst du, wer wer war.
+
+4
+00:00:43.000 --> 00:00:51.000
+Die Rangliste (Elo) wird auf deinem Computer aktualisiert und lässt sich als CSV, Markdown oder JSONL exportieren.

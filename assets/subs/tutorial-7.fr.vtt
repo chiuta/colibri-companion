@@ -1,0 +1,17 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:18.800
+Duels de modèles : deux modèles face à face sur la même question.
+
+2
+00:00:19.000 --> 00:00:34.800
+Écrivez une question et lancez. Les deux réponses arrivent en direct, marquées seulement A et B.
+
+3
+00:00:35.000 --> 00:00:42.800
+Votez pour la meilleure, avec les boutons ou les touches 1 à 4. Ensuite seulement, vous voyez qui était qui.
+
+4
+00:00:43.000 --> 00:00:51.000
+Le classement (Elo) se met à jour sur votre ordinateur et s'exporte en CSV, Markdown ou JSONL.

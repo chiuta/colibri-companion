@@ -1,0 +1,17 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:18.800
+Modellpárbajok: két modell mérkőzik meg ugyanarra a kérdésre.
+
+2
+00:00:19.000 --> 00:00:34.800
+Írj egy kérdést, és indítsd el. Mindkét válasz élőben érkezik, csak A és B jelöléssel.
+
+3
+00:00:35.000 --> 00:00:42.800
+Szavazz a jobbra a gombokkal vagy az 1–4 billentyűkkel. Csak ezután látod, ki kicsoda.
+
+4
+00:00:43.000 --> 00:00:51.000
+A ranglista (Elo) a gépeden frissül, és CSV, Markdown vagy JSONL formátumban exportálható.

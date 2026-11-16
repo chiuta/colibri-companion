@@ -1,0 +1,17 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:18.800
+Model duels: put two models head to head on the same question.
+
+2
+00:00:19.000 --> 00:00:34.800
+Type a question and start. Both answers stream in, labelled only A and B.
+
+3
+00:00:35.000 --> 00:00:42.800
+Vote for the better one, with the buttons or the keys 1 to 4. Only then do you see who was who.
+
+4
+00:00:43.000 --> 00:00:51.000
+The leaderboard (Elo) updates on your computer and exports to CSV, Markdown or JSONL.

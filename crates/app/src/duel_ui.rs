@@ -315,7 +315,7 @@ impl CompanionApp {
                     }
                 });
                 ui.separator();
-                egui::ScrollArea::vertical().show(ui, |ui| match self.duel.tab {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.duel.tab {
                     Tab::Arena => self.arena_tab(ui),
                     Tab::Board => self.board_tab(ui),
                     Tab::Models => self.models_tab(ui),
