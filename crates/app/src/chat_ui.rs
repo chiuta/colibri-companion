@@ -18,6 +18,7 @@ enum MsgAction {
     StopSpeaking,
     Regenerate,
     Edit,
+    Branch(usize),
     SaveBlock(companion_core::blocks::Block),
     Preview(companion_core::blocks::Block),
     Ask(usize, usize),
@@ -329,6 +330,7 @@ impl CompanionApp {
             self.t("Regenerează", "Regenerate"),
         );
         let w_edit = self.t("Editează", "Edit");
+        let w_branch = self.t("Ramifică de aici", "Branch from here");
         let w_speak = self.t("Citește cu voce", "Read aloud");
         let w_pin = self.t("Ține minte", "Remember");
         let w_unspeak = self.t("Oprește citirea", "Stop reading");
@@ -496,6 +498,9 @@ impl CompanionApp {
                                 } else if ui.small_button(w_speak).clicked() {
                                     action = Some(MsgAction::Speak(m.content.clone()));
                                 }
+                                if !last && ui.small_button(w_branch).clicked() {
+                                    action = Some(MsgAction::Branch(i));
+                                }
                                 if last && ui.small_button(w_regen).clicked() {
                                     action = Some(MsgAction::Regenerate);
                                 }
@@ -522,6 +527,7 @@ impl CompanionApp {
             Some(MsgAction::StopSpeaking) => self.stop_speaking(),
             Some(MsgAction::Regenerate) => self.regenerate(),
             Some(MsgAction::Edit) => self.edit_last_message(),
+            Some(MsgAction::Branch(i)) => self.branch_conversation(i),
             Some(MsgAction::SaveBlock(b)) => self.save_block(&b),
             Some(MsgAction::Preview(b)) => {
                 self.chat.preview_ask = None;

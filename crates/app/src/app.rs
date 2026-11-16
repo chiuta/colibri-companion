@@ -1273,6 +1273,24 @@ impl CompanionApp {
         self.chat.focus_input = true;
     }
 
+    /// Continue from message `upto` in a copy, leaving the original conversation as it was.
+    pub fn branch_conversation(&mut self, upto: usize) {
+        self.stop_generation();
+        self.persist_conversation();
+        let b = self.chat.conv.branch_at(upto, "(↳)");
+        self.chat.conv = b;
+        self.chat.error = None;
+        self.chat.focus_input = true;
+        self.persist_conversation();
+        self.toast(
+            self.t(
+                "Ramificație nouă: originalul a rămas neschimbat",
+                "New branch: the original is unchanged",
+            )
+            .to_string(),
+        );
+    }
+
     pub fn open_conversation(&mut self, id: &str) {
         if self.chat.conv.id == id {
             return;

@@ -9907,6 +9907,28 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A cím érvénytelen: csak ezen a gépen vagy a saját hálózatodon lévő http:// szerverek.",
         ],
     ),
+    (
+        "New branch: the original is unchanged",
+        [
+            "Nouvelle branche : l'original reste inchangé",
+            "Nuovo ramo: l'originale resta invariato",
+            "Nueva rama: el original no cambia",
+            "Novo ramo: o original fica inalterado",
+            "Neuer Zweig: das Original bleibt unverändert",
+            "Új ág: az eredeti változatlan marad",
+        ],
+    ),
+    (
+        "Branch from here",
+        [
+            "Créer une branche d'ici",
+            "Crea un ramo da qui",
+            "Ramificar desde aquí",
+            "Ramificar a partir daqui",
+            "Ab hier verzweigen",
+            "Elágazás innen",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

@@ -315,6 +315,28 @@ impl Conversation {
         }
     }
 
+    /// A new conversation that keeps the messages up to and including `upto`, so the person can
+    /// try another direction from that point. The original is left untouched.
+    pub fn branch_at(&self, upto: usize, suffix: &str) -> Conversation {
+        let mut c = Conversation::new();
+        let end = (upto + 1).min(self.messages.len());
+        c.messages = self.messages[..end].to_vec();
+        // A summary only stays valid while it covers messages that are kept.
+        if self.summary_upto <= end {
+            c.summary = self.summary.clone();
+            c.summary_upto = self.summary_upto;
+        }
+        c.retitle();
+        if !self.title.is_empty() {
+            c.title = format!(
+                "{} {suffix}",
+                self.title.chars().take(70).collect::<String>()
+            );
+            c.title_custom = true;
+        }
+        c
+    }
+
     /// A name the person chose. An empty name goes back to the automatic title.
     pub fn rename(&mut self, title: &str) {
         let t = title.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -744,5 +766,28 @@ mod lang_tests {
         assert_eq!(fs::read_to_string(&first).unwrap(), "one");
         assert_eq!(fs::read_to_string(&second).unwrap(), "two");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_branch_keeps_the_messages_up_to_the_chosen_one() {
+        let mut c = Conversation::new();
+        for (i, role) in ["user", "assistant", "user", "assistant"]
+            .iter()
+            .enumerate()
+        {
+            c.messages.push(StoredMessage {
+                role: role.to_string(),
+                content: format!("m{i}"),
+                ..Default::default()
+            });
+        }
+        c.retitle();
+        let b = c.branch_at(1, "(2)");
+        assert_eq!(b.messages.len(), 2);
+        assert_eq!(b.messages[1].content, "m1");
+        assert_ne!(b.id, c.id);
+        assert!(b.title.ends_with("(2)"));
+        assert_eq!(c.messages.len(), 4);
+        assert_eq!(c.branch_at(99, "x").messages.len(), 4);
     }
 }
