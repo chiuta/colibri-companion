@@ -229,7 +229,7 @@ dialog img{border-radius:14px;width:100%}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 20h16"/></svg>
           <span><span data-i="dl_for">Download for</span> <span id="osName">your system</span></span>
         </a>
-        <a class="btn ghost" href="#videos"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><span data-i="watch">Watch the 90-second tour</span></a>
+        <a class="btn ghost" href="#videos"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><span data-i="watch">Watch the video tour</span></a>
       </div>
       <p class="alpha" data-i="alpha">Early alpha — made to be tried and improved. Tell us what you think!</p>
     </div>
@@ -240,17 +240,17 @@ dialog img{border-radius:14px;width:100%}
         <button type="button" data-theme="light" aria-pressed="true" data-i="theme_light">Light</button>
         <button type="button" data-theme="dark" aria-pressed="false" data-i="theme_dark">Dark</button>
       </div>
-      <div class="float a" aria-hidden="true">🔒 <span data-i="b_private_d">Nothing leaves your computer.</span></div>
+      <div class="float a" aria-hidden="true">🔒 <span data-i="b_private_d">Chats stay on your computer.</span></div>
       <div class="float b" aria-hidden="true">✨ Qwen · Llama · Gemma…</div>
     </div>
   </div>
 </div>
 
 <div class="badges"><div class="wrap"><ul>
-  <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><b data-i="b_private">Private by design</b><span data-i="b_private_d">Nothing leaves your computer.</span></li>
+  <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><b data-i="b_private">Private by design</b><span data-i="b_private_d">Chats stay on your computer.</span></li>
   <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg><b data-i="b_langs">8 languages</b><span data-i="b_langs_d">Pick yours in one click.</span></li>
-  <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><b data-i="b_os">Every system</b><span data-i="b_os_d">Windows, macOS and Linux.</span></li>
-  <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 5.6a5 5 0 0 0-7-.1L12 7.3l-1.8-1.8a5 5 0 0 0-7 7.1L12 21l8.8-8.4a5 5 0 0 0 0-7z"/></svg><b data-i="b_free">Free forever</b><span data-i="b_free_d">Open source, Apache-2.0.</span></li>
+  <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><b data-i="b_os">Three systems</b><span data-i="b_os_d">Windows, macOS and Linux.</span></li>
+  <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 5.6a5 5 0 0 0-7-.1L12 7.3l-1.8-1.8a5 5 0 0 0-7 7.1L12 21l8.8-8.4a5 5 0 0 0 0-7z"/></svg><b data-i="b_free">Free and open</b><span data-i="b_free_d">Open source, Apache-2.0.</span></li>
 </ul></div></div>
 
 <section id="steps"><div class="wrap">
@@ -393,7 +393,7 @@ function href(p){return REPO+"/releases/download/"+TAG+"/colibri-companion-"+p.i
 function detect(){
   var ua=(navigator.userAgentData&&navigator.userAgentData.platform||"")+" "+navigator.userAgent, u=ua.toLowerCase();
   if(/win/.test(u)) return "windows-x86_64";
-  if(/mac|iphone|ipad/.test(u)) return "macos-apple-silicon";
+  if(/iphone|ipad/.test(u)) return null; // a Mac cannot be told apart reliably: show both, guess neither
   if(/linux|x11|cros/.test(u)&&!/android/.test(u)) return /aarch64|arm/.test(u)?"linux-aarch64":"linux-x86_64";
   return null;
 }
