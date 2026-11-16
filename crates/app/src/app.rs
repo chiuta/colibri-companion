@@ -46,6 +46,7 @@ pub enum Event {
         rows: Vec<(u32, Result<companion_core::coli::PlanSummary, String>)>,
     },
     CtxApplied(Result<u32, String>),
+    DiskSpeed(Result<f64, String>),
     Status(Result<StatusReport, String>),
     Health(Health),
     ModelIds(Vec<String>),
@@ -353,6 +354,8 @@ pub struct CompanionApp {
     pub ctx_rows: Option<Vec<(u32, Result<companion_core::coli::PlanSummary, String>)>>,
     pub ctx_busy: bool,
     pub ctx_auto_done: bool,
+    pub disk_speed: Option<Result<f64, String>>,
+    pub disk_busy: bool,
     pub upd: UpdateState,
     update_after_stop: bool,
     pub res: Option<ResView>,
@@ -472,6 +475,8 @@ impl CompanionApp {
             ctx_rows: None,
             ctx_busy: false,
             ctx_auto_done: false,
+            disk_speed: None,
+            disk_busy: false,
             upd: UpdateState::default(),
             update_after_stop: false,
             res: None,
@@ -1235,6 +1240,26 @@ impl CompanionApp {
         });
     }
 
+    /// A few seconds of random reads on the drive that holds the models.
+    pub fn measure_disk(&mut self) {
+        if self.disk_busy {
+            return;
+        }
+        let dir = self
+            .active_model_dir()
+            .or_else(|| self.s.models_dir.clone())
+            .or_else(companion_core::models::default_models_root);
+        let Some(dir) = dir else { return };
+        self.disk_busy = true;
+        self.spawn(move |tx| {
+            let r = companion_core::diskbench::random_read_speed(
+                &dir,
+                std::time::Duration::from_secs(4),
+            );
+            let _ = tx.send(Event::DiskSpeed(r));
+        });
+    }
+
     /// Asks colibri's planner what each of a few context lengths would leave for the expert cache.
     pub fn compare_contexts(&mut self) {
         let (Some(dir), Some(mut coli)) = (self.active_model_dir(), self.coli.clone()) else {
@@ -1993,6 +2018,10 @@ impl CompanionApp {
                     self.ctx_rows = Some(rows);
                 }
                 self.ctx_busy = false;
+            }
+            Event::DiskSpeed(r) => {
+                self.disk_busy = false;
+                self.disk_speed = Some(r);
             }
             Event::CtxApplied(r) => {
                 self.ctx_busy = false;

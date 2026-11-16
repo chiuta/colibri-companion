@@ -11304,6 +11304,127 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Használat",
         ],
     ),
+    (
+        "The drive and the memory",
+        [
+            "Le disque et la mémoire",
+            "Il disco e la memoria",
+            "El disco y la memoria",
+            "O disco e a memória",
+            "Die Festplatte und der Speicher",
+            "A meghajtó és a memória",
+        ],
+    ),
+    (
+        "Huge models read their experts from the drive, so their speed depends mostly on the drive. A short random-read test (about 4 seconds) shows what to expect.",
+        [
+            "Les très grands modèles lisent leurs experts sur le disque : leur vitesse dépend donc surtout du disque. Un court test de lecture aléatoire (environ 4 secondes) indique à quoi s'attendre.",
+            "I modelli enormi leggono i loro esperti dal disco, quindi la loro velocità dipende soprattutto dal disco. Un breve test di lettura casuale (circa 4 secondi) indica cosa aspettarsi.",
+            "Los modelos enormes leen sus expertos del disco, por lo que su velocidad depende sobre todo del disco. Una breve prueba de lectura aleatoria (unos 4 segundos) indica qué cabe esperar.",
+            "Os modelos enormes leem os seus especialistas do disco, pelo que a sua velocidade depende sobretudo do disco. Um breve teste de leitura aleatória (cerca de 4 segundos) indica o que esperar.",
+            "Sehr große Modelle lesen ihre Experten von der Festplatte, ihre Geschwindigkeit hängt daher vor allem von ihr ab. Ein kurzer Test mit zufälligem Lesen (etwa 4 Sekunden) zeigt, was zu erwarten ist.",
+            "Az óriási modellek a szakértőiket a meghajtóról olvassák, ezért sebességük főként a meghajtótól függ. Egy rövid véletlen olvasási teszt (kb. 4 másodperc) megmutatja, mire számíthat.",
+        ],
+    ),
+    (
+        "Test the models' drive",
+        [
+            "Tester le disque des modèles",
+            "Misura il disco dei modelli",
+            "Probar el disco de los modelos",
+            "Testar o disco dos modelos",
+            "Datenträger der Modelle testen",
+            "A modellek meghajtójának tesztelése",
+        ],
+    ),
+    (
+        "The test found no large file to read in the models folder.",
+        [
+            "Le test n'a trouvé aucun gros fichier à lire dans le dossier des modèles.",
+            "Il test non ha trovato alcun file di grandi dimensioni da leggere nella cartella dei modelli.",
+            "La prueba no encontró ningún archivo grande que leer en la carpeta de los modelos.",
+            "O teste não encontrou nenhum ficheiro grande para ler na pasta dos modelos.",
+            "Der Test hat im Modellordner keine große Datei zum Lesen gefunden.",
+            "A teszt nem talált olvasható nagy fájlt a modellek mappájában.",
+        ],
+    ),
+    (
+        "What 16, 32 or 64 GB of memory allows",
+        [
+            "Ce que permettent 16, 32 ou 64 Go de mémoire",
+            "Che cosa consentono 16, 32 o 64 GB di memoria",
+            "Qué permiten 16, 32 o 64 GB de memoria",
+            "O que permitem 16, 32 ou 64 GB de memória",
+            "Was 16, 32 oder 64 GB Speicher ermöglichen",
+            "Mit tesz lehetővé 16, 32 vagy 64 GB memória",
+        ],
+    ),
+    (
+        "Runs, with more reading from the drive",
+        [
+            "Fonctionne, avec plus de lectures sur le disque",
+            "Funziona, con più letture dal disco",
+            "Funciona, con más lecturas del disco",
+            "Funciona, com mais leituras do disco",
+            "Läuft, mit mehr Lesezugriffen auf die Festplatte",
+            "Fut, de több lemezolvasással",
+        ],
+    ),
+    (
+        "Does not fit",
+        [
+            "Ne tient pas",
+            "Non ci sta",
+            "No cabe",
+            "Não cabe",
+            "Passt nicht",
+            "Nem fér el",
+        ],
+    ),
+    (
+        "● runs well · ◐ runs, but reads a lot from the drive · ○ does not fit. The figures come from colibri's catalogue; the real speed depends on the drive.",
+        [
+            "● fonctionne bien · ◐ fonctionne, mais lit beaucoup sur le disque · ○ ne tient pas. Les chiffres viennent du catalogue de colibri ; la vitesse réelle dépend du disque.",
+            "● funziona bene · ◐ funziona, ma legge molto dal disco · ○ non ci sta. Le cifre provengono dal catalogo di colibri; la velocità reale dipende dal disco.",
+            "● funciona bien · ◐ funciona, pero lee mucho del disco · ○ no cabe. Las cifras proceden del catálogo de colibri; la velocidad real depende del disco.",
+            "● funciona bem · ◐ funciona, mas lê muito do disco · ○ não cabe. Os valores provêm do catálogo do colibri; a velocidade real depende do disco.",
+            "● läuft gut · ◐ läuft, liest aber viel von der Festplatte · ○ passt nicht. Die Werte stammen aus dem Katalog von colibri; die tatsächliche Geschwindigkeit hängt von der Festplatte ab.",
+            "● jól fut · ◐ fut, de sokat olvas a meghajtóról · ○ nem fér el. Az adatok a colibri katalógusából származnak; a tényleges sebesség a meghajtótól függ.",
+        ],
+    ),
+    (
+        "A fast drive: models that read their experts from it can run acceptably.",
+        [
+            "Disque rapide : les modèles qui y lisent leurs experts peuvent fonctionner de façon acceptable.",
+            "Disco veloce: i modelli che vi leggono i loro esperti possono funzionare in modo accettabile.",
+            "Disco rápido: los modelos que leen de él sus expertos pueden funcionar de forma aceptable.",
+            "Disco rápido: os modelos que leem os seus especialistas a partir dele podem funcionar de forma aceitável.",
+            "Schnelle Festplatte: Modelle, die ihre Experten davon lesen, können akzeptabel laufen.",
+            "Gyors meghajtó: az onnan szakértőket olvasó modellek elfogadhatóan futhatnak.",
+        ],
+    ),
+    (
+        "A middling drive: huge models will be slow; prefer models that fit in memory.",
+        [
+            "Disque moyen : les très grands modèles seront lents ; préférez des modèles qui tiennent en mémoire.",
+            "Disco medio: i modelli enormi saranno lenti; preferisca modelli che stanno in memoria.",
+            "Disco intermedio: los modelos enormes serán lentos; prefiera modelos que quepan en memoria.",
+            "Disco médio: os modelos enormes serão lentos; prefira modelos que caibam na memória.",
+            "Mittelmäßige Festplatte: Sehr große Modelle werden langsam sein; bevorzugen Sie Modelle, die in den Speicher passen.",
+            "Közepes meghajtó: az óriási modellek lassúak lesznek; részesítse előnyben a memóriába beférő modelleket.",
+        ],
+    ),
+    (
+        "A slow drive: models that read from it will be very slow. Pick only models that fit in memory, or use an NVMe SSD.",
+        [
+            "Disque lent : les modèles qui y lisent seront très lents. Choisissez uniquement des modèles qui tiennent en mémoire, ou utilisez un SSD NVMe.",
+            "Disco lento: i modelli che vi leggono saranno molto lenti. Scelga solo modelli che stanno in memoria, oppure usi un SSD NVMe.",
+            "Disco lento: los modelos que lean de él serán muy lentos. Elija solo modelos que quepan en memoria o use un SSD NVMe.",
+            "Disco lento: os modelos que leem a partir dele serão muito lentos. Escolha apenas modelos que caibam na memória ou utilize um SSD NVMe.",
+            "Langsame Festplatte: Modelle, die davon lesen, werden sehr langsam sein. Wählen Sie nur Modelle, die in den Speicher passen, oder verwenden Sie eine NVMe-SSD.",
+            "Lassú meghajtó: az arról olvasó modellek nagyon lassúak lesznek. Csak a memóriába beférő modelleket válassza, vagy használjon NVMe SSD-t.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

@@ -12,6 +12,7 @@ pub mod blocks;
 pub mod chat;
 pub mod coli;
 pub mod connect;
+pub mod diskbench;
 pub mod duel;
 pub mod fetch;
 pub mod flow_eval;

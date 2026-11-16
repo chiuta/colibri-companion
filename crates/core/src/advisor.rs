@@ -242,3 +242,38 @@ mod tests {
         assert!(t.is_empty());
     }
 }
+
+/// How a catalogue model would run with a given amount of memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TierFit {
+    /// Memory reaches what colibri calls good for this model.
+    Good,
+    /// Above the minimum but below good: it runs, with less cache, so more reading from the disk.
+    Tight,
+    /// Below the minimum.
+    No,
+}
+
+/// Uses the catalogue's own memory figures (`ram_min_gb`, `ram_good_gb`).
+pub fn tier_fit(ram_gb: f64, min_gb: f64, good_gb: f64) -> TierFit {
+    if ram_gb >= good_gb {
+        TierFit::Good
+    } else if ram_gb >= min_gb {
+        TierFit::Tight
+    } else {
+        TierFit::No
+    }
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::*;
+
+    #[test]
+    fn tiers_follow_the_catalogue_figures() {
+        // DeepSeek V4 Flash: min 16, good 32
+        assert_eq!(tier_fit(16.0, 16.0, 32.0), TierFit::Tight);
+        assert_eq!(tier_fit(32.0, 16.0, 32.0), TierFit::Good);
+        assert_eq!(tier_fit(8.0, 16.0, 32.0), TierFit::No);
+    }
+}

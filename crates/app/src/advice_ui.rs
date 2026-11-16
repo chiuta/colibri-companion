@@ -232,6 +232,7 @@ impl CompanionApp {
             }
         }
         self.speed_section(ui);
+        self.capacity_section(ui);
         if open_models {
             self.set_resources_open(false);
             self.show_models = true;
@@ -435,6 +436,117 @@ impl CompanionApp {
         if let Some(n) = apply {
             self.apply_context(n);
         }
+    }
+    /// The drive's speed, and what 16, 32 and 64 GB of memory would let each catalogue model do.
+    fn capacity_section(&mut self, ui: &mut Ui) {
+        use companion_core::advisor::{TierFit, tier_fit};
+        use companion_core::diskbench::{DiskClass, classify};
+        let p = self.p;
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(self.t("Discul și memoria", "The drive and the memory"))
+                .size(15.0)
+                .semibold(),
+        );
+        muted(
+            ui,
+            &p,
+            self.t(
+                "Modelele uriașe își citesc experții de pe disc, așa că viteza lor depinde mai ales de disc. Un test scurt de citire aleatorie (aproximativ 4 secunde) arată ce puteți aștepta.",
+                "Huge models read their experts from the drive, so their speed depends mostly on the drive. A short random-read test (about 4 seconds) shows what to expect.",
+            ),
+        );
+        ui.horizontal(|ui| {
+            let label = self.t("Măsoară discul modelelor", "Test the models' drive");
+            if ui
+                .add_enabled(!self.disk_busy, egui::Button::new(label))
+                .clicked()
+            {
+                self.measure_disk();
+            }
+            if self.disk_busy {
+                ui.add(egui::Spinner::new());
+            }
+        });
+        match self.disk_speed.clone() {
+            Some(Ok(mb)) => {
+                let (ro, en) = match classify(mb) {
+                    DiskClass::Fast => (
+                        "Disc rapid: modelele care își citesc experții de pe disc pot rula acceptabil.",
+                        "A fast drive: models that read their experts from it can run acceptably.",
+                    ),
+                    DiskClass::Fair => (
+                        "Disc mediu: modelele uriașe vor fi lente; preferați modele care încap în memorie.",
+                        "A middling drive: huge models will be slow; prefer models that fit in memory.",
+                    ),
+                    DiskClass::Slow => (
+                        "Disc lent: modelele care citesc de pe disc vor fi foarte lente. Alegeți doar modele care încap în memorie, sau folosiți un SSD NVMe.",
+                        "A slow drive: models that read from it will be very slow. Pick only models that fit in memory, or use an NVMe SSD.",
+                    ),
+                };
+                ui.label(format!("{:.0} MB/s · {}", mb, self.t(ro, en)));
+            }
+            Some(Err(_)) => muted(
+                ui,
+                &p,
+                self.t(
+                    "Testul nu a găsit un fișier mare de citit în folderul modelelor.",
+                    "The test found no large file to read in the models folder.",
+                ),
+            ),
+            None => {}
+        }
+        let Some(models) = self.catalog.ready() else {
+            return;
+        };
+        let mut rows: Vec<_> = models
+            .iter()
+            .filter(|m| m.is_chat_model() && m.status != "unsupported")
+            .collect();
+        rows.sort_by(|a, b| a.download_gb.total_cmp(&b.download_gb));
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(self.t(
+                "Ce permite 16, 32 sau 64 GB de memorie",
+                "What 16, 32 or 64 GB of memory allows",
+            ))
+            .semibold(),
+        );
+        egui::Grid::new("tier_rows").num_columns(5).show(ui, |ui| {
+            ui.label("");
+            ui.label(RichText::new("GB").weak());
+            for t in ["16", "32", "64"] {
+                ui.label(RichText::new(t).semibold());
+            }
+            ui.end_row();
+            for m in rows {
+                ui.label(&m.name);
+                ui.label(RichText::new(format!("{:.0}", m.download_gb)).weak());
+                for ram in [16.0, 32.0, 64.0] {
+                    let (mark, tip) = match tier_fit(ram, m.ram_min_gb, m.ram_good_gb) {
+                        TierFit::Good => ("●", self.t("Merge bine", "Runs well")),
+                        TierFit::Tight => (
+                            "◐",
+                            self.t(
+                                "Merge, cu mai multe citiri de pe disc",
+                                "Runs, with more reading from the drive",
+                            ),
+                        ),
+                        TierFit::No => ("○", self.t("Nu încape", "Does not fit")),
+                    };
+                    ui.label(mark).on_hover_text(tip);
+                }
+                ui.end_row();
+            }
+        });
+        muted(
+            ui,
+            &p,
+            self.t(
+                "● merge bine · ◐ merge, dar citește mult de pe disc · ○ nu încape. Cifrele vin din catalogul colibri; viteza reală depinde de disc.",
+                "● runs well · ◐ runs, but reads a lot from the drive · ○ does not fit. The figures come from colibri's catalogue; the real speed depends on the drive.",
+            ),
+        );
     }
 }
 
