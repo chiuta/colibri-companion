@@ -4560,6 +4560,319 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "ezer karakter",
         ],
     ),
+    (
+        "Prompts",
+        [
+            "Prompts", "Prompt", "Prompts", "Prompts", "Prompts", "Promptok",
+        ],
+    ),
+    (
+        "Normal",
+        ["Normal", "Normale", "Normal", "Normal", "Normal", "Normál"],
+    ),
+    (
+        "Exact",
+        ["Exact", "Esatto", "Exacto", "Exato", "Exakt", "Pontos"],
+    ),
+    (
+        "Didactic",
+        [
+            "Didactique",
+            "Didattico",
+            "Didáctico",
+            "Didático",
+            "Lehrreich",
+            "Oktató",
+        ],
+    ),
+    (
+        "Socratic",
+        [
+            "Socratique",
+            "Socratico",
+            "Socrático",
+            "Socrático",
+            "Sokratisch",
+            "Szókratészi",
+        ],
+    ),
+    (
+        "Contrarian",
+        [
+            "Contradicteur",
+            "Bastian contrario",
+            "Contrario",
+            "Contrário",
+            "Widerspruch",
+            "Ellenvélemény",
+        ],
+    ),
+    (
+        "Brainstorm",
+        [
+            "Remue-méninges",
+            "Brainstorming",
+            "Lluvia de ideas",
+            "Tempestade de ideias",
+            "Ideensturm",
+            "Ötletroham",
+        ],
+    ),
+    (
+        "Telegraphic",
+        [
+            "Télégraphique",
+            "Telegrafico",
+            "Telegráfico",
+            "Telegráfico",
+            "Telegrammstil",
+            "Táviratstílus",
+        ],
+    ),
+    (
+        "Coach",
+        ["Coach", "Coach", "Coach", "Coach", "Coach", "Coach"],
+    ),
+    (
+        "Could not save the prompts",
+        [
+            "Impossible d'enregistrer les prompts",
+            "Impossibile salvare i prompt",
+            "No pude guardar los prompts",
+            "Não consegui salvar os prompts",
+            "Prompts konnten nicht gespeichert werden",
+            "Nem sikerült menteni a promptokat",
+        ],
+    ),
+    (
+        "Answer style:",
+        [
+            "Style de réponse :",
+            "Stile di risposta:",
+            "Estilo de respuesta:",
+            "Estilo de resposta:",
+            "Antwortstil:",
+            "Válasz stílusa:",
+        ],
+    ),
+    (
+        "Prompts (Ctrl+P)",
+        [
+            "Prompts (Ctrl+P)",
+            "Prompt (Ctrl+P)",
+            "Prompts (Ctrl+P)",
+            "Prompts (Ctrl+P)",
+            "Prompts (Strg+P)",
+            "Promptok (Ctrl+P)",
+        ],
+    ),
+    (
+        "Search…",
+        [
+            "Rechercher…",
+            "Cerca…",
+            "Buscar…",
+            "Pesquisar…",
+            "Suchen…",
+            "Keresés…",
+        ],
+    ),
+    (
+        "★ Favourites",
+        [
+            "★ Favoris",
+            "★ Preferiti",
+            "★ Favoritos",
+            "★ Favoritos",
+            "★ Favoriten",
+            "★ Kedvencek",
+        ],
+    ),
+    (
+        "Mine",
+        ["Les miens", "Miei", "Míos", "Meus", "Meine", "Sajátjaim"],
+    ),
+    (
+        "Path of a JSON file to import",
+        [
+            "Chemin d'un fichier JSON à importer",
+            "Percorso di un file JSON da importare",
+            "Ruta de un archivo JSON para importar",
+            "Caminho de um arquivo JSON para importar",
+            "Pfad einer zu importierenden JSON-Datei",
+            "Importálandó JSON-fájl útvonala",
+        ],
+    ),
+    (
+        "Prompt library",
+        [
+            "Bibliothèque de prompts",
+            "Libreria di prompt",
+            "Biblioteca de prompts",
+            "Biblioteca de prompts",
+            "Prompt-Bibliothek",
+            "Prompt-könyvtár",
+        ],
+    ),
+    (
+        "+ New prompt",
+        [
+            "+ Nouveau prompt",
+            "+ Nuovo prompt",
+            "+ Nuevo prompt",
+            "+ Novo prompt",
+            "+ Neuer Prompt",
+            "+ Új prompt",
+        ],
+    ),
+    ("All", ["Tous", "Tutti", "Todos", "Todos", "Alle", "Mind"]),
+    (
+        "No prompt matches. Try another word or category.",
+        [
+            "Aucun prompt ne correspond. Essayez un autre mot ou une autre catégorie.",
+            "Nessun prompt corrisponde. Prova un'altra parola o categoria.",
+            "Ningún prompt coincide. Prueba otra palabra o categoría.",
+            "Nenhum prompt corresponde. Tente outra palavra ou categoria.",
+            "Kein Prompt passt. Versuche ein anderes Wort oder eine andere Kategorie.",
+            "Egy prompt sem egyezik. Próbálj másik szót vagy kategóriát.",
+        ],
+    ),
+    (
+        "Pick a prompt from the list. Fill in the blanks, then put it in your message.",
+        [
+            "Choisissez un prompt dans la liste. Remplissez les blancs, puis mettez-le dans votre message.",
+            "Scegli un prompt dalla lista. Compila gli spazi vuoti, poi mettilo nel messaggio.",
+            "Elige un prompt de la lista. Rellena los huecos y luego ponlo en tu mensaje.",
+            "Escolha um prompt da lista. Preencha os espaços e depois coloque-o na mensagem.",
+            "Wähle einen Prompt aus der Liste. Fülle die Lücken aus und setze ihn dann in deine Nachricht.",
+            "Válassz egy promptot a listából. Töltsd ki a hézagokat, majd tedd az üzenetbe.",
+        ],
+    ),
+    (
+        "Put in message",
+        [
+            "Mettre dans le message",
+            "Metti nel messaggio",
+            "Poner en el mensaje",
+            "Pôr na mensagem",
+            "In Nachricht einfügen",
+            "Üzenetbe teszem",
+        ],
+    ),
+    (
+        "Export my prompts (JSON)",
+        [
+            "Exporter mes prompts (JSON)",
+            "Esporta i miei prompt (JSON)",
+            "Exportar mis prompts (JSON)",
+            "Exportar meus prompts (JSON)",
+            "Meine Prompts exportieren (JSON)",
+            "Promptjaim exportálása (JSON)",
+        ],
+    ),
+    (
+        "Saved to",
+        [
+            "Enregistré dans",
+            "Salvato in",
+            "Guardado en",
+            "Salvo em",
+            "Gespeichert in",
+            "Elmentve ide:",
+        ],
+    ),
+    (
+        "Import",
+        [
+            "Importer",
+            "Importa",
+            "Importar",
+            "Importar",
+            "Importieren",
+            "Importálás",
+        ],
+    ),
+    (
+        "New prompts:",
+        [
+            "Nouveaux prompts :",
+            "Nuovi prompt:",
+            "Prompts nuevos:",
+            "Novos prompts:",
+            "Neue Prompts:",
+            "Új promptok:",
+        ],
+    ),
+    (
+        "Not a prompt file",
+        [
+            "Ce n'est pas un fichier de prompts",
+            "Non è un file di prompt",
+            "No es un archivo de prompts",
+            "Não é um arquivo de prompts",
+            "Keine Prompt-Datei",
+            "Nem prompt-fájl",
+        ],
+    ),
+    (
+        "My own prompt",
+        [
+            "Mon propre prompt",
+            "Il mio prompt",
+            "Mi propio prompt",
+            "Meu próprio prompt",
+            "Mein eigener Prompt",
+            "Saját promptom",
+        ],
+    ),
+    (
+        "Title",
+        ["Titre", "Titolo", "Título", "Título", "Titel", "Cím"],
+    ),
+    (
+        "Category",
+        [
+            "Catégorie",
+            "Categoria",
+            "Categoría",
+            "Categoria",
+            "Kategorie",
+            "Kategória",
+        ],
+    ),
+    (
+        "Text (use [WORDS] for the blanks)",
+        [
+            "Texte (mettez [MOTS] pour les blancs)",
+            "Testo (usa [PAROLE] per gli spazi vuoti)",
+            "Texto (usa [PALABRAS] para los huecos)",
+            "Texto (use [PALAVRAS] para os espaços)",
+            "Text (nutze [WÖRTER] für die Lücken)",
+            "Szöveg ([SZAVAK] jelöli a kitöltendő helyeket)",
+        ],
+    ),
+    (
+        "It needs a title and a text.",
+        [
+            "Il faut un titre et un texte.",
+            "Servono un titolo e un testo.",
+            "Hace falta un título y un texto.",
+            "É preciso um título e um texto.",
+            "Es braucht einen Titel und einen Text.",
+            "Cím és szöveg is kell.",
+        ],
+    ),
+    (
+        "Save",
+        [
+            "Enregistrer",
+            "Salva",
+            "Guardar",
+            "Salvar",
+            "Speichern",
+            "Mentés",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
@@ -4899,6 +5212,7 @@ mod tests {
             include_str!("models_ui.rs"),
             include_str!("resources_ui.rs"),
             include_str!("guide_ui.rs"),
+            include_str!("prompts_ui.rs"),
             include_str!("sheets_ui.rs"),
         ];
         let (mut checked, mut missing) = (0, Vec::new());

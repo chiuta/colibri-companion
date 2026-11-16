@@ -264,6 +264,7 @@ pub struct CompanionApp {
     pub show_settings: bool,
     pub show_about: bool,
     pub guide: crate::guide_ui::GuideState,
+    pub prompts: crate::prompts_ui::PromptState,
     pub sheets: crate::sheets_ui::SheetState,
     pub existing_path: String,
     pub show_models: bool,
@@ -355,6 +356,7 @@ impl CompanionApp {
             show_settings: false,
             show_about: false,
             guide: Default::default(),
+            prompts: Default::default(),
             sheets: Default::default(),
             existing_path: String::new(),
             show_models: false,
@@ -1613,8 +1615,9 @@ impl CompanionApp {
         let turn = self.chat.counter;
         let cancel = CancelToken::new();
         let mut messages = Vec::new();
-        if !self.s.system_prompt.trim().is_empty() {
-            messages.push(ChatMessage::new("system", self.s.system_prompt.trim()));
+        let system = companion_core::prompts::with_style(&self.s.system_prompt, self.prompts.style);
+        if !system.is_empty() {
+            messages.push(ChatMessage::new("system", system));
         }
         let n = self.chat.conv.messages.len().saturating_sub(1); // all but the empty placeholder
         messages.extend(self.chat.conv.messages[..n].iter().map(|m| {

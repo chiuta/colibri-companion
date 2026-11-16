@@ -7,6 +7,7 @@ mod demo;
 mod guide_ui;
 mod i18n;
 mod models_ui;
+mod prompts_ui;
 mod resources_ui;
 mod screens;
 mod sheets_ui;
@@ -159,6 +160,9 @@ impl CompanionApp {
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma)) {
             self.show_settings = !self.show_settings;
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::P)) {
+            self.open_prompts();
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::K)) {
             self.chat.focus_search = true;

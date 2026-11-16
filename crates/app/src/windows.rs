@@ -40,6 +40,7 @@ impl CompanionApp {
                                 (self.t("Explorează", "Explore"), 2),
                                 (self.t("Sfaturi", "Tips"), 3),
                                 (self.t("Legal", "Legal"), 4),
+                                (self.t("Prompturi", "Prompts"), 5),
                             ] {
                                 if ui.button(label).clicked() {
                                     match which {
@@ -47,6 +48,7 @@ impl CompanionApp {
                                         1 => self.sheets.compare = true,
                                         2 => self.guide.explore = true,
                                         3 => self.guide.tips = true,
+                                        5 => self.open_prompts(),
                                         _ => self.guide.legal = true,
                                     }
                                     ui.close();
@@ -195,6 +197,7 @@ impl CompanionApp {
         self.models_window(ctx);
         self.resources_window(ctx);
         self.guide_windows(ctx);
+        self.prompt_window(ctx);
         self.sheet_windows(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);

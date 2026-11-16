@@ -652,6 +652,7 @@ impl CompanionApp {
             send = true;
         }
         if can_type {
+            self.style_bar(ui);
             self.format_toolbar(ui, id);
         }
         ui.horizontal(|ui| {
