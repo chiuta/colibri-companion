@@ -858,6 +858,7 @@ mod tests {
         let rate = got as f64 / start.elapsed().as_secs_f64();
         eprintln!("client throughput: {rate:.0} pieces/s");
         assert_eq!(got, n);
-        assert!(rate > 20_000.0, "too slow: {rate:.0}/s");
+        // a slow shared runner manages well under a laptop; a quadratic reader would be orders slower
+        assert!(rate > 3_000.0, "too slow: {rate:.0}/s");
     }
 }
