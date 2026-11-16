@@ -307,7 +307,7 @@ impl CompanionApp {
             .vscroll(true)
             .show(ctx, |ui| {
                 muted(ui, &p, self.t(
-                    "Tot ce ați discutat rămâne pe acest calculator. La fiecare întrebare se caută în toate conversațiile fragmentele cele mai apropiate, iar acestea sunt oferite modelului ca fundal, nu ca instrucțiuni. În conversațiile foarte lungi se păstrează integral mesajele recente și un rezumat al celor vechi. Constelația arată cum se leagă conversațiile între ele.",
+                    "Tot ce ai discutat rămâne pe acest calculator. La fiecare întrebare se caută în toate conversațiile fragmentele cele mai apropiate, iar acestea sunt oferite modelului ca fundal, nu ca instrucțiuni. În conversațiile foarte lungi se păstrează integral mesajele recente și un rezumat al celor vechi. Constelația arată cum se leagă conversațiile între ele.",
                     "Everything you have said stays on this computer. With each question I look through all conversations for the closest fragments and give them to the model as background, not as instructions. In very long conversations I keep the recent messages whole and a summary of the old ones. The constellation shows how conversations relate.",
                 ));
                 let l = self.t("Utilizează memoria (note fixate și fragmente din alte conversații)", "Use memory (pinned notes and fragments from other conversations)");
@@ -355,18 +355,18 @@ impl CompanionApp {
                 ui,
                 &p,
                 self.t(
-                    "Nu aveți încă nicio conversație. După prima, aceasta va apărea aici.",
+                    "Nu ai încă nicio conversație. După prima, aceasta va apărea aici.",
                     "No conversations yet. After the first one it appears here.",
                 ),
             );
             return;
         }
         muted(ui, &p, self.t(
-            "Fiecare stea este o conversație, fiecare linie o asemănare între conținuturi, iar culoarea indică grupul din care face parte. Apăsați o stea sau alegeți o conversație din listă pentru a vedea detaliile.",
+            "Fiecare stea este o conversație, fiecare linie o asemănare între conținuturi, iar culoarea indică grupul din care face parte. Apasă o stea sau alege o conversație din listă pentru a vedea detaliile.",
             "Each star is a conversation, each line a resemblance in content, the colour is the group it belongs to. Press a star, or pick a conversation from the list, to see its details.",
         ));
         let (t_pick, t_in, t_out, t_reset) = (
-            self.t("— alegeți —", "— pick —"),
+            self.t("— alege —", "— pick —"),
             self.t("Mărește", "Zoom in"),
             self.t("Micșorează", "Zoom out"),
             self.t("Resetează zoomul", "Reset zoom"),
@@ -563,7 +563,7 @@ impl CompanionApp {
                     });
                 }
                 if ui
-                    .button(self.t("Deschideți conversația", "Open the conversation"))
+                    .button(self.t("Deschide conversația", "Open the conversation"))
                     .clicked()
                 {
                     *open_conv = Some(n.conv.clone());
@@ -578,7 +578,7 @@ impl CompanionApp {
         self.load_pins();
         let mut changed = false;
         muted(ui, &p, self.t(
-            "Notele fixate sunt oferite modelului în fiecare conversație. Fixați un mesaj cu butonul «Reține» de sub el sau scrieți aici ce doriți să rețină mereu (preferințe, nume, reguli proprii).",
+            "Notele fixate sunt oferite modelului în fiecare conversație. Fixează un mesaj cu butonul «Reține» de sub el sau scrie aici ce dorești să rețină mereu (preferințe, nume, reguli proprii).",
             "Pinned notes are given to the model in every conversation. Pin a message with the “Remember” button under it, or write here what you want it to always know (preferences, names, your own rules).",
         ));
         let h_note = self.t("O notă nouă…", "A new note…");
@@ -591,7 +591,7 @@ impl CompanionApp {
         if ui
             .add_enabled(
                 !self.memory.new_note.trim().is_empty(),
-                egui::Button::new(self.t("Adăugați nota", "Add the note")),
+                egui::Button::new(self.t("Adaugă nota", "Add the note")),
             )
             .clicked()
         {
@@ -651,7 +651,7 @@ impl CompanionApp {
             );
             ui.label(self.chat.conv.summary.clone());
             if ui
-                .small_button(self.t("Ștergeți rezumatul", "Delete the summary"))
+                .small_button(self.t("Șterge rezumatul", "Delete the summary"))
                 .clicked()
             {
                 self.chat.conv.summary.clear();
@@ -679,10 +679,7 @@ impl CompanionApp {
 
     fn search_tab(&mut self, ui: &mut egui::Ui, open_conv: &mut Option<String>) {
         let p = self.p;
-        let h_q = self.t(
-            "Căutați în toate conversațiile…",
-            "Search all conversations…",
-        );
+        let h_q = self.t("Caută în toate conversațiile…", "Search all conversations…");
         ui.add(
             egui::TextEdit::singleline(&mut self.memory.query)
                 .desired_width(f32::INFINITY)
@@ -724,7 +721,7 @@ impl CompanionApp {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(title).semibold());
                     muted(ui, &p, &date_label(d.ts));
-                    if ui.small_button(self.t("Deschideți", "Open")).clicked() {
+                    if ui.small_button(self.t("Deschide", "Open")).clicked() {
                         *open_conv = Some(d.conv.clone());
                     }
                 });

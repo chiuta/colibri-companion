@@ -2,7 +2,7 @@
 
 [English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · **Italiano** · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · [Magyar](README.hu.md)
 
-Un'app desktop semplice per [colibri](https://github.com/JustVugg/colibri): scelga un modello adatto al suo computer, lo scarichi con un clic, poi conversi — tutto in locale, senza account e senza cloud.
+Un'app desktop semplice per [colibri](https://github.com/JustVugg/colibri): scegli un modello adatto al tuo computer, scaricalo con un clic, poi conversa — tutto in locale, senza account e senza cloud.
 
 ## Avvio
 
@@ -14,7 +14,7 @@ cargo run --release -p colibri-companion -- --demo  # demo, senza colibri
 
 ### I quattro passi
 
-(1) trova Python e colibri (e propone di scaricare colibri se manca), (2) le fa scegliere un modello (quelli che non stanno nella RAM sono nascosti; quello consigliato è segnalato), (3) scarica e installa con avanzamento, pausa e ripresa, (4) avvia il server e apre la chat.
+(1) trova Python e colibri (e propone di scaricare colibri se manca), (2) ti fa scegliere un modello (quelli che non stanno nella RAM sono nascosti; quello consigliato è segnalato), (3) scarica e installa con avanzamento, pausa e ripresa, (4) avvia il server e apre la chat.
 
 Chat: risposte in streaming, Stop immediato, Markdown, ragionamento comprimibile, conversazioni salvate, stile (Preciso / Equilibrato / Creativo), copia e rigenera. Temi: chiaro, scuro, alto contrasto.
 
@@ -32,9 +32,9 @@ L'app non include colibri. Esegue i comandi JSON di colibri (`setup --list --jso
 
 Linux (x86-64, ARM64; Wayland e X11), Windows 10/11 e macOS (Intel e Apple Silicon) — un solo codice sorgente, rendering OpenGL (funziona anche su vecchie schede grafiche e in macchine virtuali). `.github/workflows/build.yml` compila e testa ogni variante e produce archivi pronti da distribuire. Su Linux, `packaging/linux/install.sh` aggiunge l'app al menu. Scalatura HiDPI, scorciatoie Ctrl/⌘+N, Ctrl/⌘+, ed Esc, supporto per lettori di schermo (AccessKit).
 
-**Documenti e strumenti:** aggiunga file (**Altro → Documenti**) e ponga domande: l'app li cerca sul suo computer (parole chiave, senza cloud) e mostra sotto ogni risposta i passaggi utilizzati. **Altro → Strumenti MCP** collega server MCP che lei aggiunge e avvia; il modello può richiedere uno strumento e ogni chiamata richiede la sua approvazione (funzione iniziale, dipende da quanto il modello segue il formato).
+**Documenti e strumenti:** aggiungi file (**Altro → Documenti**) e poni domande: l'app li cerca sul tuo computer (parole chiave, senza cloud) e mostra sotto ogni risposta i passaggi utilizzati. **Altro → Strumenti MCP** collega server MCP che tu aggiungi e avvii; il modello può richiedere uno strumento e ogni chiamata richiede la tua approvazione (funzione iniziale, dipende da quanto il modello segue il formato).
 
-Modelli: ne conservi più d'uno sul computer, passi dall'uno all'altro o ne aggiunga altri da un'unica finestra (**Modelli**); per primo viene proposto il più capace che il suo computer può eseguire (con poca RAM gli esperti vengono letti dall'SSD). Velocità: CUDA per NVIDIA, Vulkan per gli altri chip grafici, altrimenti il processore, scelti automaticamente. **Risorse** mostra in tempo reale processore, memoria, scheda grafica e disco, più la prova che nulla esce dal suo computer (tutte le connessioni aperte dell'app e del motore, con il comando per verificare in autonomia). Se colibri manca viene scaricato per lei (senza git), e un controllo giornaliero (disattivabile) la avvisa quando colibri o questa app hanno una nuova versione.
+Modelli: conservane più d'uno sul computer, passa dall'uno all'altro o aggiungine altri da un'unica finestra (**Modelli**); per primo viene proposto il più capace che il tuo computer può eseguire (con poca RAM gli esperti vengono letti dall'SSD). Velocità: CUDA per NVIDIA, Vulkan per gli altri chip grafici, altrimenti il processore, scelti automaticamente. **Risorse** mostra in tempo reale processore, memoria, scheda grafica e disco, più la prova che nulla esce dal tuo computer (tutte le connessioni aperte dell'app e del motore, con il comando per verificare in autonomia). Se colibri manca viene scaricato per te (senza git), e un controllo giornaliero (disattivabile) ti avvisa quando colibri o questa app hanno una nuova versione.
 
 **Il tuo computer, analizzato:** in **Risorse**, l'app trova da sola le schede video e dice in modo semplice se il modello sta in memoria e perché può essere lento (swap, altri programmi, scheda inutilizzata). Si limita a consigliare; non cambia impostazioni da sola.
 

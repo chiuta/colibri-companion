@@ -35,7 +35,7 @@ impl CompanionApp {
         let p = self.p;
         let busy = self.phase() == Phase::Installing || self.install_spawning;
         ui.label(self.t(
-            "Puteți păstra mai multe modele pe calculator și puteți trece de la unul la altul oricând. Rulează câte unul singur, pentru a nu încărca memoria.",
+            "Poți păstra mai multe modele pe calculator și poți trece de la unul la altul oricând. Rulează câte unul singur, pentru a nu încărca memoria.",
             "You can keep several models on this computer and switch between them any time. Only one runs at a time, so memory isn't overloaded.",
         ));
         ui.add_space(6.0);
@@ -48,7 +48,7 @@ impl CompanionApp {
                 ui,
                 &p,
                 self.t(
-                    "Dacă aveți fișiere .gguf (de ex. «…-00001-of-00008.gguf»), alegeți primul fișier; celelalte părți trebuie să se afle în același folder. colibri le convertește într-un folder de model alăturat (poate dura și ocupă spațiu suplimentar), apoi îl pornește. Puteți alege și un folder de model colibri deja pregătit.",
+                    "Dacă ai fișiere .gguf (de ex. «…-00001-of-00008.gguf»), alege primul fișier; celelalte părți trebuie să se afle în același folder. colibri le convertește într-un folder de model alăturat (poate dura și ocupă spațiu suplimentar), apoi îl pornește. Poți alege și un folder de model colibri deja pregătit.",
                     "If you have .gguf files (for example “…-00001-of-00008.gguf”), pick the first file; the other parts must be in the same folder. colibri converts them into a model folder beside them (this can take a while and needs extra space), then I start it. You can also pick a ready-made colibri model folder.",
                 ),
             );
@@ -63,7 +63,7 @@ impl CompanionApp {
                         .hint_text(hint),
                 );
                 ui.add_enabled_ui(!busy && !self.existing_path.trim().is_empty(), |ui| {
-                    if ui.button(self.t("Utilizați acest model", "Use this model")).clicked() {
+                    if ui.button(self.t("Utilizează acest model", "Use this model")).clicked() {
                         let path = self.existing_path.trim().trim_matches('"').into();
                         self.use_existing_model(path);
                     }
@@ -73,7 +73,7 @@ impl CompanionApp {
                 ui,
                 &p,
                 self.t(
-                    "Puteți, de asemenea, să trageți fișierul în fereastra aplicației.",
+                    "Poți, de asemenea, să tragi fișierul în fereastra aplicației.",
                     "You can also drag the file onto the app window.",
                 ),
             );
@@ -83,7 +83,7 @@ impl CompanionApp {
             tinted(ui, p.warn_soft, p.warn, |ui| {
                 ui.label(
                     RichText::new(self.t(
-                        "Se instalează un model chiar acum. Urmăriți progresul în fereastra principală.",
+                        "Se instalează un model chiar acum. Urmărește progresul în fereastra principală.",
                         "A model is installing right now. Follow its progress in the main window.",
                     ))
                     .color(p.warn),
@@ -131,7 +131,7 @@ impl CompanionApp {
         // ---- add
         ui.add_space(8.0);
         ui.label(
-            RichText::new(self.t("Adăugați un alt model", "Add another model"))
+            RichText::new(self.t("Adaugă un alt model", "Add another model"))
                 .size(17.0)
                 .semibold(),
         );
@@ -150,7 +150,7 @@ impl CompanionApp {
                         ui,
                         &p,
                         self.t(
-                            "Aveți deja toate modelele de conversație din listă.",
+                            "Ai deja toate modelele de conversație din listă.",
                             "You already have every chat model on the list.",
                         ),
                     );
@@ -178,7 +178,7 @@ impl CompanionApp {
             }
             crate::app::Loadable::Failed(e) => {
                 ui.label(RichText::new(e).color(p.bad));
-                if secondary_button(ui, self.t("Încercați din nou", "Try again")).clicked() {
+                if secondary_button(ui, self.t("Încearcă din nou", "Try again")).clicked() {
                     self.refresh_engine_info();
                 }
             }
@@ -248,14 +248,14 @@ impl CompanionApp {
                 tinted(ui, p.bad_soft, p.bad, |ui| {
                     let msg = self
                         .t(
-                            "Ștergeți «{}»? Se eliberează {}. Îl puteți descărca din nou oricând.",
+                            "Șterge «{}»? Se eliberează {}. Îl poți descărca din nou oricând.",
                             "Delete “{}”? This frees {}. You can download it again any time.",
                         )
                         .replacen("{}", &name, 1)
                         .replacen("{}", &fmt_gb(gb), 1);
                     ui.label(msg);
                     ui.horizontal(|ui| {
-                        if secondary_button(ui, self.t("Da, ștergeți", "Yes, delete")).clicked() {
+                        if secondary_button(ui, self.t("Da, șterge", "Yes, delete")).clicked() {
                             self.delete_model(&m.id);
                             self.model_ask = None;
                         }
@@ -272,20 +272,20 @@ impl CompanionApp {
                     let label = if !m.complete {
                         self.t("Continuă descărcarea", "Resume the download")
                     } else if is_active {
-                        self.t("Porniți acest model", "Start this model")
+                        self.t("Pornește acest model", "Start this model")
                     } else {
-                        self.t("Utilizați acest model", "Use this model")
+                        self.t("Utilizează acest model", "Use this model")
                     };
                     if primary_button(ui, &p, label).clicked() {
                         self.switch_model(&m.id);
                     }
                 });
                 ui.add_enabled_ui(!busy && !is_active, |ui| {
-                    if secondary_button(ui, self.t("Ștergeți", "Delete")).clicked() {
+                    if secondary_button(ui, self.t("Șterge", "Delete")).clicked() {
                         self.model_ask = Some(ModelAsk::Delete(m.id.clone()));
                     }
                 });
-                if secondary_button(ui, self.t("Deschideți folderul", "Open folder")).clicked() {
+                if secondary_button(ui, self.t("Deschide folderul", "Open folder")).clicked() {
                     proc::open_externally(&m.dir.display().to_string());
                 }
             });
@@ -302,7 +302,7 @@ impl CompanionApp {
                 if m.recommended {
                     pill(
                         ui,
-                        self.t("Recomandat pentru dumneavoastră", "Recommended for you"),
+                        self.t("Recomandat pentru tine", "Recommended for you"),
                         p.on_accent,
                         p.accent,
                     );
@@ -341,7 +341,7 @@ impl CompanionApp {
             }
             if !asked {
                 ui.add_enabled_ui(!busy, |ui| {
-                    if secondary_button(ui, self.t("Instalați acest model", "Install this model"))
+                    if secondary_button(ui, self.t("Instalează acest model", "Install this model"))
                         .clicked()
                     {
                         self.model_ask = Some(ModelAsk::Install(m.id.clone()));
@@ -370,7 +370,7 @@ impl CompanionApp {
             if self.server_ready() && !self.demo {
                 ui.label(
                     RichText::new(self.t(
-                        "Modelul care rulează în prezent va fi oprit cât timp se descarcă acesta. Rămâne instalat și îl puteți relua oricând.",
+                        "Modelul care rulează în prezent va fi oprit cât timp se descarcă acesta. Rămâne instalat și îl poți relua oricând.",
                         "The model that is running now will stop while this one downloads. It stays installed and you can switch back any time.",
                     ))
                     .color(p.muted),
@@ -382,7 +382,7 @@ impl CompanionApp {
                     "The model has its own licence.",
                 ));
                 if ui
-                    .link(self.t("Vedeți pagina modelului", "See the model page"))
+                    .link(self.t("Vezi pagina modelului", "See the model page"))
                     .clicked()
                 {
                     proc::open_externally(&m.hub_url());
@@ -395,12 +395,8 @@ impl CompanionApp {
             ui.checkbox(&mut self.license_ok, agree);
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.license_ok && room, |ui| {
-                    if primary_button(
-                        ui,
-                        &p,
-                        self.t("Descărcați și utilizați", "Download and use"),
-                    )
-                    .clicked()
+                    if primary_button(ui, &p, self.t("Descarcă și utilizează", "Download and use"))
+                        .clicked()
                     {
                         self.install_additional(m);
                     }
@@ -493,13 +489,13 @@ impl CompanionApp {
                 ui,
                 &p,
                 self.t(
-                    "«Automat» alege singur CUDA pentru o placă NVIDIA, altfel Vulkan, altfel procesorul, și reconstruiește motorul dacă instalați ulterior o placă video. Modificarea se aplică la următoarea instalare sau comutare de model.",
+                    "«Automat» alege singur CUDA pentru o placă NVIDIA, altfel Vulkan, altfel procesorul, și reconstruiește motorul dacă instalezi ulterior o placă video. Modificarea se aplică la următoarea instalare sau comutare de model.",
                     "“Automatic” picks CUDA for an NVIDIA card, otherwise Vulkan, otherwise the processor, and rebuilds the engine if you add a graphics card later. A change applies the next time you install or switch a model.",
                 ),
             );
             if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
                 let label = self.t(
-                    "Utilizați cipul grafic al Mac-ului (Metal, experimental în colibri)",
+                    "Utilizează cipul grafic al Mac-ului (Metal, experimental în colibri)",
                     "Use the Mac's graphics chip (Metal, experimental in colibri)",
                 );
                 ui.checkbox(&mut self.s.apple_gpu, label);
@@ -511,7 +507,7 @@ impl CompanionApp {
                         self.t("Cip de AI găsit:", "AI chip found:")
                     ));
                     let label = self.t(
-                        "Utilizați cipul de AI (NPU), experimental: precizie redusă, răspunsurile pot diferi",
+                        "Utilizează cipul de AI (NPU), experimental: precizie redusă, răspunsurile pot diferi",
                         "Use the AI chip (NPU), experimental: reduced precision, answers may differ",
                     );
                     ui.checkbox(&mut self.s.use_npu, label);
@@ -582,7 +578,7 @@ impl CompanionApp {
     /// A search box and quick filters for the model list.
     pub fn model_filter_bar(&mut self, ui: &mut Ui) {
         use companion_core::coli::ModelFilter as F;
-        let hint = self.t("Căutați un model…", "Search for a model…");
+        let hint = self.t("Caută un model…", "Search for a model…");
         ui.add(
             egui::TextEdit::singleline(&mut self.model_query)
                 .hint_text(hint)

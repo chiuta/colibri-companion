@@ -130,7 +130,7 @@ impl CompanionApp {
     fn online_go(&mut self, kind: Kind, req: connect::Request, what: OnlineWhat) {
         if !self.online.conn.internet {
             self.toast(self.t(
-                "Accesul la internet este oprit. Activați-l mai întâi.",
+                "Accesul la internet este oprit. Activează-l mai întâi.",
                 "Online access is off. Turn it on first.",
             ));
             return;
@@ -278,7 +278,7 @@ impl CompanionApp {
                     changed = true;
                 }
                 muted(ui, &p, self.t(
-                    "Oprit implicit. Cât timp este oprit, programul comunică doar cu serverul colibri de pe acest calculator. Când este pornit, trimite cereri doar atunci când apăsați un buton, la adresa aleasă; nu trimite conversațiile dumneavoastră nicăieri.",
+                    "Oprit implicit. Cât timp este oprit, programul comunică doar cu serverul colibri de pe acest calculator. Când este pornit, trimite cereri doar atunci când apeși un buton, la adresa aleasă; nu trimite conversațiile tale nicăieri.",
                     "Off by default. While off, the program only talks to the colibri server on this computer. When on, it sends requests only when you press a button, to the address you chose; it never sends your conversations anywhere.",
                 ));
                 if !matches!(self.python, Probe::Found(_)) {
@@ -286,10 +286,10 @@ impl CompanionApp {
                 }
                 ui.add_enabled_ui(self.online.conn.internet, |ui| {
                     ui.separator();
-                    ui.label(RichText::new(self.t("Citiți o pagină web", "Read a web page")).strong());
+                    ui.label(RichText::new(self.t("Citește o pagină web", "Read a web page")).strong());
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut self.online.page_url).hint_text(h_page).desired_width(380.0));
-                        if ui.button(self.t("Citiți", "Read")).clicked() {
+                        if ui.button(self.t("Citește", "Read")).clicked() {
                             let url = self.online.page_url.trim().to_string();
                             match connect::check_url(&url) {
                                 Ok(()) => self.online_go(Kind::Generic, connect::page(&url, ""), OnlineWhat::Page(url)),
@@ -325,9 +325,9 @@ impl CompanionApp {
                         changed = true;
                     }
                     if self.online.conn.services.is_empty() {
-                        muted(ui, &p, self.t("Nu există încă nicio platformă. Adăugați una mai jos.", "No platform yet. Add one below."));
+                        muted(ui, &p, self.t("Nu există încă nicio platformă. Adaugă una mai jos.", "No platform yet. Add one below."));
                     }
-                    ui.collapsing(self.t("Adăugați o platformă", "Add a platform"), |ui| {
+                    ui.collapsing(self.t("Adaugă o platformă", "Add a platform"), |ui| {
                         egui::ComboBox::from_id_salt("new-kind")
                             .selected_text(self.online.new_kind.name())
                             .show_ui(ui, |ui| {
@@ -339,7 +339,7 @@ impl CompanionApp {
                                 }
                             });
                         ui.add(egui::TextEdit::singleline(&mut self.online.new_name).hint_text(h_name).desired_width(f32::INFINITY));
-                        ui.label(self.t("Adresa API (modificați-o pentru serverul dumneavoastră)", "API address (change it for your own server)"));
+                        ui.label(self.t("Adresa API (modifică-o pentru serverul tău)", "API address (change it for your own server)"));
                         ui.add(egui::TextEdit::singleline(&mut self.online.new_base).desired_width(f32::INFINITY));
                         ui.label(self.t("Token de acces (opțional pentru conținut public)", "Access token (optional for public content)"));
                         ui.add(egui::TextEdit::singleline(&mut self.online.new_token).password(true).desired_width(f32::INFINITY));
@@ -357,11 +357,11 @@ impl CompanionApp {
                             l_keep,
                         );
                         muted(ui, &p, self.t(
-                            "Dacă nu bifați, tokenul rămâne doar în memorie până la închiderea programului. Dacă bifați, este salvat necriptat într-un fișier care poate fi citit doar de contul dumneavoastră. Utilizați un token cu drepturi minime.",
+                            "Dacă nu bifezi, tokenul rămâne doar în memorie până la închiderea programului. Dacă bifezi, este salvat necriptat într-un fișier care poate fi citit doar de contul tău. Utilizează un token cu drepturi minime.",
                             "If unticked, the token stays in memory until you close the program. If ticked, it is saved unencrypted in a file only your account can read. Use a token with the fewest rights.",
                         ));
                         let ok = !self.online.new_name.trim().is_empty() && connect::check_url(&self.online.new_base).is_ok();
-                        if ui.add_enabled(ok, egui::Button::new(self.t("Adăugați", "Add"))).clicked() {
+                        if ui.add_enabled(ok, egui::Button::new(self.t("Adaugă", "Add"))).clicked() {
                             self.online.conn.services.push(Service {
                                 name: self.online.new_name.trim().to_string(),
                                 kind: self.online.new_kind,
@@ -404,7 +404,7 @@ impl CompanionApp {
                         ui.horizontal(|ui| {
                             ui.label(self.t("Depozit:", "Repository:"));
                             ui.add(egui::TextEdit::singleline(&mut self.online.repo).hint_text("owner/name").desired_width(220.0));
-                            if ui.button(self.t("Deschideți", "Open")).clicked() && !self.online.repo.trim().is_empty() {
+                            if ui.button(self.t("Deschide", "Open")).clicked() && !self.online.repo.trim().is_empty() {
                                 let repo = self.online.repo.trim().to_string();
                                 let req = connect::build(sv.kind, &sv.base, &sv.token, &Op::Tree { repo: &repo, path: "" });
                                 self.online_go(sv.kind, req, OnlineWhat::Tree(String::new()));
@@ -438,7 +438,7 @@ impl CompanionApp {
                                             if let Some(s) = e.size {
                                                 muted(ui, &p, &format!("{} KB", s / 1024 + 1));
                                             }
-                                            if ui.small_button(self.t("Adăugați în chat", "Add to chat")).clicked() {
+                                            if ui.small_button(self.t("Adaugă în chat", "Add to chat")).clicked() {
                                                 let repo = self.online.repo.clone();
                                                 let req = connect::build(sv.kind, &sv.base, &sv.token, &Op::File { repo: &repo, path: &e.path });
                                                 self.online_go(sv.kind, req, OnlineWhat::File(e.name.clone()));
@@ -478,7 +478,7 @@ impl CompanionApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 muted(ui, &p, self.t(
-                    "Unde se poate conecta un model local și cât poate face acolo, de la cel mai prudent (citire) la cel mai îndrăzneț (acțiune). «Gata» înseamnă că programul face acest lucru acum; «prin web» funcționează acum printr-o adresă sau un webhook; «planificat» încă nu există. Verificați site-ul fiecărei platforme.",
+                    "Unde se poate conecta un model local și cât poate face acolo, de la cel mai prudent (citire) la cel mai îndrăzneț (acțiune). «Gata» înseamnă că programul face acest lucru acum; «prin web» funcționează acum printr-o adresă sau un webhook; «planificat» încă nu există. Verifică site-ul fiecărei platforme.",
                     "Where a local model can connect and how much it can do there, from the most careful (read) to the boldest (act). “Ready” means this program does it today; “via web” works now through an address or a webhook; “planned” does not exist yet. Check each platform's own site.",
                 ));
                 ui.horizontal_wrapped(|ui| {

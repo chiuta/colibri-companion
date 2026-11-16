@@ -338,7 +338,7 @@ impl CompanionApp {
                     ui,
                     &p,
                     self.t(
-                        "Aceeași întrebare ajunge la două modele anonime. Votați răspunsul mai bun și abia apoi aflați cine a fost cine. Totul rămâne pe acest calculator; modelele pot rula doar pe acest calculator sau în rețeaua dumneavoastră.",
+                        "Aceeași întrebare ajunge la două modele anonime. Votează răspunsul mai bun și abia apoi află cine a fost cine. Totul rămâne pe acest calculator; modelele pot rula doar pe acest calculator sau în rețeaua ta.",
                         "The same question goes to two anonymous models. You vote for the better answer and only then see who was who. Everything stays on this computer; the models can only be on this computer or on your network.",
                     ),
                 );
@@ -372,7 +372,7 @@ impl CompanionApp {
                 ui,
                 &p,
                 self.t(
-                    "Aveți nevoie de cel puțin două modele active: adăugați-le în fila «Modele».",
+                    "Ai nevoie de cel puțin două modele active: adaugă-le în fila «Modele».",
                     "You need at least two active models: add them in the “Models” tab.",
                 ),
             );
@@ -381,7 +381,7 @@ impl CompanionApp {
             }
             return;
         }
-        let h_q = self.t("Scrieți întrebarea…", "Write the question…");
+        let h_q = self.t("Scrie întrebarea…", "Write the question…");
         let l_set = self.t("Încarcă setul de întrebări", "Load the sample questions");
         let l_next = self.t("Următoarea întrebare din set", "Next question from the set");
         let l_go = self.t("Începe duelul", "Start the duel");
@@ -417,7 +417,7 @@ impl CompanionApp {
             "Câte o întrebare pe linie, sau «categorie | întrebare»",
             "One question per line, or “category | question”",
         );
-        let l_use = self.t("Utilizați aceste întrebări", "Use these questions");
+        let l_use = self.t("Utilizează aceste întrebări", "Use these questions");
         egui::CollapsingHeader::new(l_own).show(ui, |ui| {
             ui.add(
                 egui::TextEdit::multiline(&mut self.duel.set_text)
@@ -488,7 +488,7 @@ impl CompanionApp {
         }
         if let Some(v) = voted {
             let (na, nb) = (names[0].clone(), names[1].clone());
-            let l_a = self.t("Ați ales", "You chose");
+            let l_a = self.t("Ai ales", "You chose");
             let verdict = match v {
                 Vote::A => format!("{l_a}: A"),
                 Vote::B => format!("{l_a}: B"),
@@ -514,7 +514,7 @@ impl CompanionApp {
             "Keep the question text in the history",
         );
         let l_none = self.t(
-            "Nu există încă niciun vot. Organizați un duel în fila «Arenă».",
+            "Nu există încă niciun vot. Organizează un duel în fila «Arenă».",
             "There are no votes yet. Run a duel in the “Arena” tab.",
         );
         let cur = if self.duel.board_category.is_empty() {
@@ -601,7 +601,7 @@ impl CompanionApp {
             ui,
             &p,
             self.t(
-                "Orice server care utilizează protocolul OpenAI de chat, pe acest calculator sau în rețeaua dumneavoastră (colibri, Ollama, LM Studio, llama.cpp…). Adresa începe cu http://.",
+                "Orice server care utilizează protocolul OpenAI de chat, pe acest calculator sau în rețeaua ta (colibri, Ollama, LM Studio, llama.cpp…). Adresa începe cu http://.",
                 "Any server that speaks the OpenAI chat protocol, on this computer or on your network (colibri, Ollama, LM Studio, llama.cpp…). The address starts with http://.",
             ),
         );
@@ -629,7 +629,7 @@ impl CompanionApp {
             changed = true;
         }
         ui.add_space(6.0);
-        ui.label(RichText::new(self.t("Adăugați un model", "Add a model")).semibold());
+        ui.label(RichText::new(self.t("Adaugă un model", "Add a model")).semibold());
         let h_name = self.t("Nume afișat", "Display name");
         let h_base = self.t(
             "Adresa serverului, de ex. http://127.0.0.1:8000",
@@ -651,9 +651,9 @@ impl CompanionApp {
                 .hint_text(h_model)
                 .desired_width(f32::INFINITY),
         );
-        let l_add = self.t("Adăugați", "Add");
+        let l_add = self.t("Adaugă", "Add");
         let l_cur = self.t(
-            "Adăugați modelul care rulează în prezent",
+            "Adaugă modelul care rulează în prezent",
             "Add the model running now",
         );
         ui.horizontal_wrapped(|ui| {
@@ -675,7 +675,7 @@ impl CompanionApp {
                 } else {
                     self.duel.status = self
                         .t(
-                            "Adresa nu este validă: sunt acceptate doar servere http:// de pe acest calculator sau din rețeaua dumneavoastră.",
+                            "Adresa nu este validă: sunt acceptate doar servere http:// de pe acest calculator sau din rețeaua ta.",
                             "The address is not valid: only http:// servers on this computer or your own network.",
                         )
                         .into();

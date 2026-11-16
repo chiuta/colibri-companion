@@ -48,9 +48,9 @@ impl CompanionApp {
                     ui.horizontal(|ui| {
                         let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
                         if ui
-                            .add_sized([w, 32.0], egui::Button::new(self.t("Copiați", "Copy")))
+                            .add_sized([w, 32.0], egui::Button::new(self.t("Copiază", "Copy")))
                             .on_hover_text(self.t(
-                                "Copiați conversația (Markdown)",
+                                "Copiază conversația (Markdown)",
                                 "Copy conversation (Markdown)",
                             ))
                             .clicked()
@@ -62,10 +62,10 @@ impl CompanionApp {
                         if ui
                             .add_sized(
                                 [w, 32.0],
-                                egui::Button::new(self.t("Salvați", "Save as file")),
+                                egui::Button::new(self.t("Salvează", "Save as file")),
                             )
                             .on_hover_text(self.t(
-                                "Salvați conversația ca fișier .md în Descărcări",
+                                "Salvează conversația ca fișier .md în Descărcări",
                                 "Save the conversation as a .md file in Downloads",
                             ))
                             .clicked()
@@ -80,7 +80,7 @@ impl CompanionApp {
         }
         ui.add_space(4.0);
         ui.label(
-            RichText::new(self.t("Conversațiile dumneavoastră", "Your conversations"))
+            RichText::new(self.t("Conversațiile tale", "Your conversations"))
                 .semibold()
                 .color(p.muted),
         );
@@ -88,7 +88,7 @@ impl CompanionApp {
         ui.horizontal(|ui| {
             let spacing = ui.spacing().item_spacing.x;
             let clear_w = 38.0 + spacing; // always reserved: the box must not change size while typing
-            let hint = self.t("Căutați… (Ctrl+K)", "Search… (Ctrl+K)");
+            let hint = self.t("Caută… (Ctrl+K)", "Search… (Ctrl+K)");
             let r = ui.add_sized(
                 [(ui.available_width() - clear_w - 2.0).max(60.0), 30.0],
                 egui::TextEdit::singleline(&mut self.chat.search)
@@ -215,12 +215,12 @@ impl CompanionApp {
                             (
                                 self.t("Sigur?", "Sure?"),
                                 self.t(
-                                    "Apăsați încă o dată pentru a șterge",
+                                    "Apasă încă o dată pentru a șterge",
                                     "Press again to delete",
                                 ),
                             )
                         } else {
-                            ("×", self.t("Ștergeți conversația", "Delete conversation"))
+                            ("×", self.t("Șterge conversația", "Delete conversation"))
                         };
                         if ui
                             .add_sized(
@@ -292,8 +292,8 @@ impl CompanionApp {
         let p = self.p;
         ui.add_space(50.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new(self.t("Cu ce vă pot ajuta astăzi?", "How can I help today?")).size(30.0).semibold());
-            ui.label(RichText::new(self.t("Scrieți mai jos sau alegeți o idee. Totul rămâne pe calculatorul dumneavoastră.", "Type below or pick an idea. Everything stays on your computer.")).size(16.0).color(p.muted));
+            ui.label(RichText::new(self.t("Cu ce te pot ajuta astăzi?", "How can I help today?")).size(30.0).semibold());
+            ui.label(RichText::new(self.t("Scrie mai jos sau alege o idee. Totul rămâne pe calculatorul tău.", "Type below or pick an idea. Everything stays on your computer.")).size(16.0).color(p.muted));
             ui.add_space(16.0);
             let ideas: [(&str, &str); 4] = [
                 (self.t("Explică-mi ceva simplu", "Explain something simply"), self.t("Explică-mi, pe înțelesul unui copil de 10 ani, cum funcționează internetul.", "Explain to me, like I'm 10, how the internet works.")),
@@ -319,25 +319,25 @@ impl CompanionApp {
         );
         let w_reading = self.t("Citesc întrebarea… {} s", "Reading your message… {} s");
         let w_block = self.t("Cod", "Code");
-        let w_save = self.t("Salvați ca fișier", "Save as file");
+        let w_save = self.t("Salvează ca fișier", "Save as file");
         let w_preview = self.t("Previzualizare", "Preview");
         let w_ask = self.t(
-            "Pagina se deschide în browser și poate rula scripturi scrise de model. Deschideți-o doar dacă aveți încredere în conținutul afișat mai sus.",
+            "Pagina se deschide în browser și poate rula scripturi scrise de model. Deschide-o doar dacă ai încredere în conținutul afișat mai sus.",
             "The page opens in your browser and may run scripts the model wrote. Open it only if you trust what you see above.",
         );
-        let w_open_anyway = self.t("Deschideți oricum", "Open anyway");
+        let w_open_anyway = self.t("Deschide oricum", "Open anyway");
         let w_cancel = self.t("Renunță", "Cancel");
         let (w_stopped, w_copy, w_regen) = (
             self.t("(oprit înainte de final)", "(stopped before the end)"),
-            self.t("Copiați", "Copy"),
+            self.t("Copiază", "Copy"),
             self.t("Regenerează", "Regenerate"),
         );
         let w_sources = self.t("Surse din documente", "Sources from your documents");
         let w_edit = self.t("Editează", "Edit");
         let w_branch = self.t("Ramifică de aici", "Branch from here");
-        let w_speak = self.t("Citiți cu voce tare", "Read aloud");
-        let w_pin = self.t("Rețineți", "Remember");
-        let w_unspeak = self.t("Opriți citirea", "Stop reading");
+        let w_speak = self.t("Citește cu voce tare", "Read aloud");
+        let w_pin = self.t("Reține", "Remember");
+        let w_unspeak = self.t("Oprește citirea", "Stop reading");
         let speaking = self.is_speaking();
         let last_user = self
             .chat
@@ -569,13 +569,11 @@ impl CompanionApp {
                             .semibold(),
                     );
                     if err.kind == ErrorKind::Busy
-                        && ui
-                            .button(self.t("Încercați din nou", "Try again"))
-                            .clicked()
+                        && ui.button(self.t("Încearcă din nou", "Try again")).clicked()
                     {
                         self.regenerate_or_resend();
                     }
-                    if ui.button(self.t("Închideți", "Dismiss")).clicked() {
+                    if ui.button(self.t("Închide", "Dismiss")).clicked() {
                         self.chat.error = None;
                     }
                 });
@@ -597,7 +595,7 @@ impl CompanionApp {
                             self.t("Modelul se încarcă…", "The model is loading…")
                         } else {
                             self.t(
-                                "Modelul nu rulează în prezent, deci puteți doar citi conversațiile.",
+                                "Modelul nu rulează în prezent, deci poți doar citi conversațiile.",
                                 "The model isn't running, so you can only read your conversations.",
                             )
                         })
@@ -607,7 +605,7 @@ impl CompanionApp {
                     if !loading
                         && self.coli.is_some()
                         && ui
-                            .button(self.t("Porniți modelul", "Start the model"))
+                            .button(self.t("Pornește modelul", "Start the model"))
                             .clicked()
                     {
                         self.start_server();
@@ -656,7 +654,7 @@ impl CompanionApp {
                 }
                 if self.chat.pending_docs.len() > 1
                     && ui
-                        .small_button(self.t("Ștergeți toate", "Remove all"))
+                        .small_button(self.t("Șterge toate", "Remove all"))
                         .clicked()
                 {
                     remove = Some(usize::MAX);
@@ -706,7 +704,7 @@ impl CompanionApp {
             let w = ui.available_width() - 120.0;
             let hint = if can_type {
                 self.t(
-                    "Scrieți aici…  (Enter trimite · Shift+Enter rând nou)",
+                    "Scrie aici…  (Enter trimite · Shift+Enter rând nou)",
                     "Type here…  (Enter sends · Shift+Enter new line)",
                 )
             } else {
@@ -730,7 +728,7 @@ impl CompanionApp {
                 if ui
                     .add(
                         egui::Button::new(
-                            RichText::new(self.t("Opriți", "Stop"))
+                            RichText::new(self.t("Oprește", "Stop"))
                                 .color(p.on_accent)
                                 .semibold(),
                         )
@@ -821,8 +819,8 @@ impl CompanionApp {
 
     pub fn friendly_error(&self, e: &ChatError) -> String {
         match e.kind {
-            ErrorKind::Unreachable => self.t("Nu se poate ajunge la server. Porniți modelul și încercați din nou.", "I can't reach the server. Start the model and try again.").into(),
-            ErrorKind::Busy => self.t("Serverul este ocupat sau încă se încarcă. Încercați din nou peste câteva secunde.", "The server is busy or still loading. Try again in a few seconds.").into(),
+            ErrorKind::Unreachable => self.t("Nu se poate ajunge la server. Pornește modelul și încearcă din nou.", "I can't reach the server. Start the model and try again.").into(),
+            ErrorKind::Busy => self.t("Serverul este ocupat sau încă se încarcă. Încearcă din nou peste câteva secunde.", "The server is busy or still loading. Try again in a few seconds.").into(),
             ErrorKind::Unauthorized => self.t("Serverul cere o cheie API. Adaug-o în Setări → Server.", "The server wants an API key. Add it in Settings → Server.").into(),
             ErrorKind::ContextTooLong => self.t("Conversația a devenit prea lungă pentru acest model. Începe una nouă (stânga sus).", "This conversation got too long for the model. Start a new one (top left).").into(),
             ErrorKind::BadRequest | ErrorKind::Server => self.t("Serverul a răspuns cu o eroare.", "The server answered with an error.").into(),

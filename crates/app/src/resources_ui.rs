@@ -221,7 +221,7 @@ impl CompanionApp {
                     .color(p.ok),
                 );
                 ui.label(self.t(
-                    "Aplicația și motorul colibri comunică doar între ele, în interiorul calculatorului dumneavoastră. Conversațiile dumneavoastră nu sunt trimise nicăieri.",
+                    "Aplicația și motorul colibri comunică doar între ele, în interiorul calculatorului tău. Conversațiile tale nu sunt trimise nicăieri.",
                     "The app and the colibri engine only talk to each other, inside your computer. Your conversations are not sent anywhere.",
                 ));
             });
@@ -241,7 +241,7 @@ impl CompanionApp {
                     self.base()
                 ));
                 ui.label(self.t(
-                    "Așa ați ales în Setări. Reveniți la adresa locală (http://127.0.0.1:8000) pentru ca totul să rămână pe acest calculator.",
+                    "Așa ai ales în Setări. Revino la adresa locală (http://127.0.0.1:8000) pentru ca totul să rămână pe acest calculator.",
                     "You chose this in Settings. Go back to the local address (http://127.0.0.1:8000) to keep everything on this computer.",
                 ));
             });
@@ -255,7 +255,7 @@ impl CompanionApp {
                 ui.label(
                     RichText::new(if expected {
                         self.t(
-                            "Se descarcă ceva, la solicitarea dumneavoastră",
+                            "Se descarcă ceva, la solicitarea ta",
                             "Something is downloading, because you asked for it",
                         )
                     } else {
@@ -380,12 +380,12 @@ impl CompanionApp {
                 });
                 ui.add_space(6.0);
                 ui.label(self.t(
-                    "Puteți verifica și singur, cu instrumentele sistemului dumneavoastră, fără a vă baza pe această aplicație:",
+                    "Poți verifica și singur, cu instrumentele sistemului tău, fără a te baza pe această aplicație:",
                     "You can also check for yourself with your system's own tools, without relying on this app:",
                 ));
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(net::verify_command()).monospace());
-                    if secondary_button(ui, self.t("Copiați", "Copy")).clicked() {
+                    if secondary_button(ui, self.t("Copiază", "Copy")).clicked() {
                         ui.ctx().copy_text(net::verify_command().to_string());
                     }
                 });
@@ -393,7 +393,7 @@ impl CompanionApp {
                     ui,
                     &p,
                     self.t(
-                        "Aceasta este o imagine a momentului de față. Singurele situații în care se utilizează internetul sunt cele solicitate de dumneavoastră: descărcarea lui colibri sau a unui model, verificarea actualizărilor ori platformele conectate de dumneavoastră.",
+                        "Aceasta este o imagine a momentului de față. Singurele situații în care se utilizează internetul sunt cele solicitate de tine: descărcarea lui colibri sau a unui model, verificarea actualizărilor ori platformele conectate de tine.",
                         "This is a snapshot of right now. The only times the internet is used are the ones you ask for: downloading colibri, downloading a model, checking for updates or the platforms you connected.",
                     ),
                 );
@@ -486,7 +486,7 @@ impl CompanionApp {
                             .replacen("{}", u.title.trim(), 1);
                         ui.label(msg);
                         let label = if self.server_ready() {
-                            self.t("Opriți modelul și actualizați", "Stop the model and update")
+                            self.t("Oprește modelul și actualizează", "Stop the model and update")
                         } else {
                             self.t("Actualizează colibri", "Update colibri")
                         };
@@ -508,7 +508,7 @@ impl CompanionApp {
                             )
                             .replacen("{}", &r.tag, 1),
                         );
-                        if secondary_button(ui, self.t("Vedeți descărcarea", "See the download")).clicked() {
+                        if secondary_button(ui, self.t("Vezi descărcarea", "See the download")).clicked() {
                             companion_core::proc::open_externally(&r.url);
                         }
                     }

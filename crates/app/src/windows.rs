@@ -112,7 +112,7 @@ impl CompanionApp {
                         if self.coli.is_some() && !self.demo {
                             if self.server_ready()
                                 && ui
-                                    .button(self.t("Opriți modelul", "Stop the model"))
+                                    .button(self.t("Oprește modelul", "Stop the model"))
                                     .clicked()
                             {
                                 self.stop_server();
@@ -231,7 +231,7 @@ impl CompanionApp {
                     if ui
                         .link(RichText::new(format!("🔒 {privacy}")).small())
                         .on_hover_text(self.t(
-                            "Vedeți resursele utilizate și dovada că nimic nu iese din calculator",
+                            "Vezi resursele utilizate și dovada că nimic nu iese din calculator",
                             "See the resources in use and the proof that nothing leaves your computer",
                         ))
                         .clicked()
@@ -341,7 +341,7 @@ impl CompanionApp {
             ui.separator();
             ui.label(RichText::new(self.t("Server", "Server")).semibold());
             ui.label(RichText::new(self.t(
-                "Lăsați adresa implicită pentru a utiliza colibri instalat de aici. O puteți modifica pentru orice server compatibil OpenAI (doar http://).",
+                "Lasă adresa implicită pentru a utiliza colibri instalat de aici. O poți modifica pentru orice server compatibil OpenAI (doar http://).",
                 "Leave the default to use the colibri installed from here. Change it for any OpenAI-compatible server (http:// only).",
             )).color(p.muted));
             ui.horizontal(|ui| {
@@ -366,7 +366,7 @@ impl CompanionApp {
             );
             ui.checkbox(&mut self.s.check_updates, upd);
             ui.horizontal(|ui| {
-                if secondary_button(ui, self.t("Verificați acum", "Check now")).clicked() {
+                if secondary_button(ui, self.t("Verifică acum", "Check now")).clicked() {
                     self.check_updates(true);
                 }
                 if self.upd.checking {
@@ -381,7 +381,7 @@ impl CompanionApp {
                 if ui.add(egui::TextEdit::singleline(&mut root).desired_width(300.0).hint_text(self.t("(găsit automat)", "(found automatically)"))).changed() {
                     self.s.colibri_root = (!root.trim().is_empty()).then(|| root.trim().into());
                 }
-                if ui.button(self.t("Căutați din nou", "Search again")).clicked() {
+                if ui.button(self.t("Caută din nou", "Search again")).clicked() {
                     self.detect_environment();
                 }
             });
@@ -393,7 +393,7 @@ impl CompanionApp {
                 }
             });
             ui.horizontal(|ui| {
-                if ui.button(self.t("Deschideți folderul conversațiilor", "Open the conversations folder")).clicked() {
+                if ui.button(self.t("Deschide folderul conversațiilor", "Open the conversations folder")).clicked() {
                     let dir = paths::conversations_dir();
                     let _ = std::fs::create_dir_all(&dir);
                     proc::open_externally(&dir.display().to_string());
@@ -454,7 +454,7 @@ impl CompanionApp {
             .open(&mut open)
             .default_width(640.0)
             .show(ctx, |ui| {
-                if ui.button(self.t("Copiați", "Copy")).clicked() {
+                if ui.button(self.t("Copiază", "Copy")).clicked() {
                     ui.ctx().copy_text(text.clone());
                 }
                 egui::ScrollArea::vertical()

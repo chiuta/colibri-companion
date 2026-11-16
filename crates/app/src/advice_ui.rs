@@ -53,12 +53,9 @@ impl CompanionApp {
         let p = self.p;
         let s = &view.snap;
         ui.label(
-            RichText::new(self.t(
-                "Calculatorul dumneavoastră, analizat",
-                "Your computer, analysed",
-            ))
-            .size(17.0)
-            .semibold(),
+            RichText::new(self.t("Calculatorul tău, analizat", "Your computer, analysed"))
+                .size(17.0)
+                .semibold(),
         );
         // ---- graphics cards
         match self.gpus.clone() {
@@ -155,7 +152,7 @@ impl CompanionApp {
                 Tip::SwapHeavy { swap_gb } => {
                     ui.label(
                         self.t(
-                            "Windows mută memorie pe disc ({} GB în swap). Aceasta încetinește totul: închideți programe sau alegeți un model mai mic.",
+                            "Windows mută memorie pe disc ({} GB în swap). Aceasta încetinește totul: închide programe sau alege un model mai mic.",
                             "The system is moving memory to the disk ({} GB of swap). That slows everything down: close programs or pick a smaller model.",
                         )
                         .replacen("{}", &format!("{swap_gb:.1}"), 1),
@@ -183,7 +180,7 @@ impl CompanionApp {
                         );
                     }
                     if ui
-                        .button(self.t("Deschideți lista de modele", "Open the model list"))
+                        .button(self.t("Deschide lista de modele", "Open the model list"))
                         .clicked()
                     {
                         open_models = true;
@@ -197,7 +194,7 @@ impl CompanionApp {
                         .join(", ");
                     ui.label(
                         self.t(
-                            "Alte programe rețin multă memorie: {}. Închideți-le înainte de a genera.",
+                            "Alte programe rețin multă memorie: {}. Închide-le înainte de a genera.",
                             "Other programs hold a lot of memory: {}. Close them before generating.",
                         )
                         .replacen("{}", &names, 1),
@@ -227,7 +224,7 @@ impl CompanionApp {
                 Tip::DiskNearlyFull { free_gb } => {
                     ui.label(
                         self.t(
-                            "Mai aveți doar {} GB liberi pe disc: lăsați loc pentru modele și pentru swap.",
+                            "Mai ai doar {} GB liberi pe disc: lasă loc pentru modele și pentru swap.",
                             "Only {} GB of disk space is free: leave room for models and swap.",
                         )
                         .replacen("{}", &format!("{free_gb:.0}"), 1),
@@ -414,7 +411,7 @@ impl CompanionApp {
                                 if ui
                                     .add_enabled(
                                         !self.ctx_busy,
-                                        egui::Button::new(self.t("Utilizați", "Use")),
+                                        egui::Button::new(self.t("Utilizează", "Use")),
                                     )
                                     .clicked()
                                 {
@@ -456,7 +453,7 @@ impl CompanionApp {
             ui,
             &p,
             self.t(
-                "Modelele uriașe își citesc experții de pe disc, așa că viteza lor depinde mai ales de disc. Un test scurt de citire aleatorie (aproximativ 4 secunde) arată ce puteți aștepta.",
+                "Modelele uriașe își citesc experții de pe disc, așa că viteza lor depinde mai ales de disc. Un test scurt de citire aleatorie (aproximativ 4 secunde) arată ce poți aștepta.",
                 "Huge models read their experts from the drive, so their speed depends mostly on the drive. A short random-read test (about 4 seconds) shows what to expect.",
             ),
         );
@@ -480,11 +477,11 @@ impl CompanionApp {
                         "A fast drive: models that read their experts from it can run acceptably.",
                     ),
                     DiskClass::Fair => (
-                        "Disc mediu: modelele uriașe vor fi lente; preferați modele care încap în memorie.",
+                        "Disc mediu: modelele uriașe vor fi lente; preferă modele care încap în memorie.",
                         "A middling drive: huge models will be slow; prefer models that fit in memory.",
                     ),
                     DiskClass::Slow => (
-                        "Disc lent: modelele care citesc de pe disc vor fi foarte lente. Alegeți doar modele care încap în memorie, sau folosiți un SSD NVMe.",
+                        "Disc lent: modelele care citesc de pe disc vor fi foarte lente. Alege doar modele care încap în memorie, sau folosește un SSD NVMe.",
                         "A slow drive: models that read from it will be very slow. Pick only models that fit in memory, or use an NVMe SSD.",
                     ),
                 };

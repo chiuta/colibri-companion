@@ -2,7 +2,7 @@
 
 [English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · **Magyar**
 
-Egyszerű asztali alkalmazás a [colibrihez](https://github.com/JustVugg/colibri): válasszon a számítógépéhez illő modellt, töltse le egy kattintással, majd csevegjen — minden helyben, fiók és felhő nélkül.
+Egyszerű asztali alkalmazás a [colibrihez](https://github.com/JustVugg/colibri): válassz a számítógépedhez illő modellt, töltsd le egy kattintással, majd csevegj — minden helyben, fiók és felhő nélkül.
 
 ## Indítás
 
@@ -32,11 +32,11 @@ Az alkalmazás nem tartalmazza a colibrit. A colibri JSON-parancsait futtatja (`
 
 Linux (x86-64, ARM64; Wayland és X11), Windows 10/11 és macOS (Intel és Apple Silicon) — egyetlen forráskód, OpenGL-megjelenítés (régi videókártyán és virtuális gépben is fut). A `.github/workflows/build.yml` minden változatot lefordít és tesztel, és kiadásra kész archívumokat készít. Linuxon a `packaging/linux/install.sh` felveszi az alkalmazást a menübe. HiDPI-skálázás, Ctrl/⌘+N, Ctrl/⌘+, és Esc billentyűk, képernyőolvasó-támogatás (AccessKit).
 
-**Dokumentumok és eszközök:** adjon hozzá fájlokat (**Továbbiak → Dokumentumok**), és kérdezzen róluk: az alkalmazás a számítógépén keresi őket (kulcsszavak, felhő nélkül), és a válasz alatt megmutatja a felhasznált részeket. A **Továbbiak → MCP-eszközök** az Ön által hozzáadott és elindított MCP-szervereket köti be; a modell eszközt kérhet, és minden hívás az Ön jóváhagyását kéri (korai funkció, függ attól, hogy a modell követi-e a formátumot).
+**Dokumentumok és eszközök:** adj hozzá fájlokat (**Továbbiak → Dokumentumok**), és kérdezz róluk: az alkalmazás a számítógépeden keresi őket (kulcsszavak, felhő nélkül), és a válasz alatt megmutatja a felhasznált részeket. A **Továbbiak → MCP-eszközök** az általad hozzáadott és elindított MCP-szervereket köti be; a modell eszközt kérhet, és minden hívás a te jóváhagyásodat kéri (korai funkció, függ attól, hogy a modell követi-e a formátumot).
 
-Modellek: tartson több modellt a számítógépén, váltson közöttük, vagy adjon hozzá újakat egyetlen ablakból (**Modellek**); először a számítógépe által futtatható legképesebb modellt javasolja (kevés RAM esetén a szakértőket az SSD-ről olvassa). Sebesség: CUDA az NVIDIA-hoz, Vulkan más grafikus chipekhez, különben a processzor, automatikusan választva. Az **Erőforrások** élőben mutatja a processzor-, memória-, videokártya- és lemezhasználatot, valamint a bizonyítékot, hogy semmi sem hagyja el a számítógépét (az alkalmazás és a motor minden nyitott kapcsolata, és a parancs, amellyel saját maga ellenőrizheti). Ha a colibri hiányzik, az alkalmazás letölti Önnek (git nélkül), és egy napi ellenőrzés (kikapcsolható) jelzi, ha a colibrinek vagy ennek az alkalmazásnak új verziója van.
+Modellek: tarts több modellt a számítógépeden, válts közöttük, vagy adj hozzá újakat egyetlen ablakból (**Modellek**); először a számítógéped által futtatható legképesebb modellt javasolja (kevés RAM esetén a szakértőket az SSD-ről olvassa). Sebesség: CUDA az NVIDIA-hoz, Vulkan más grafikus chipekhez, különben a processzor, automatikusan választva. Az **Erőforrások** élőben mutatja a processzor-, memória-, videokártya- és lemezhasználatot, valamint a bizonyítékot, hogy semmi sem hagyja el a számítógépedet (az alkalmazás és a motor minden nyitott kapcsolata, és a parancs, amellyel magad ellenőrizheted). Ha a colibri hiányzik, az alkalmazás letölti neked (git nélkül), és egy napi ellenőrzés (kikapcsolható) jelzi, ha a colibrinek vagy ennek az alkalmazásnak új verziója van.
 
-**A számítógépe elemzése:** az **Erőforrások** ablakban az alkalmazás magától megtalálja a videokártyákat, és egyszerűen megmondja, elfér-e a modell a memóriában, és miért lehet lassú (swap, más programok, kihasználatlan kártya). Csak tanácsot ad; magától nem módosít beállítást.
+**A számítógéped elemzése:** az **Erőforrások** ablakban az alkalmazás magától megtalálja a videokártyákat, és egyszerűen megmondja, elfér-e a modell a memóriában, és miért lehet lassú (swap, más programok, kihasználatlan kártya). Csak tanácsot ad; magától nem módosít beállítást.
 
 ## Nyelvek
 

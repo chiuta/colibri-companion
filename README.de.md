@@ -2,7 +2,7 @@
 
 [English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · **Deutsch** · [Magyar](README.hu.md)
 
-Eine benutzerfreundliche Desktop-App für [colibri](https://github.com/JustVugg/colibri): Wählen Sie ein Modell, das zu Ihrem Computer passt, laden Sie es mit einem Klick herunter und chatten Sie – alles lokal, ohne Konto und ohne Cloud.
+Eine benutzerfreundliche Desktop-App für [colibri](https://github.com/JustVugg/colibri): Wähle ein Modell, das zu deinem Computer passt, lade es mit einem Klick herunter und chatte – alles lokal, ohne Konto und ohne Cloud.
 
 ## Starten
 
@@ -14,7 +14,7 @@ cargo run --release -p colibri-companion -- --demo  # Demo, ohne colibri
 
 ### Die vier Schritte
 
-(1) findet Python und colibri (und bietet an, colibri herunterzuladen, falls es fehlt), (2) lässt Sie ein Modell wählen (was nicht in den RAM passt, ist ausgeblendet; das empfohlene ist markiert), (3) lädt herunter und installiert mit Fortschrittsanzeige, Pause und Fortsetzen, (4) startet den Server und öffnet den Chat.
+(1) findet Python und colibri (und bietet an, colibri herunterzuladen, falls es fehlt), (2) lässt dich ein Modell wählen (was nicht in den RAM passt, ist ausgeblendet; das empfohlene ist markiert), (3) lädt herunter und installiert mit Fortschrittsanzeige, Pause und Fortsetzen, (4) startet den Server und öffnet den Chat.
 
 Chat: Antworten im Datenstrom, sofortiger Stopp, Markdown, einklappbares Denken, gespeicherte Unterhaltungen, Stil (Präzise / Ausgewogen / Kreativ), Kopieren und Neu generieren. Designs: hell, dunkel, hoher Kontrast.
 
@@ -32,11 +32,11 @@ Die App enthält colibri nicht. Sie führt die JSON-Befehle von colibri aus (`se
 
 Linux (x86-64, ARM64; Wayland und X11), Windows 10/11 und macOS (Intel und Apple Silicon) — eine Codebasis, OpenGL-Darstellung (läuft auch auf alten Grafikkarten und in virtuellen Maschinen). `.github/workflows/build.yml` baut und testet alle Varianten und erzeugt fertige Archive. Unter Linux fügt `packaging/linux/install.sh` die App dem Menü hinzu. HiDPI-Skalierung, Kürzel Strg/⌘+N, Strg/⌘+, und Esc sowie Unterstützung für Screenreader (AccessKit).
 
-**Dokumente und Werkzeuge:** Fügen Sie Dateien hinzu (**Mehr → Dokumente**) und stellen Sie Fragen: Die App durchsucht sie auf Ihrem Computer (Stichwörter, keine Cloud) und zeigt unter jeder Antwort die genutzten Stellen. **Mehr → MCP-Werkzeuge** verbindet MCP-Server, die Sie hinzufügen und starten; das Modell kann ein Werkzeug anfordern, jeder Aufruf braucht Ihre Zustimmung (frühe Funktion, hängt davon ab, ob das Modell das Format befolgt).
+**Dokumente und Werkzeuge:** Füge Dateien hinzu (**Mehr → Dokumente**) und stelle Fragen: Die App durchsucht sie auf deinem Computer (Stichwörter, keine Cloud) und zeigt unter jeder Antwort die genutzten Stellen. **Mehr → MCP-Werkzeuge** verbindet MCP-Server, die du hinzufügst und startest; das Modell kann ein Werkzeug anfordern, jeder Aufruf braucht deine Zustimmung (frühe Funktion, hängt davon ab, ob das Modell das Format befolgt).
 
-Modelle: Halten Sie mehrere auf dem Computer bereit, wechseln Sie zwischen ihnen oder fügen Sie in einem Fenster weitere hinzu (**Modelle**); zuerst wird das leistungsfähigste vorgeschlagen, das Ihr Computer ausführen kann (bei wenig RAM werden die Experten von der SSD gelesen). Tempo: CUDA für NVIDIA, Vulkan für andere Grafikchips, sonst der Prozessor, automatisch gewählt. **Ressourcen** zeigt live Prozessor, Speicher, Grafikkarte und Festplatte sowie den Beweis, dass nichts Ihren Computer verlässt (alle offenen Verbindungen der App und der Engine, mit dem Befehl zur eigenen Überprüfung). Fehlt colibri, wird es für Sie heruntergeladen (ohne git), und eine tägliche Prüfung (abschaltbar) meldet, wenn colibri oder diese App eine neue Version hat.
+Modelle: Halte mehrere auf dem Computer bereit, wechsle zwischen ihnen oder füge in einem Fenster weitere hinzu (**Modelle**); zuerst wird das leistungsfähigste vorgeschlagen, das dein Computer ausführen kann (bei wenig RAM werden die Experten von der SSD gelesen). Tempo: CUDA für NVIDIA, Vulkan für andere Grafikchips, sonst der Prozessor, automatisch gewählt. **Ressourcen** zeigt live Prozessor, Speicher, Grafikkarte und Festplatte sowie den Beweis, dass nichts deinen Computer verlässt (alle offenen Verbindungen der App und der Engine, mit dem Befehl zur eigenen Überprüfung). Fehlt colibri, wird es für dich heruntergeladen (ohne git), und eine tägliche Prüfung (abschaltbar) meldet, wenn colibri oder diese App eine neue Version hat.
 
-**Ihr Computer, analysiert:** Unter **Ressourcen** findet die App Ihre Grafikkarten selbst und sagt einfach, ob das Modell in den Speicher passt und warum es langsam sein kann (Swap, andere Programme, ungenutzte Karte). Sie berät nur; sie ändert nie von selbst eine Einstellung.
+**Dein Computer, analysiert:** Unter **Ressourcen** findet die App deine Grafikkarten selbst und sagt einfach, ob das Modell in den Speicher passt und warum es langsam sein kann (Swap, andere Programme, ungenutzte Karte). Sie berät nur; sie ändert nie von selbst eine Einstellung.
 
 ## Sprachen
 

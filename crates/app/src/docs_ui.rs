@@ -207,7 +207,7 @@ impl CompanionApp {
         let mut remove_doc: Option<(String, String)> = None;
         let hint_new = self.t("Numele unei colecții noi", "Name of a new collection");
         let hint_path = self.t(
-            "Calea către un fișier sau un dosar (puteți și trage fișiere aici)",
+            "Calea către un fișier sau un dosar (poți și trage fișiere aici)",
             "Path to a file or folder (you can also drop files here)",
         );
         egui::Window::new(self.t("Documente", "Documents"))
@@ -220,7 +220,7 @@ impl CompanionApp {
                     ui,
                     &p,
                     self.t(
-                        "Puneți fișiere într-o colecție, apoi alegeți colecția deasupra casetei de scris. Răspunsurile se formulează din pasajele găsite, cu numerele lor. Totul se caută pe acest calculator, fără internet și fără alt model.",
+                        "Pune fișiere într-o colecție, apoi alege colecția deasupra casetei de scris. Răspunsurile se formulează din pasajele găsite, cu numerele lor. Totul se caută pe acest calculator, fără internet și fără alt model.",
                         "Put files in a collection, then pick the collection above the message box. Answers are written from the passages found, with their numbers. Everything is searched on this computer, with no internet and no second model.",
                     ),
                 );
@@ -271,7 +271,7 @@ impl CompanionApp {
                             .hint_text(hint_path)
                             .desired_width(ui.available_width() - 190.0),
                     );
-                    if primary_button(ui, &p, self.t("Adăugați", "Add")).clicked()
+                    if primary_button(ui, &p, self.t("Adaugă", "Add")).clicked()
                         && !self.docs.path_input.trim().is_empty()
                     {
                         add = Some(vec![PathBuf::from(self.docs.path_input.trim())]);
@@ -321,7 +321,7 @@ impl CompanionApp {
                     });
                 ui.add_space(6.0);
                 if ui
-                    .button(self.t("Ștergeți această colecție", "Delete this collection"))
+                    .button(self.t("Șterge această colecție", "Delete this collection"))
                     .clicked()
                 {
                     remove_coll = Some(id.clone());
