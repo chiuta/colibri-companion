@@ -23,13 +23,23 @@ pub fn hide_window(cmd: &mut Command) {
 /// Run `cmd` to completion, killing it when `timeout` passes. Output is captured. On a timeout
 /// the helpers it started are ended too (on Unix through its process group).
 pub fn run_capture(cmd: Command, timeout: Duration) -> io::Result<Output> {
-    run_capture_opts(cmd, None, timeout, true)
+    run_capture_opts(cmd, None, timeout, true, None)
+}
+
+/// [`run_capture`] that also ends the program (and its helpers) as soon as `cancel` becomes true,
+/// failing with `ErrorKind::Interrupted`.
+pub fn run_capture_cancel(
+    cmd: Command,
+    timeout: Duration,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> io::Result<Output> {
+    run_capture_opts(cmd, None, timeout, true, Some(cancel))
 }
 
 /// [`run_capture`] for a program that is meant to leave something running (`coli start
 /// --background`): on a timeout only the program itself is ended, never a server it launched.
 pub fn run_capture_keep(cmd: Command, timeout: Duration) -> io::Result<Output> {
-    run_capture_opts(cmd, None, timeout, false)
+    run_capture_opts(cmd, None, timeout, false, None)
 }
 
 /// Most bytes kept from one stream of a captured command; the rest is read and thrown away so
@@ -87,7 +97,7 @@ pub fn run_capture_input(
     input: Option<Vec<u8>>,
     timeout: Duration,
 ) -> io::Result<Output> {
-    run_capture_opts(cmd, input, timeout, true)
+    run_capture_opts(cmd, input, timeout, true, None)
 }
 
 fn run_capture_opts(
@@ -95,6 +105,7 @@ fn run_capture_opts(
     input: Option<Vec<u8>>,
     timeout: Duration,
     tree: bool,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> io::Result<Output> {
     hide_window(&mut cmd);
     #[cfg(unix)]
@@ -124,6 +135,15 @@ fn run_capture_opts(
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
+        }
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst)) {
+            if tree {
+                kill_group(&child);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            drop((t_out, t_err));
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
         }
         if start.elapsed() > timeout {
             if tree {

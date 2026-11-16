@@ -1,7 +1,7 @@
 # LegatorOCR integration (library only)
 
-Status: implemented as a library in `crates/core/src/legatorocr.rs`. **No window of the app
-calls it yet.** Tested against a real `legatorocr 0.2.0-pre.65` binary on one generated page of
+Status: library in `crates/core/src/legatorocr.rs`, wired into the Documents window by
+`crates/app/src/ocr_ui.rs` (section "Scanned files (LegatorOCR)"). Tested against a real `legatorocr 0.2.0-pre.65` binary on one generated page of
 clean synthetic text; never on a real scan of a book.
 
 ## What it does
@@ -35,9 +35,16 @@ program's error output; nothing starts unless called.
   them (on the test machine the Romanian and Hungarian models were missing).
 - Page numbers are lost: the whole scan is one document, so a citation names the scan, not the page.
 - The library search is keyword based (BM25), as for every document.
-- Not wired into the UI. Doing so means a "Read a scan" button in the Documents window, a choice of
-  language, progress and cancel (the run can take minutes), a hint when the program is missing, and
-  texts in the 8 languages; that touches `docs_ui.rs` and `i18n.rs`, so it was left out.
+- The window shows the section only when the program is found (searched once, in the
+  background, when the window opens; nothing is downloaded or started by itself). Without it only
+  a hint with `github.com/chiuta/LegatorOCR` and a "Look again" button appear.
+- The run is a background thread with a Stop button; LegatorOCR gives no progress figure, so the
+  window shows elapsed seconds, not a percentage. Closing the whole app during a run is not
+  handled specially.
+- The language list is the 8 app languages mapped to Tesseract codes; whether one works depends
+  on the data installed for LegatorOCR (`legatorocr --doctor`). The app does not check this
+  beforehand: a missing language comes back as the program's own error message.
+- Dropped page images (not PDFs) go to the scan field when the program is found.
 
 ## Try it
 

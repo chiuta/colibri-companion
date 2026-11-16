@@ -10,7 +10,7 @@
 //! recognised text is data, not instructions (the library already tells the model so). The text is
 //! only as good as the OCR: it is never presented as a verified transcription.
 //!
-//! Status: library only. No window of the app calls this yet; see `docs/legatorocr-integration.md`.
+//! Status: used by the Documents window (`crates/app/src/ocr_ui.rs`); see `docs/legatorocr-integration.md`.
 
 use crate::proc;
 use crate::rag::{AddError, Library};
@@ -20,6 +20,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 /// Name of the program, without a platform extension.
@@ -43,6 +44,8 @@ pub enum OcrError {
     Run(String),
     /// The program finished but wrote no text (blank pages, or no OCR engine for the language).
     NoText,
+    /// The user stopped the run.
+    Cancelled,
 }
 
 /// Image and PDF kinds LegatorOCR reads as scans.
@@ -222,6 +225,18 @@ pub fn read_scan(
     work: &Path,
     timeout: Duration,
 ) -> Result<String, OcrError> {
+    read_scan_cancel(bin, scan, lang, work, timeout, &AtomicBool::new(false))
+}
+
+/// [`read_scan`] that ends the program as soon as `cancel` becomes true (`OcrError::Cancelled`).
+pub fn read_scan_cancel(
+    bin: &Path,
+    scan: &Path,
+    lang: &str,
+    work: &Path,
+    timeout: Duration,
+    cancel: &AtomicBool,
+) -> Result<String, OcrError> {
     let lang = clean_lang(lang).ok_or_else(|| OcrError::Run("bad language code".into()))?;
     let inputs = collect_inputs(scan);
     if inputs.is_empty() {
@@ -236,8 +251,13 @@ pub fn read_scan(
         txt: txt.clone(),
         out_dir: work.join("pages"),
     };
-    let out = proc::run_capture(build_command(bin, &job), timeout)
-        .map_err(|e| OcrError::Run(e.to_string()))?;
+    let out = proc::run_capture_cancel(build_command(bin, &job), timeout, cancel).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::Interrupted {
+            OcrError::Cancelled
+        } else {
+            OcrError::Run(e.to_string())
+        }
+    })?;
     if !out.status.success() {
         return Err(OcrError::Failed(tail_lines(&out.stderr)));
     }

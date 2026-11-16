@@ -96,6 +96,14 @@ pub enum Event {
         name: String,
         result: Result<companion_core::attach::Extracted, companion_core::attach::AttachError>,
     },
+    /// The search for an installed LegatorOCR ended: its path and version line, or nothing.
+    OcrProbe(Option<(PathBuf, String)>),
+    /// A LegatorOCR run ended: the recognised text, or why not.
+    OcrDone {
+        coll: String,
+        name: String,
+        result: Result<String, companion_core::legatorocr::OcrError>,
+    },
     Summary {
         conv: String,
         upto: usize,
@@ -2272,6 +2280,8 @@ impl CompanionApp {
             Event::DuelEnd { round, side, err } => self.duel_end(round, side, err),
             Event::Memory(b) => self.memory_built(*b),
             Event::DocsRead { coll, name, result } => self.docs_read(coll, name, result),
+            Event::OcrProbe(found) => self.ocr_probed(found),
+            Event::OcrDone { coll, name, result } => self.ocr_done(coll, name, result),
             Event::McpStarted { name, result } => self.mcp_started(name, result),
             Event::McpResult { req, result } => self.mcp_result(req, result),
             Event::McpManual(r) => self.mcp_manual_result(r),

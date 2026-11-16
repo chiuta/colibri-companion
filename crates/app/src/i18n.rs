@@ -12668,6 +12668,193 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A beállításkeresés fut: állítsd le előbb.",
         ],
     ),
+    (
+        "Scanned files (LegatorOCR)",
+        [
+            "Fichiers numérisés (LegatorOCR)",
+            "File scansionati (LegatorOCR)",
+            "Archivos escaneados (LegatorOCR)",
+            "Ficheiros digitalizados (LegatorOCR)",
+            "Gescannte Dateien (LegatorOCR)",
+            "Beolvasott fájlok (LegatorOCR)",
+        ],
+    ),
+    (
+        "To read scans and photos of pages you need the program LegatorOCR (free, MIT licence), which is not installed here. I never download or start anything by myself: you install it from the address below, then press “Look again”.",
+        [
+            "Pour lire des numérisations et des photos de pages, il te faut le programme LegatorOCR (gratuit, licence MIT), qui n'est pas installé ici. Je ne télécharge ni ne lance rien toute seule : tu l'installes à l'adresse ci-dessous, puis tu appuies sur « Chercher à nouveau ».",
+            "Per leggere scansioni e foto di pagine ti serve il programma LegatorOCR (gratuito, licenza MIT), che qui non è installato. Non scarico e non avvio nulla da sola: lo installi tu dall'indirizzo qui sotto, poi premi «Cerca di nuovo».",
+            "Para leer escaneos y fotos de páginas necesitas el programa LegatorOCR (gratuito, licencia MIT), que no está instalado aquí. No descargo ni arranco nada por mi cuenta: lo instalas tú desde la dirección de abajo y luego pulsas «Buscar de nuevo».",
+            "Para ler digitalizações e fotos de páginas precisas do programa LegatorOCR (gratuito, licença MIT), que não está instalado aqui. Não descarrego nem inicio nada por conta própria: instalas tu a partir do endereço abaixo e depois carregas em «Procurar de novo».",
+            "Um Scans und Fotos von Seiten zu lesen, brauchst du das Programm LegatorOCR (kostenlos, MIT-Lizenz), das hier nicht installiert ist. Ich lade nichts von allein herunter und starte nichts von allein: Du installierst es von der Adresse unten und drückst dann auf „Erneut suchen“.",
+            "A lapok beolvasott képeinek és fényképeinek olvasásához szükséged van a LegatorOCR programra (ingyenes, MIT-licenc), amely itt nincs telepítve. Magamtól semmit nem töltök le és nem indítok el: te telepíted az alábbi címről, utána nyomd meg a „Keresés újra” gombot.",
+        ],
+    ),
+    (
+        "Look again",
+        [
+            "Chercher à nouveau",
+            "Cerca di nuovo",
+            "Buscar de nuevo",
+            "Procurar de novo",
+            "Erneut suchen",
+            "Keresés újra",
+        ],
+    ),
+    (
+        "LegatorOCR reads the scan on this computer and the recognised text goes into the chosen collection, under the file name followed by “(OCR)”. It is optical recognition, not a checked transcription: there can be mistakes. Citations name the scan, not the page. A whole book can take minutes.",
+        [
+            "LegatorOCR lit la numérisation sur cet ordinateur et le texte reconnu entre dans la collection choisie, sous le nom du fichier suivi de « (OCR) ». C'est de la reconnaissance optique, pas une transcription vérifiée : il peut y avoir des erreurs. Les citations nomment la numérisation, pas la page. Un livre entier peut prendre des minutes.",
+            "LegatorOCR legge la scansione su questo computer e il testo riconosciuto entra nella raccolta scelta, con il nome del file seguito da «(OCR)». È riconoscimento ottico, non una trascrizione verificata: possono esserci errori. Le citazioni indicano la scansione, non la pagina. Un libro intero può richiedere minuti.",
+            "LegatorOCR lee el escaneo en este ordenador y el texto reconocido entra en la colección elegida, con el nombre del archivo seguido de «(OCR)». Es reconocimiento óptico, no una transcripción verificada: puede haber errores. Las citas nombran el escaneo, no la página. Un libro entero puede tardar minutos.",
+            "O LegatorOCR lê a digitalização neste computador e o texto reconhecido entra na coleção escolhida, com o nome do ficheiro seguido de «(OCR)». É reconhecimento ótico, não uma transcrição verificada: pode haver erros. As citações indicam a digitalização, não a página. Um livro inteiro pode demorar minutos.",
+            "LegatorOCR liest den Scan auf diesem Computer, und der erkannte Text kommt in die gewählte Sammlung, unter dem Dateinamen mit dem Zusatz „(OCR)“. Das ist optische Texterkennung, keine geprüfte Abschrift: Es kann Fehler geben. Zitate nennen den Scan, nicht die Seite. Ein ganzes Buch kann Minuten dauern.",
+            "A LegatorOCR ezen a számítógépen olvassa be a lapot, és a felismert szöveg a kiválasztott gyűjteménybe kerül, a fájl nevével és az „(OCR)” jelzéssel. Ez optikai felismerés, nem ellenőrzött átirat: lehetnek benne hibák. Az idézetek a beolvasott fájlt nevezik meg, nem az oldalt. Egy egész könyv percekig tarthat.",
+        ],
+    ),
+    (
+        "Path to a scan (image, PDF) or a folder of pages",
+        [
+            "Chemin d'une numérisation (image, PDF) ou d'un dossier de pages",
+            "Percorso di una scansione (immagine, PDF) o di una cartella di pagine",
+            "Ruta de un escaneo (imagen, PDF) o de una carpeta de páginas",
+            "Caminho de uma digitalização (imagem, PDF) ou de uma pasta de páginas",
+            "Pfad zu einem Scan (Bild, PDF) oder zu einem Ordner mit Seiten",
+            "Egy beolvasott fájl (kép, PDF) vagy egy oldalmappa elérési útja",
+        ],
+    ),
+    (
+        "Language of the scan:",
+        [
+            "Langue de la numérisation :",
+            "Lingua della scansione:",
+            "Idioma del escaneo:",
+            "Idioma da digitalização:",
+            "Sprache des Scans:",
+            "A beolvasott lap nyelve:",
+        ],
+    ),
+    (
+        "The language needs its recognition data installed for LegatorOCR; “legatorocr --doctor” lists the ones available.",
+        [
+            "La langue doit avoir ses données de reconnaissance installées pour LegatorOCR ; « legatorocr --doctor » liste celles qui sont disponibles.",
+            "La lingua deve avere installati i suoi dati di riconoscimento per LegatorOCR; «legatorocr --doctor» elenca quelli disponibili.",
+            "El idioma necesita tener instalados sus datos de reconocimiento para LegatorOCR; «legatorocr --doctor» muestra los disponibles.",
+            "O idioma precisa de ter instalados os seus dados de reconhecimento para o LegatorOCR; «legatorocr --doctor» lista os disponíveis.",
+            "Für die Sprache müssen ihre Erkennungsdaten für LegatorOCR installiert sein; „legatorocr --doctor“ listet die verfügbaren auf.",
+            "A nyelvhez telepíteni kell a LegatorOCR felismerési adatait; a „legatorocr --doctor” kilistázza az elérhetőket.",
+        ],
+    ),
+    (
+        "Read the scan",
+        [
+            "Lire la numérisation",
+            "Leggi la scansione",
+            "Leer el escaneo",
+            "Ler a digitalização",
+            "Scan lesen",
+            "Beolvasott lap olvasása",
+        ],
+    ),
+    (
+        "LegatorOCR is reading… {} s (it gives no percentage; this can take minutes)",
+        [
+            "LegatorOCR lit… {} s (il ne donne pas de pourcentage ; cela peut prendre des minutes)",
+            "LegatorOCR sta leggendo… {} s (non dà una percentuale; può richiedere minuti)",
+            "LegatorOCR está leyendo… {} s (no da un porcentaje; puede tardar minutos)",
+            "O LegatorOCR está a ler… {} s (não dá uma percentagem; pode demorar minutos)",
+            "LegatorOCR liest… {} s (es gibt keine Prozentangabe; das kann Minuten dauern)",
+            "A LegatorOCR olvas… {} mp (nem ad százalékot; percekig tarthat)",
+        ],
+    ),
+    (
+        "The text was very long: only the beginning was kept.",
+        [
+            "Le texte était très long : seul le début a été gardé.",
+            "Il testo era molto lungo: è stato tenuto solo l'inizio.",
+            "El texto era muy largo: solo se conservó el principio.",
+            "O texto era muito longo: só se manteve o início.",
+            "Der Text war sehr lang: Nur der Anfang wurde behalten.",
+            "A szöveg nagyon hosszú volt: csak az eleje maradt meg.",
+        ],
+    ),
+    (
+        "LegatorOCR is not installed, or I could not find it.",
+        [
+            "LegatorOCR n'est pas installé, ou je ne l'ai pas trouvé.",
+            "LegatorOCR non è installato, oppure non l'ho trovato.",
+            "LegatorOCR no está instalado, o no lo he encontrado.",
+            "O LegatorOCR não está instalado, ou não o encontrei.",
+            "LegatorOCR ist nicht installiert, oder ich habe es nicht gefunden.",
+            "A LegatorOCR nincs telepítve, vagy nem találtam meg.",
+        ],
+    ),
+    (
+        "I found no page image or PDF there. Give me an image, a PDF or a folder of scanned pages.",
+        [
+            "Je n'ai trouvé là aucune image de page ni PDF. Donne-moi une image, un PDF ou un dossier de pages numérisées.",
+            "Lì non ho trovato nessuna immagine di pagina né PDF. Dammi un'immagine, un PDF o una cartella di pagine scansionate.",
+            "Ahí no he encontrado ninguna imagen de página ni PDF. Dame una imagen, un PDF o una carpeta de páginas escaneadas.",
+            "Aí não encontrei nenhuma imagem de página nem PDF. Dá-me uma imagem, um PDF ou uma pasta de páginas digitalizadas.",
+            "Dort habe ich kein Seitenbild und kein PDF gefunden. Gib mir ein Bild, ein PDF oder einen Ordner mit gescannten Seiten.",
+            "Ott nem találtam oldalképet vagy PDF-et. Adj meg egy képet, egy PDF-et vagy egy beolvasott oldalakat tartalmazó mappát.",
+        ],
+    ),
+    (
+        "LegatorOCR finished but found no text (blank pages, or no recognition data for this language).",
+        [
+            "LegatorOCR a terminé mais n'a trouvé aucun texte (pages vides, ou pas de données de reconnaissance pour cette langue).",
+            "LegatorOCR ha finito ma non ha trovato testo (pagine vuote, o nessun dato di riconoscimento per questa lingua).",
+            "LegatorOCR terminó pero no encontró texto (páginas en blanco, o sin datos de reconocimiento para este idioma).",
+            "O LegatorOCR terminou mas não encontrou texto (páginas em branco, ou sem dados de reconhecimento para este idioma).",
+            "LegatorOCR ist fertig, hat aber keinen Text gefunden (leere Seiten oder keine Erkennungsdaten für diese Sprache).",
+            "A LegatorOCR végzett, de nem talált szöveget (üres lapok, vagy nincs felismerési adat ehhez a nyelvhez).",
+        ],
+    ),
+    (
+        "Reading was stopped.",
+        [
+            "La lecture a été arrêtée.",
+            "La lettura è stata fermata.",
+            "Se detuvo la lectura.",
+            "A leitura foi parada.",
+            "Das Lesen wurde gestoppt.",
+            "Az olvasást leállítottam.",
+        ],
+    ),
+    (
+        "LegatorOCR could not read the scan. The data for the chosen language may be missing (see “legatorocr --doctor”). The program said:",
+        [
+            "LegatorOCR n'a pas pu lire la numérisation. Les données de la langue choisie manquent peut-être (voir « legatorocr --doctor »). Le programme a dit :",
+            "LegatorOCR non è riuscito a leggere la scansione. Forse mancano i dati della lingua scelta (vedi «legatorocr --doctor»). Il programma ha detto:",
+            "LegatorOCR no pudo leer el escaneo. Puede que falten los datos del idioma elegido (mira «legatorocr --doctor»). El programa dijo:",
+            "O LegatorOCR não conseguiu ler a digitalização. Podem faltar os dados do idioma escolhido (vê «legatorocr --doctor»). O programa disse:",
+            "LegatorOCR konnte den Scan nicht lesen. Vielleicht fehlen die Daten der gewählten Sprache (siehe „legatorocr --doctor“). Das Programm sagte:",
+            "A LegatorOCR nem tudta elolvasni a beolvasott lapot. Lehet, hogy hiányoznak a kiválasztott nyelv adatai (lásd: „legatorocr --doctor”). A program ezt mondta:",
+        ],
+    ),
+    (
+        "LegatorOCR took longer than allowed, so I stopped it.",
+        [
+            "LegatorOCR a dépassé le temps autorisé, alors je l'ai arrêté.",
+            "LegatorOCR ha superato il tempo consentito, quindi l'ho fermato.",
+            "LegatorOCR superó el tiempo permitido, así que lo detuve.",
+            "O LegatorOCR excedeu o tempo permitido, por isso parei-o.",
+            "LegatorOCR hat länger als erlaubt gebraucht, deshalb habe ich es gestoppt.",
+            "A LegatorOCR a megengedettnél tovább tartott, ezért leállítottam.",
+        ],
+    ),
+    (
+        "I could not start LegatorOCR:",
+        [
+            "Je n'ai pas pu lancer LegatorOCR :",
+            "Non sono riuscito ad avviare LegatorOCR:",
+            "No pude arrancar LegatorOCR:",
+            "Não consegui iniciar o LegatorOCR:",
+            "Ich konnte LegatorOCR nicht starten:",
+            "Nem tudtam elindítani a LegatorOCR-t:",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
@@ -13607,6 +13794,7 @@ mod tests {
             include_str!("light_ui.rs"),
             include_str!("verify_ui.rs"),
             include_str!("meter_ui.rs"),
+            include_str!("ocr_ui.rs"),
         ];
         let (mut checked, mut missing) = (0, Vec::new());
         for src in sources {

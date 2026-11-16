@@ -23,6 +23,7 @@ pub struct DocsState {
     pub busy: usize,
     pub message: String,
     pub verify: crate::verify_ui::VerifyState,
+    pub ocr: crate::ocr_ui::OcrState,
     searcher: Option<(String, u64, Searcher)>,
 }
 
@@ -44,6 +45,7 @@ impl CompanionApp {
                 .or_else(|| self.docs.lib.collections.first().map(|c| c.id.clone()));
         }
         self.docs.open = true;
+        self.ocr_probe();
     }
 
     pub fn load_docs(&mut self) {
@@ -323,6 +325,8 @@ impl CompanionApp {
                 ui.add_space(6.0);
                 self.verify_section(ui, &id);
                 ui.add_space(6.0);
+                self.ocr_section(ui, &id);
+                ui.add_space(6.0);
                 if ui
                     .button(self.t("Șterge această colecție", "Delete this collection"))
                     .clicked()
@@ -340,8 +344,12 @@ impl CompanionApp {
                     .map(|f| f.path().to_path_buf())
                     .collect()
             });
-            if !dropped.is_empty() {
-                add = Some(dropped);
+            let (for_docs, for_ocr) = crate::ocr_ui::route_dropped(&dropped, self.docs.ocr.found());
+            if let Some(p) = for_ocr {
+                self.docs.ocr.path = p.to_string_lossy().into_owned();
+            }
+            if !for_docs.is_empty() {
+                add = Some(for_docs);
             }
         }
         if create {
