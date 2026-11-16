@@ -280,7 +280,7 @@ impl CompanionApp {
                 });
                 ui.label(
                     RichText::new(
-                        self.t("{} documente · {} pasaje", "{} documents · {} passages")
+                        self.t("documente: {} · pasaje: {}", "documents: {} · passages: {}")
                             .replacen("{}", &doc_list.len().to_string(), 1)
                             .replacen("{}", &total_chunks.to_string(), 1),
                     )
@@ -299,7 +299,7 @@ impl CompanionApp {
                     ui.label(RichText::new(&self.docs.message).color(p.bad));
                 }
                 egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
+                    .auto_shrink([false, true])
                     .max_height(360.0)
                     .show(ui, |ui| {
                         for d in &doc_list {
@@ -307,7 +307,7 @@ impl CompanionApp {
                                 ui.label(&d.name);
                                 ui.label(
                                     RichText::new(
-                                        self.t("{} pasaje", "{} passages")
+                                        self.t("pasaje: {}", "passages: {}")
                                             .replacen("{}", &d.chunks.to_string(), 1),
                                     )
                                     .small()

@@ -10886,6 +10886,28 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Hívás elutasítva.",
         ],
     ),
+    (
+        "documents: {} · passages: {}",
+        [
+            "documents : {} · passages : {}",
+            "documenti: {} · passaggi: {}",
+            "documentos: {} · pasajes: {}",
+            "documentos: {} · trechos: {}",
+            "Dokumente: {} · Abschnitte: {}",
+            "dokumentumok: {} · szakaszok: {}",
+        ],
+    ),
+    (
+        "passages: {}",
+        [
+            "passages : {}",
+            "passaggi: {}",
+            "pasajes: {}",
+            "trechos: {}",
+            "Abschnitte: {}",
+            "szakaszok: {}",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
