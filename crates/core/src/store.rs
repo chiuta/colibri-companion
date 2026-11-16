@@ -191,6 +191,9 @@ pub struct Settings {
     pub apple_gpu: bool,
     /// AMD Ryzen AI NPU through colibri's experimental XDNA path (Windows). Off unless asked for.
     pub use_npu: bool,
+    /// colibri's `balanced` policy: it moves the experts it keeps in memory toward the ones the
+    /// conversation actually uses, without changing any answer. Off by default (colibri's default).
+    pub adaptive_cache: bool,
     /// Unix seconds of the last check.
     pub last_update_check: u64,
     /// The document collection the chat answers from, when the person turned it on.
@@ -221,6 +224,7 @@ impl Default for Settings {
             check_updates: true,
             apple_gpu: true,
             use_npu: false,
+            adaptive_cache: false,
             last_update_check: 0,
         }
     }

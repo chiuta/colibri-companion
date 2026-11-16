@@ -36,6 +36,11 @@ pub enum Event {
     Catalog(Result<Vec<ModelInfo>, String>),
     Hardware(Result<Hardware, String>),
     Gpus(Vec<companion_core::gpu::GpuInfo>),
+    Plan {
+        dir: PathBuf,
+        result: Result<companion_core::coli::PlanSummary, String>,
+    },
+    Tuned(Result<companion_core::coli::TuneOutcome, String>),
     Status(Result<StatusReport, String>),
     Health(Health),
     ModelIds(Vec<String>),
@@ -334,6 +339,11 @@ pub struct CompanionApp {
     pub npu: Option<String>,
     /// Graphics cards the operating system reports; `None` while still looking.
     pub gpus: Option<Vec<companion_core::gpu::GpuInfo>>,
+    /// colibri's placement plan for the model that is set up, and the folder it was asked for.
+    pub plan: Option<Result<companion_core::coli::PlanSummary, String>>,
+    pub plan_asked: Option<PathBuf>,
+    pub tuning: bool,
+    pub tune_note: Option<String>,
     pub upd: UpdateState,
     update_after_stop: bool,
     pub res: Option<ResView>,
@@ -446,6 +456,10 @@ impl CompanionApp {
             show_resources: false,
             npu: None,
             gpus: None,
+            plan: None,
+            plan_asked: None,
+            tuning: false,
+            tune_note: None,
             upd: UpdateState::default(),
             update_after_stop: false,
             res: None,
@@ -1175,7 +1189,67 @@ impl CompanionApp {
         {
             env.push(("COLI_XDNA".to_string(), "1".to_string()));
         }
+        if self.s.adaptive_cache {
+            env.push(("COLI_POLICY".to_string(), "balanced".to_string()));
+        }
         env
+    }
+
+    /// The folder of the model colibri is set up for, when there is one.
+    pub fn active_model_dir(&self) -> Option<PathBuf> {
+        self.status
+            .as_ref()?
+            .setup
+            .as_ref()?
+            .model_dir
+            .clone()
+            .map(PathBuf::from)
+    }
+
+    /// Asks colibri for its placement plan once per model folder.
+    pub fn fetch_plan_once(&mut self) {
+        let (Some(dir), Some(mut coli)) = (self.active_model_dir(), self.coli.clone()) else {
+            return;
+        };
+        if self.plan_asked.as_deref() == Some(dir.as_path()) {
+            return;
+        }
+        coli.env = self.accel_env();
+        self.plan_asked = Some(dir.clone());
+        self.plan = None;
+        self.spawn(move |tx| {
+            let result = coli.plan(&dir);
+            let _ = tx.send(Event::Plan { dir, result });
+        });
+    }
+
+    /// Stops the server, lets colibri measure its quality-preserving settings on this model and
+    /// computer (a few minutes), then starts the server again so the saved profile applies.
+    pub fn run_tune(&mut self) {
+        let (Some(dir), Some(mut coli)) = (self.active_model_dir(), self.coli.clone()) else {
+            return;
+        };
+        if self.tuning {
+            return;
+        }
+        coli.env = self.accel_env();
+        self.tuning = true;
+        self.tune_note = None;
+        self.stop_generation();
+        let log = paths::logs_dir().join("tune.log");
+        self.spawn(move |tx| {
+            let _ = coli.stop_server();
+            let result = match coli.spawn_tune(&dir, &log) {
+                Ok(mut child) => {
+                    let _ = child.wait();
+                    let text = std::fs::read_to_string(&log).unwrap_or_default();
+                    Ok(companion_core::coli::parse_tune_log(&text))
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = coli.start_server();
+            let _ = tx.send(Event::Tuned(result));
+        });
     }
 
     pub fn start_server(&mut self) {
@@ -1850,6 +1924,39 @@ impl CompanionApp {
                 self.catalog = r.map(Loadable::Ready).unwrap_or_else(Loadable::Failed)
             }
             Event::Gpus(list) => self.gpus = Some(list),
+            Event::Plan { dir, result } => {
+                if self.plan_asked.as_deref() == Some(dir.as_path()) {
+                    self.plan = Some(result);
+                }
+            }
+            Event::Tuned(r) => {
+                use companion_core::coli::TuneOutcome;
+                self.tuning = false;
+                self.plan = None;
+                self.plan_asked = None;
+                self.tune_note = Some(match r {
+                    Ok(TuneOutcome::Faster { before, after }) => self
+                        .t(
+                            "Măsurat: {} → {} jetoane/s. Setarea mai rapidă este salvată și se aplică la pornire.",
+                            "Measured: {} → {} tokens/s. The faster setting is saved and applied at start.",
+                        )
+                        .replacen("{}", &format!("{before:.1}"), 1)
+                        .replacen("{}", &format!("{after:.1}"), 1),
+                    Ok(TuneOutcome::Unchanged) => self
+                        .t(
+                            "Nicio setare nu a depășit pragul de siguranță și câștig: nu s-a schimbat nimic.",
+                            "No setting cleared the safety and gain thresholds: nothing was changed.",
+                        )
+                        .to_string(),
+                    Ok(TuneOutcome::Unknown) => self
+                        .t(
+                            "Măsurarea s-a încheiat, dar rezultatul nu a putut fi citit. Consultați jurnalul.",
+                            "Tuning finished, but the result could not be read. Check the log.",
+                        )
+                        .to_string(),
+                    Err(e) => e,
+                });
+            }
             Event::Hardware(r) => {
                 self.hardware = r.map(Loadable::Ready).unwrap_or_else(Loadable::Failed)
             }

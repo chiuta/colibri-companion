@@ -231,9 +231,117 @@ impl CompanionApp {
                 }
             }
         }
+        self.speed_section(ui);
         if open_models {
             self.set_resources_open(false);
             self.show_models = true;
         }
+    }
+
+    /// colibri's own plan for the model that is set up, and the way to have it measure itself.
+    fn speed_section(&mut self, ui: &mut Ui) {
+        let p = self.p;
+        if self.active_model_dir().is_none() {
+            return;
+        }
+        self.fetch_plan_once();
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(self.t("Viteza pe acest calculator", "Speed on this computer"))
+                .size(15.0)
+                .semibold(),
+        );
+        match self.plan.clone() {
+            None => {
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new());
+                    ui.label(self.t(
+                        "colibri calculează planul…",
+                        "colibri is working out its plan…",
+                    ));
+                });
+            }
+            Some(Err(_)) => muted(
+                ui,
+                &p,
+                self.t(
+                    "Planul colibri nu a putut fi citit pentru acest model.",
+                    "colibri's plan could not be read for this model.",
+                ),
+            ),
+            Some(Ok(plan)) => {
+                if plan.reads_disk() {
+                    ui.label(
+                        self.t(
+                            "{} GB din experții modelului rămân pe disc; {} GB de memorie sunt rezervați pentru cache-ul de experți. În medie, {}% dintre experții necesari se găsesc deja în memorie.",
+                            "{} GB of the model's experts stay on the disk; {} GB of memory is reserved for the expert cache. On average {}% of the experts needed are already in memory.",
+                        )
+                        .replacen("{}", &format!("{:.0}", plan.cold_gb), 1)
+                        .replacen("{}", &format!("{:.1}", plan.cache_gb), 1)
+                        .replacen("{}", &format!("{:.0}", plan.hit_rate * 100.0), 1),
+                    );
+                } else {
+                    muted(
+                        ui,
+                        &p,
+                        self.t(
+                            "Modelul încape în memorie: nu se citește nimic de pe disc în timpul răspunsului.",
+                            "The model fits in memory: nothing is read from the disk while it answers.",
+                        ),
+                    );
+                }
+                for w in plan.warnings.iter().take(3) {
+                    muted(ui, &p, w);
+                }
+            }
+        }
+        ui.add_space(4.0);
+        let busy = self.tuning;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    !busy,
+                    egui::Button::new(self.t(
+                        "Măsoară și optimizează (câteva minute)",
+                        "Measure and optimise (a few minutes)",
+                    )),
+                )
+                .clicked()
+            {
+                self.run_tune();
+            }
+            if busy {
+                ui.add(egui::Spinner::new());
+            }
+        });
+        if busy {
+            muted(
+                ui,
+                &p,
+                self.t(
+                    "colibri încearcă pe rând setările sigure (citire directă, suprapunerea citirilor, fire, dimensiunea cache-ului) și le păstrează doar pe cele mai rapide, fără să schimbe răspunsurile. Modelul este oprit cât durează și repornit la sfârșit.",
+                    "colibri tries its safe settings one by one (direct reads, overlapped reads, threads, cache size) and keeps only the fastest, without changing any answer. The model is stopped meanwhile and restarted at the end.",
+                ),
+            );
+        }
+        if let Some(note) = self.tune_note.clone() {
+            ui.label(note);
+        }
+        let label = self.t(
+            "Adaptează cache-ul de experți la conversația curentă (politica «balanced» din colibri; nu schimbă răspunsurile)",
+            "Adapt the expert cache to the current conversation (colibri's “balanced” policy; it does not change answers)",
+        );
+        if ui.checkbox(&mut self.s.adaptive_cache, label).changed() {
+            self.plan = None;
+            self.plan_asked = None;
+        }
+        muted(
+            ui,
+            &p,
+            self.t(
+                "Se aplică la următoarea pornire a modelului.",
+                "Applies the next time the model starts.",
+            ),
+        );
     }
 }

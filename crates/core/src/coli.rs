@@ -388,6 +388,122 @@ impl StatusReport {
     }
 }
 
+// ------------------------------------------------------------------ colibri's own placement plan
+
+/// What `coli plan --json` says about this model on this computer: where the weights are kept
+/// and what limits the speed. Read, never decided here: colibri's planner does the work.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlanSummary {
+    /// colibri's own wording of the limit, e.g. "disk expert misses".
+    pub bottleneck: String,
+    /// `disk`, `memory`, `compute` or `mixed`.
+    pub class: String,
+    /// Share of expert lookups served from memory instead of the disk (0..1).
+    pub hit_rate: f64,
+    /// Expert bytes that stay on the disk.
+    pub cold_gb: f64,
+    /// Memory colibri reserves for the expert cache.
+    pub cache_gb: f64,
+    pub warnings: Vec<String>,
+}
+
+impl PlanSummary {
+    pub fn from_json(text: &str) -> Result<Self, String> {
+        let start = text.find('{').ok_or("colibri returned no plan")?;
+        let v: serde_json::Value = serde_json::from_str(&text[start..])
+            .map_err(|e| format!("could not read the plan: {e}"))?;
+        let gb = |p: &str| {
+            v.pointer(p)
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0)
+                / 1_000_000_000.0
+        };
+        let text_at = |p: &str| {
+            v.pointer(p)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        Ok(Self {
+            bottleneck: text_at("/expected_bottleneck"),
+            class: text_at("/bottleneck_class"),
+            hit_rate: v
+                .pointer("/projected_hit_rate")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(1.0),
+            cold_gb: gb("/tiers/disk/cold_expert_bytes"),
+            cache_gb: gb("/tiers/ram/expert_cache_bytes"),
+            warnings: v
+                .pointer("/warnings")
+                .and_then(serde_json::Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|w| w.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+
+    /// Part of the experts is read from the disk while answering.
+    pub fn reads_disk(&self) -> bool {
+        self.class == "disk" && self.cold_gb > 0.05
+    }
+}
+
+/// How a `coli tune` run ended.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TuneOutcome {
+    /// A faster setting passed colibri's quality and safety gates (tokens per second, before → after).
+    Faster {
+        before: f64,
+        after: f64,
+    },
+    /// No candidate cleared the gates; nothing was changed.
+    Unchanged,
+    Unknown,
+}
+
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for n in chars.by_ref() {
+                if n.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Reads the closing lines of `coli tune`: "accepted NAME: 3.00 → 4.00 tok/s" or "baseline retained".
+pub fn parse_tune_log(log: &str) -> TuneOutcome {
+    let log = strip_ansi(log);
+    for line in log.lines().rev() {
+        if line.contains("baseline retained") {
+            return TuneOutcome::Unchanged;
+        }
+        if line.contains("accepted") && line.contains("tok/s") {
+            let nums: Vec<f64> = line
+                .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .filter_map(|t| t.parse::<f64>().ok())
+                .collect();
+            if nums.len() >= 2 {
+                return TuneOutcome::Faster {
+                    before: nums[0],
+                    after: nums[1],
+                };
+            }
+        }
+    }
+    TuneOutcome::Unknown
+}
+
 // ------------------------------------------------------------------ the wrapper
 
 #[derive(Clone, Debug)]
@@ -568,6 +684,34 @@ impl Coli {
             c.arg("--backend").arg(b);
         }
         c.stdin(Stdio::null()).stdout(out).stderr(err);
+        hide_window(&mut c);
+        c.spawn()
+    }
+
+    /// `coli plan --model DIR --json`: colibri's own placement plan for this computer.
+    pub fn plan(&self, model_dir: &Path) -> Result<PlanSummary, String> {
+        let dir = model_dir.to_string_lossy();
+        let text = self.run(
+            &["plan", "--model", dir.as_ref(), "--json"],
+            Duration::from_secs(90),
+        )?;
+        PlanSummary::from_json(&text)
+    }
+
+    /// `coli tune --model DIR`: colibri measures its quality-preserving settings on this exact
+    /// model and computer and saves the fastest; `--auto-tier` (what `coli start` passes) then
+    /// loads that profile. Output goes to `log`; the child is returned to wait on.
+    pub fn spawn_tune(&self, model_dir: &Path, log: &Path) -> io::Result<Child> {
+        if let Some(dir) = log.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let out = fs::File::create(log)?;
+        let err = out.try_clone()?;
+        let mut c = self.coli_cmd(&["tune", "--model"]);
+        c.arg(model_dir)
+            .stdin(Stdio::null())
+            .stdout(out)
+            .stderr(err);
         hide_window(&mut c);
         c.spawn()
     }
@@ -836,5 +980,50 @@ mod tests {
         assert!(coder.matches_query("QWEN coding"));
         assert!(!coder.matches_query("qwen math"));
         assert!(coder.matches_query("   "));
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_plan() {
+        let j = r#"{"version":2,"expected_bottleneck":"disk expert misses","bottleneck_class":"disk",
+          "projected_hit_rate":0.41,"tiers":{"disk":{"cold_expert_bytes":14000000000},
+          "ram":{"expert_cache_bytes":6500000000}},"warnings":["swap is in use"]}"#;
+        let p = PlanSummary::from_json(&format!("noise\n{j}")).unwrap();
+        assert_eq!(p.class, "disk");
+        assert!(p.reads_disk());
+        assert!((p.cold_gb - 14.0).abs() < 1e-9 && (p.cache_gb - 6.5).abs() < 1e-9);
+        assert!((p.hit_rate - 0.41).abs() < 1e-9);
+        assert_eq!(p.warnings, vec!["swap is in use".to_string()]);
+        assert!(PlanSummary::from_json("no json here").is_err());
+    }
+
+    #[test]
+    fn a_model_in_memory_does_not_read_the_disk() {
+        let p = PlanSummary::from_json(
+            r#"{"bottleneck_class":"memory","projected_hit_rate":1.0,"tiers":{"disk":{"cold_expert_bytes":0}}}"#,
+        )
+        .unwrap();
+        assert!(!p.reads_disk());
+    }
+
+    #[test]
+    fn reads_how_tuning_ended() {
+        let ok = "x\n  \u{1b}[32m✓ accepted\u{1b}[0m pipe+direct: 3.00 → 4.50 tok/s (+50.0%)\n  profile: /p\n";
+        assert_eq!(
+            parse_tune_log(ok),
+            TuneOutcome::Faster {
+                before: 3.0,
+                after: 4.5
+            }
+        );
+        assert_eq!(
+            parse_tune_log("  ✓ baseline retained: no candidate cleared the 3.0% gain"),
+            TuneOutcome::Unchanged
+        );
+        assert_eq!(parse_tune_log("tuning failed"), TuneOutcome::Unknown);
     }
 }

@@ -11095,6 +11095,138 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Csak {} GB szabad hely maradt a lemezen: hagyjon helyet a modelleknek és a swapnek.",
         ],
     ),
+    (
+        "Measured: {} → {} tokens/s. The faster setting is saved and applied at start.",
+        [
+            "Mesure : {} → {} jetons/s. Le réglage plus rapide est enregistré et appliqué au démarrage.",
+            "Misurato: {} → {} token/s. L'impostazione più veloce è salvata e applicata all'avvio.",
+            "Medido: {} → {} tokens/s. El ajuste más rápido se guarda y se aplica al iniciar.",
+            "Medido: {} → {} tokens/s. A definição mais rápida foi guardada e é aplicada ao iniciar.",
+            "Gemessen: {} → {} Token/s. Die schnellere Einstellung wird gespeichert und beim Start angewendet.",
+            "Mért érték: {} → {} token/s. A gyorsabb beállítás mentésre kerül, és indításkor érvénybe lép.",
+        ],
+    ),
+    (
+        "No setting cleared the safety and gain thresholds: nothing was changed.",
+        [
+            "Aucun réglage n'a franchi les seuils de sécurité et de gain : rien n'a été modifié.",
+            "Nessuna impostazione ha superato le soglie di sicurezza e di guadagno: nulla è stato modificato.",
+            "Ningún ajuste superó los umbrales de seguridad y de mejora: no se cambió nada.",
+            "Nenhuma definição ultrapassou os limiares de segurança e de ganho: nada foi alterado.",
+            "Keine Einstellung hat die Schwellen für Sicherheit und Gewinn erreicht: Es wurde nichts geändert.",
+            "Egyetlen beállítás sem érte el a biztonsági és nyereségi küszöböt: semmi nem változott.",
+        ],
+    ),
+    (
+        "Tuning finished, but the result could not be read. Check the log.",
+        [
+            "La mesure est terminée, mais le résultat n'a pas pu être lu. Consultez le journal.",
+            "La misurazione è terminata, ma il risultato non è stato leggibile. Consulti il registro.",
+            "La medición terminó, pero no se pudo leer el resultado. Consulte el registro.",
+            "A medição terminou, mas não foi possível ler o resultado. Consulte o registo.",
+            "Die Messung ist abgeschlossen, das Ergebnis konnte jedoch nicht gelesen werden. Prüfen Sie das Protokoll.",
+            "A mérés befejeződött, de az eredményt nem sikerült beolvasni. Ellenőrizze a naplót.",
+        ],
+    ),
+    (
+        "Speed on this computer",
+        [
+            "Vitesse sur cet ordinateur",
+            "Velocità su questo computer",
+            "Velocidad en este ordenador",
+            "Velocidade neste computador",
+            "Geschwindigkeit auf diesem Computer",
+            "Sebesség ezen a számítógépen",
+        ],
+    ),
+    (
+        "colibri is working out its plan…",
+        [
+            "colibri établit son plan…",
+            "colibri sta elaborando il proprio piano…",
+            "colibri está calculando su plan…",
+            "o colibri está a calcular o seu plano…",
+            "colibri berechnet seinen Plan …",
+            "a colibri kidolgozza a tervét…",
+        ],
+    ),
+    (
+        "colibri's plan could not be read for this model.",
+        [
+            "Le plan de colibri n'a pas pu être lu pour ce modèle.",
+            "Non è stato possibile leggere il piano di colibri per questo modello.",
+            "No se pudo leer el plan de colibri para este modelo.",
+            "Não foi possível ler o plano do colibri para este modelo.",
+            "Der Plan von colibri konnte für dieses Modell nicht gelesen werden.",
+            "A colibri terve nem olvasható be ehhez a modellhez.",
+        ],
+    ),
+    (
+        "{} GB of the model's experts stay on the disk; {} GB of memory is reserved for the expert cache. On average {}% of the experts needed are already in memory.",
+        [
+            "{} Go des experts du modèle restent sur le disque ; {} Go de mémoire sont réservés au cache d'experts. En moyenne, {} % des experts nécessaires sont déjà en mémoire.",
+            "{} GB degli esperti del modello restano sul disco; {} GB di memoria sono riservati alla cache degli esperti. In media, il {}% degli esperti necessari è già in memoria.",
+            "{} GB de los expertos del modelo permanecen en el disco; {} GB de memoria se reservan para la caché de expertos. De media, el {}% de los expertos necesarios ya está en memoria.",
+            "{} GB dos especialistas do modelo ficam no disco; {} GB de memória estão reservados para a cache de especialistas. Em média, {}% dos especialistas necessários já estão em memória.",
+            "{} GB der Experten des Modells bleiben auf der Festplatte; {} GB Speicher sind für den Experten-Cache reserviert. Im Durchschnitt befinden sich {} % der benötigten Experten bereits im Speicher.",
+            "A modell szakértőinek {} GB-ja a lemezen marad; {} GB memória van fenntartva a szakértői gyorsítótár számára. Átlagosan a szükséges szakértők {}%-a már a memóriában van.",
+        ],
+    ),
+    (
+        "The model fits in memory: nothing is read from the disk while it answers.",
+        [
+            "Le modèle tient en mémoire : rien n'est lu sur le disque pendant la réponse.",
+            "Il modello sta in memoria: durante la risposta non viene letto nulla dal disco.",
+            "El modelo cabe en memoria: no se lee nada del disco mientras responde.",
+            "O modelo cabe na memória: nada é lido do disco enquanto responde.",
+            "Das Modell passt in den Speicher: Während der Antwort wird nichts von der Festplatte gelesen.",
+            "A modell elfér a memóriában: válasz közben semmi nem kerül beolvasásra a lemezről.",
+        ],
+    ),
+    (
+        "Measure and optimise (a few minutes)",
+        [
+            "Mesurer et optimiser (quelques minutes)",
+            "Misura e ottimizza (alcuni minuti)",
+            "Medir y optimizar (unos minutos)",
+            "Medir e otimizar (alguns minutos)",
+            "Messen und optimieren (einige Minuten)",
+            "Mérés és optimalizálás (néhány perc)",
+        ],
+    ),
+    (
+        "colibri tries its safe settings one by one (direct reads, overlapped reads, threads, cache size) and keeps only the fastest, without changing any answer. The model is stopped meanwhile and restarted at the end.",
+        [
+            "colibri essaie ses réglages sûrs un par un (lecture directe, lectures superposées, threads, taille du cache) et ne garde que les plus rapides, sans modifier aucune réponse. Le modèle est arrêté pendant ce temps, puis redémarré à la fin.",
+            "colibri prova una a una le sue impostazioni sicure (lettura diretta, letture sovrapposte, thread, dimensione della cache) e conserva solo le più veloci, senza modificare alcuna risposta. Nel frattempo il modello viene arrestato e riavviato al termine.",
+            "colibri prueba uno a uno sus ajustes seguros (lectura directa, lecturas solapadas, hilos, tamaño de la caché) y conserva solo los más rápidos, sin cambiar ninguna respuesta. El modelo se detiene mientras tanto y se reinicia al final.",
+            "O colibri experimenta uma a uma as suas definições seguras (leitura direta, leituras sobrepostas, threads, tamanho da cache) e mantém apenas as mais rápidas, sem alterar qualquer resposta. O modelo é parado entretanto e reiniciado no fim.",
+            "colibri probiert seine sicheren Einstellungen nacheinander aus (direktes Lesen, überlappendes Lesen, Threads, Cache-Größe) und behält nur die schnellsten, ohne eine Antwort zu verändern. Das Modell wird währenddessen angehalten und am Ende neu gestartet.",
+            "A colibri egyenként kipróbálja a biztonságos beállításait (közvetlen olvasás, átfedő olvasás, szálak, gyorsítótár mérete), és csak a leggyorsabbakat tartja meg, egyetlen választ sem módosítva. A modell eközben leáll, a végén pedig újraindul.",
+        ],
+    ),
+    (
+        "Adapt the expert cache to the current conversation (colibri's “balanced” policy; it does not change answers)",
+        [
+            "Adapter le cache d'experts à la conversation en cours (politique « balanced » de colibri ; elle ne modifie pas les réponses)",
+            "Adatta la cache degli esperti alla conversazione in corso (politica «balanced» di colibri; non modifica le risposte)",
+            "Adaptar la caché de expertos a la conversación actual (política «balanced» de colibri; no cambia las respuestas)",
+            "Adaptar a cache de especialistas à conversa atual (política «balanced» do colibri; não altera as respostas)",
+            "Den Experten-Cache an die aktuelle Unterhaltung anpassen (Richtlinie „balanced“ von colibri; verändert keine Antworten)",
+            "A szakértői gyorsítótár igazítása az aktuális beszélgetéshez (a colibri „balanced” szabályzata; nem módosítja a válaszokat)",
+        ],
+    ),
+    (
+        "Applies the next time the model starts.",
+        [
+            "S'applique au prochain démarrage du modèle.",
+            "Si applica al prossimo avvio del modello.",
+            "Se aplica la próxima vez que se inicie el modelo.",
+            "Aplica-se no próximo arranque do modelo.",
+            "Wird beim nächsten Start des Modells angewendet.",
+            "A modell következő indításakor lép érvénybe.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
