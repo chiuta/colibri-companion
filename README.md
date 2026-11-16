@@ -40,6 +40,8 @@ The app does not include colibri. It runs colibri's JSON commands (`setup --list
 
 Linux (x86-64, ARM64; Wayland and X11), Windows 10/11 and macOS (Intel and Apple Silicon) — one code base, OpenGL rendering (works on old graphics cards and in virtual machines). `.github/workflows/build.yml` builds and tests every variant and produces ready-to-ship archives. On Linux, `packaging/linux/install.sh` adds the app to the menu. HiDPI scaling, Ctrl/⌘+N, Ctrl/⌘+K, Ctrl/⌘+, and Esc shortcuts, and screen-reader support (AccessKit). Automated builds and tests cover all three systems; manual testing on real Windows and macOS computers is still limited, and the screen-reader labels (AccessKit) have not been tried with real screen readers.
 
+Older Linux (Debian 8+, Ubuntu 14.04+, CentOS 7+): extra builds `linux-x86_64-glibc2.17` and `linux-aarch64-glibc2.17` are linked against glibc 2.17; CI checks the symbol baseline and loads the program in Ubuntu 16.04. The windowing and graphics libraries still come from your system.
+
 ## Languages
 
 English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — chosen in Settings, with `--lang en|ro|fr|it|es|pt|de|hu`, or by the system language on first launch. Translations live in `crates/app/src/i18n.rs` (the key is the English text); a test checks that every interface text has all translations. They were made with AI help and have not been reviewed by native speakers.
