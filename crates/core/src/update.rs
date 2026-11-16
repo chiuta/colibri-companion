@@ -124,12 +124,27 @@ pub fn prepare_update_dir(fresh: &Path) -> Result<(), String> {
         return Ok(());
     }
     if fresh.join(MARKER).is_file() {
-        return fs::remove_dir_all(fresh).map_err(|e| e.to_string());
+        return remove_dir_retrying(fresh);
     }
     Err(format!(
         "{} already exists and was not made by this app; move or delete it, then try again",
         fresh.display()
     ))
+}
+
+/// Removing a folder can fail for a moment on Windows while an antivirus scan or the search
+/// indexer still holds a file from the previous run, so try a few times before giving up.
+fn remove_dir_retrying(dir: &Path) -> Result<(), String> {
+    let mut last = String::new();
+    for attempt in 0..6u64 {
+        match fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if !dir.exists() && e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => last = format!("{}: {e}", dir.display()),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150 * (attempt + 1)));
+    }
+    Err(last)
 }
 
 /// Remember when a ZIP copy was fetched (a ZIP has no git history to ask).
@@ -325,9 +340,10 @@ mod tests {
         assert!(theirs.join("notes.txt").is_file());
         // a leftover of this app (it has the marker) is cleared; a missing folder is fine
         write_fetched_marker(&theirs);
-        assert!(prepare_update_dir(&theirs).is_ok());
+        assert!(theirs.join(MARKER).is_file(), "the marker was not written");
+        prepare_update_dir(&theirs).unwrap();
         assert!(!theirs.exists());
-        assert!(prepare_update_dir(&theirs).is_ok());
+        prepare_update_dir(&theirs).unwrap();
         let _ = fs::remove_dir_all(&base);
     }
 }
