@@ -1,0 +1,63 @@
+//! Cost model for verifying k drafted tokens per pass (loads per accepted token). Not an engine.
+//!   cargo run --release -p expert-streamer --example speculative [-- --usage FILE | --trace FILE --experts N] [--cache PCT]
+//! Real overlap between consecutive tokens is only known from a real ROUTE_TRACE; a trace sampled
+//! from a `.coli_usage` history overlaps only through popularity.
+use expert_streamer::policy::synthetic_trace;
+use expert_streamer::speculative::loads_per_token;
+use expert_streamer::trace::*;
+
+fn arg(name: &str) -> Option<String> {
+    let a: Vec<String> = std::env::args().collect();
+    a.iter()
+        .position(|x| x == name)
+        .and_then(|i| a.get(i + 1).cloned())
+}
+
+fn main() {
+    let (label, universe, trace) = if let Some(f) = arg("--usage") {
+        let u = parse_usage(&std::fs::read_to_string(&f).expect("read usage")).expect("usage");
+        let t = u.sample_trace(8, 800, 42);
+        (
+            format!("{f}: sampled, popularity only"),
+            (u.n_layers * u.n_experts) as usize,
+            t,
+        )
+    } else if let Some(f) = arg("--trace") {
+        let ne: u32 = arg("--experts")
+            .and_then(|v| v.parse().ok())
+            .expect("--experts N");
+        let t = parse_trace(&std::fs::read_to_string(&f).expect("read trace"), ne);
+        let uni = t.iter().flatten().max().map_or(0, |m| *m as usize + 1);
+        (format!("{f}: a real trace"), uni, t)
+    } else {
+        (
+            "synthetic trace".into(),
+            256,
+            synthetic_trace(256, 8, 4000, 42),
+        )
+    };
+    let pct: usize = arg("--cache").and_then(|v| v.parse().ok()).unwrap_or(10);
+    let cap = (universe * pct / 100).max(1);
+    println!(
+        "{label}: {} tokens, {universe} experts. A cost model, not an engine.",
+        trace.len()
+    );
+    for (name, c) in [("no cache", 0usize), ("cache", cap)] {
+        println!(
+            "\n{name}{}: expert loads per accepted token",
+            if c > 0 {
+                format!(" {pct}%")
+            } else {
+                String::new()
+            }
+        );
+        println!("{:>4} {:>9} {:>9} {:>9}", "k", "a=50%", "a=70%", "a=90%");
+        for k in [1usize, 2, 4, 8] {
+            let v: Vec<String> = [0.5, 0.7, 0.9]
+                .iter()
+                .map(|a| format!("{:>9.1}", loads_per_token(&trace, k, *a, c)))
+                .collect();
+            println!("{k:>4} {}", v.join(" "));
+        }
+    }
+}

@@ -20,3 +20,14 @@ real history: real popularity, but no recency, so it favours pinning the hottest
 understates LRU-like policies on real conversations; `-- --trace FILE --experts N` replays a real
 `ROUTE_TRACE=` capture and is the measurement that decides whether a prefetcher is worth building.
 The offline-optimal column sees the future, so it is a ceiling, not a target.
+
+## Measurement models (cost models, not an engine)
+
+- `prefetch`: a next-layer predictor from co-occurrence counts. On a sampled profile it only ties
+  with plain popularity, because the sampler has no inter-layer correlation; whether real layers
+  correlate is open until a real `ROUTE_TRACE` is replayed (`--example prefetch -- --trace FILE --experts N`).
+- `speculative`: loads per accepted token when k drafted tokens are verified in one pass (union of
+  their experts). On the sampled profile it does not pay off; a pessimistic bound, since real
+  consecutive tokens overlap more (`--example speculative`).
+- `ioplan`: tokens/s from drive speed, expert size and overlap of I/O with compute. Defaults are
+  assumptions, not measurements; `--measured-mbs` takes the app's drive-test result (`--example ioplan`).

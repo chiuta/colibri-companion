@@ -6,6 +6,9 @@
 //! policies to measure how much a smarter policy could ever gain. It does not run a model.
 
 pub mod expert_index;
+pub mod ioplan;
 pub mod policy;
+pub mod prefetch;
 pub mod safetensors;
+pub mod speculative;
 pub mod trace;
