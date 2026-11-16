@@ -59,6 +59,8 @@ pub enum Event {
     },
     FlowLog(String),
     FlowNotify(String),
+    FlowTestProgress(usize, usize),
+    FlowTestDone(String, companion_core::flow_eval::Report, usize),
     FlowApprove(String, std::sync::mpsc::Sender<bool>),
     DuelPiece {
         round: u64,
@@ -1872,6 +1874,8 @@ impl CompanionApp {
                 self.flows.approval = Some((text, tx));
             }
             Event::FlowDone { ok, output } => self.flow_done(ok, output),
+            Event::FlowTestProgress(d, t) => self.flows.test_progress = (d, t),
+            Event::FlowTestDone(n, r, c) => self.flow_test_done(n, r, c),
             Event::Online { what, kind, result } => self.online_done(what, kind, result),
             Event::Resources(v) => {
                 for (hist, val) in [

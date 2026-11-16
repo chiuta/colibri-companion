@@ -9929,6 +9929,105 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Elágazás innen",
         ],
     ),
+    (
+        "Test the automation",
+        [
+            "Tester l'automatisation",
+            "Testa l'automazione",
+            "Probar la automatización",
+            "Testar a automatização",
+            "Automatisierung testen",
+            "Automatizálás tesztelése",
+        ],
+    ),
+    (
+        "One case per line: “input ::: word ; other word ; !forbidden”. Without “:::” a case passes if the automation ends well. Nothing is saved or sent during a test.",
+        [
+            "Un cas par ligne : « entrée ::: mot ; autre mot ; !interdit ». Sans « ::: », un cas réussit si l'automatisation se termine bien. Rien n'est enregistré ni envoyé pendant un test.",
+            "Un caso per riga: «input ::: parola ; altra parola ; !vietata». Senza «:::» un caso passa se l'automazione finisce bene. Durante un test nulla viene salvato o inviato.",
+            "Un caso por línea: «entrada ::: palabra ; otra palabra ; !prohibida». Sin «:::» un caso pasa si la automatización termina bien. Durante una prueba no se guarda ni se envía nada.",
+            "Um caso por linha: «entrada ::: palavra ; outra palavra ; !proibida». Sem «:::» um caso passa se a automatização terminar bem. Durante um teste nada é guardado nem enviado.",
+            "Ein Fall pro Zeile: „Eingabe ::: Wort ; anderes Wort ; !verboten“. Ohne „:::“ gilt ein Fall als bestanden, wenn die Automatisierung gut endet. Während eines Tests wird nichts gespeichert oder gesendet.",
+            "Soronként egy eset: „bemenet ::: szó ; másik szó ; !tiltott”. „:::” nélkül az eset akkor megfelel, ha az automatizálás jól ér véget. Teszt közben semmi sem mentődik és nem megy el.",
+        ],
+    ),
+    (
+        "Repeats per case",
+        [
+            "Répétitions par cas",
+            "Ripetizioni per caso",
+            "Repeticiones por caso",
+            "Repetições por caso",
+            "Wiederholungen pro Fall",
+            "Ismétlés esetenként",
+        ],
+    ),
+    (
+        "Start the test",
+        [
+            "Lancer le test",
+            "Avvia il test",
+            "Iniciar la prueba",
+            "Iniciar o teste",
+            "Test starten",
+            "Teszt indítása",
+        ],
+    ),
+    (
+        "The test stopped before the first run.",
+        [
+            "Le test s'est arrêté avant la première exécution.",
+            "Il test si è fermato prima della prima esecuzione.",
+            "La prueba se detuvo antes de la primera ejecución.",
+            "O teste parou antes da primeira execução.",
+            "Der Test wurde vor dem ersten Durchlauf beendet.",
+            "A teszt az első futás előtt leállt.",
+        ],
+    ),
+    (
+        "95% interval",
+        [
+            "intervalle à 95 %",
+            "intervallo al 95%",
+            "intervalo del 95 %",
+            "intervalo de 95%",
+            "95-%-Intervall",
+            "95%-os intervallum",
+        ],
+    ),
+    (
+        "Stopped by you: the result is partial.",
+        [
+            "Arrêté par vous : le résultat est partiel.",
+            "Fermato da te: il risultato è parziale.",
+            "Detenido por ti: el resultado es parcial.",
+            "Parado por ti: o resultado é parcial.",
+            "Von dir gestoppt: Das Ergebnis ist unvollständig.",
+            "Te állítottad le: az eredmény részleges.",
+        ],
+    ),
+    (
+        "Case",
+        [
+            "Cas",
+            "Caso",
+            "Caso",
+            "Caso",
+            "Fall",
+            "Eset",
+        ],
+    ),
+    (
+        "The interval shows how far the real rate could be: with few runs it is wide and is not a guarantee.",
+        [
+            "L'intervalle montre à quel point le taux réel peut différer : avec peu d'exécutions, il est large et ne constitue pas une garantie.",
+            "L'intervallo mostra quanto può differire il tasso reale: con poche esecuzioni è ampio e non è una garanzia.",
+            "El intervalo muestra cuánto puede diferir la tasa real: con pocas ejecuciones es amplio y no es una garantía.",
+            "O intervalo mostra quanto a taxa real pode diferir: com poucas execuções é largo e não é uma garantia.",
+            "Das Intervall zeigt, wie weit die wahre Quote abweichen kann: Bei wenigen Durchläufen ist es breit und keine Garantie.",
+            "Az intervallum azt mutatja, mennyire térhet el a valódi arány: kevés futásnál széles, és nem garancia.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

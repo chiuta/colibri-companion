@@ -30,6 +30,11 @@ pub struct FlowState {
     pub started_session: bool,
     pub last_check: Option<Instant>,
     pub unattended: bool,
+    pub test_text: String,
+    pub test_repeats: usize,
+    pub testing: bool,
+    pub test_progress: (usize, usize),
+    pub test_report: Option<(String, companion_core::flow_eval::Report, usize)>,
 }
 
 fn lib_path() -> std::path::PathBuf {
@@ -319,6 +324,69 @@ impl CompanionApp {
         let _ = self.flows.lib.save(&lib_path());
     }
 
+    fn real_env(&self, flow_name: &str, cancel: CancelToken) -> Real {
+        Real {
+            python: match &self.python {
+                Probe::Found(p) => Some(p.clone()),
+                _ => None,
+            },
+            conns: if self.online.loaded {
+                self.online.conn.clone()
+            } else {
+                Connections::load(&paths::data_dir().join("connections.json"))
+            },
+            base: self.base(),
+            key: self.s.api_key.clone(),
+            model: self.model_id.clone().unwrap_or_else(|| "colibri".into()),
+            flow_name: flow_name.to_string(),
+            tx: self.tx.clone(),
+            ctx: self.ctx.clone(),
+            cancel,
+            lang: self.s.lang,
+        }
+    }
+
+    pub fn start_flow_test(&mut self, idx: usize) {
+        use companion_core::flow_eval as ev;
+        if self.flows.running || self.flows.testing || !self.server_ready() {
+            return;
+        }
+        let Some(flow) = self.flows.lib.flows.get(idx).cloned() else {
+            return;
+        };
+        let cases = ev::parse_cases(&self.flows.test_text);
+        if cases.is_empty() {
+            return;
+        }
+        let repeats = self.flows.test_repeats.clamp(1, ev::MAX_REPEATS);
+        let cancel = CancelToken::new();
+        self.flows.cancel = Some(cancel.clone());
+        self.flows.testing = true;
+        self.flows.test_report = None;
+        self.flows.test_progress = (0, cases.len() * repeats);
+        let mut env = self.real_env(&flow.name, cancel);
+        let tx2 = self.tx.clone();
+        let ctx = self.ctx.clone();
+        self.spawn(move |tx| {
+            let r = ev::evaluate(&flow, &cases, repeats, &mut env, |d, t| {
+                let _ = tx2.send(Event::FlowTestProgress(d, t));
+                ctx.request_repaint();
+            });
+            let _ = tx.send(Event::FlowTestDone(flow.name.clone(), r, cases.len()));
+        });
+    }
+
+    pub fn flow_test_done(
+        &mut self,
+        name: String,
+        r: companion_core::flow_eval::Report,
+        cases: usize,
+    ) {
+        self.flows.testing = false;
+        self.flows.cancel = None;
+        self.flows.test_report = Some((name, r, cases));
+    }
+
     pub fn start_flow(&mut self, idx: usize, unattended: bool) {
         if self.flows.running || !self.server_ready() {
             return;
@@ -347,25 +415,7 @@ impl CompanionApp {
         self.flows.log.clear();
         self.flows.result.clear();
         self.flows.approval = None;
-        let mut env = Real {
-            python: match &self.python {
-                Probe::Found(p) => Some(p.clone()),
-                _ => None,
-            },
-            conns: if self.online.loaded {
-                self.online.conn.clone()
-            } else {
-                Connections::load(&paths::data_dir().join("connections.json"))
-            },
-            base: self.base(),
-            key: self.s.api_key.clone(),
-            model: self.model_id.clone().unwrap_or_else(|| "colibri".into()),
-            flow_name: flow.name.clone(),
-            tx: self.tx.clone(),
-            ctx: self.ctx.clone(),
-            cancel,
-            lang: self.s.lang,
-        };
+        let mut env = self.real_env(&flow.name, cancel);
         self.spawn(move |tx| {
             let o = flows::run(&flow, &input, unattended, &mut env);
             let _ = tx.send(Event::FlowDone {
@@ -640,6 +690,75 @@ impl CompanionApp {
                             }
                             if ui.button(l_del).clicked() {
                                 delete = true;
+                            }
+                        });
+                        ui.add_space(4.0);
+                        let l_test = self.t("Testează automatizarea", "Test the automation");
+                        let l_test_help = self.t(
+                            "Câte un caz pe linie: «intrare ::: cuvânt ; alt cuvânt ; !interzis». Fără «:::» cazul trece dacă automatizarea se termină bine. Nimic nu se salvează și nu se trimite în timpul testului.",
+                            "One case per line: “input ::: word ; other word ; !forbidden”. Without “:::” a case passes if the automation ends well. Nothing is saved or sent during a test.",
+                        );
+                        let l_rep = self.t("Repetări pe caz", "Repeats per case");
+                        let l_go = self.t("Pornește testul", "Start the test");
+                        egui::CollapsingHeader::new(l_test).id_salt("flow-test").show(ui, |ui| {
+                            muted(ui, &p, l_test_help);
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.flows.test_text)
+                                    .desired_rows(4)
+                                    .desired_width(f32::INFINITY),
+                            );
+                            if self.flows.test_repeats == 0 {
+                                self.flows.test_repeats = 3;
+                            }
+                            ui.horizontal(|ui| {
+                                ui.label(l_rep);
+                                ui.add(egui::DragValue::new(&mut self.flows.test_repeats).range(1..=companion_core::flow_eval::MAX_REPEATS));
+                                let can = !busy
+                                    && !self.flows.testing
+                                    && problem.is_none()
+                                    && self.server_ready()
+                                    && !companion_core::flow_eval::parse_cases(&self.flows.test_text).is_empty();
+                                if ui.add_enabled(can, egui::Button::new(l_go)).clicked() {
+                                    self.start_flow_test(i);
+                                }
+                                if self.flows.testing {
+                                    crate::theme::busy(ui);
+                                    muted(ui, &p, &format!("{}/{}", self.flows.test_progress.0, self.flows.test_progress.1));
+                                    if ui.button(l_stop).clicked() {
+                                        if let Some(c) = &self.flows.cancel {
+                                            c.cancel();
+                                        }
+                                    }
+                                }
+                            });
+                            if let Some((name, r, cases)) = &self.flows.test_report {
+                                let pct = |x: f64| (x * 100.0).round() as i32;
+                                let head = if r.tries == 0 {
+                                    self.t("Testul s-a oprit înainte de prima rulare.", "The test stopped before the first run.").to_string()
+                                } else {
+                                    format!(
+                                        "{name}: {}/{} ({}%), {} {}–{}%",
+                                        r.passed,
+                                        r.tries,
+                                        pct(r.passed as f64 / r.tries as f64),
+                                        self.t("interval 95%", "95% interval"),
+                                        pct(r.low),
+                                        pct(r.high)
+                                    )
+                                };
+                                ui.label(RichText::new(head).semibold());
+                                if r.stopped {
+                                    muted(ui, &p, self.t("Oprit de tine: rezultatul e parțial.", "Stopped by you: the result is partial."));
+                                }
+                                if *cases > 1 {
+                                    for (k, (ok, n)) in r.per_case.iter().enumerate() {
+                                        muted(ui, &p, &format!("{} {}: {ok}/{n}", self.t("Caz", "Case"), k + 1));
+                                    }
+                                }
+                                muted(ui, &p, self.t(
+                                    "Intervalul arată cât de mult poate să difere rezultatul real: cu puține rulări e larg și nu trebuie luat drept garanție.",
+                                    "The interval shows how far the real rate could be: with few runs it is wide and is not a guarantee.",
+                                ));
                             }
                         });
                         if delete {

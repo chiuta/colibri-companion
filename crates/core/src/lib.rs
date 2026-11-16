@@ -13,6 +13,7 @@ pub mod coli;
 pub mod connect;
 pub mod duel;
 pub mod fetch;
+pub mod flow_eval;
 pub mod flows;
 pub mod http;
 pub mod locate;
