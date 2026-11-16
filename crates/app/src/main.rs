@@ -273,6 +273,7 @@ fn main() -> eframe::Result {
             }
         }
     }
+    let first_run = !companion_core::paths::settings_file().exists();
     let mut settings = Settings::load();
     if let Some(l) = lang_override.as_deref().and_then(Lang::from_code) {
         settings.lang = l;
@@ -304,6 +305,7 @@ fn main() -> eframe::Result {
                 cc.egui_ctx.clone(),
                 settings,
                 demo_base,
+                first_run,
             )))
         }),
     )

@@ -35,6 +35,8 @@ pub struct GuideState {
     pub table: bool,
     pub path_box: bool,
     pub path: String,
+    /// The step of the welcome tour that is showing, if any.
+    pub tour: Option<usize>,
 }
 
 impl CompanionApp {
@@ -202,6 +204,7 @@ impl CompanionApp {
 
     pub fn guide_windows(&mut self, ctx: &egui::Context) {
         let p = self.p;
+        self.tour_window(ctx);
         if self.guide.tips {
             let mut open = true;
             egui::Window::new(self.t("Sfaturi", "Tips"))
@@ -301,6 +304,114 @@ impl CompanionApp {
                     }
                 });
             self.guide.legal = open;
+        }
+    }
+}
+
+/// The tour: what each step says, in Romanian and English, and where it points.
+pub(crate) const TOUR: &[(&str, &str, &str, &str)] = &[
+    (
+        "Bun venit la Colibri Companion",
+        "Welcome to Colibri Companion",
+        "Aici vorbești cu un model AI care rulează pe calculatorul tău. Conversațiile, notele și fișierele rămân aici: aplicația nu are conturi, nu trimite telemetrie și nu cheamă servere AI din exterior. Alege mai jos limba în care vrei să o folosești.",
+        "Here you talk to an AI model that runs on your own computer. Conversations, notes and files stay here: the app has no accounts, sends no telemetry and calls no outside AI servers. Pick below the language you want to use.",
+    ),
+    (
+        "1. Un model care să răspundă",
+        "1. A model to answer you",
+        "Prima dată ai nevoie de un model. Aplicația te duce pas cu pas: verifică ce are calculatorul, îți arată modele potrivite și le descarcă. Dacă ai deja un fișier de model, îl poți indica din fereastra Modele.",
+        "The first time you need a model. The app guides you step by step: it checks what your computer has, shows suitable models and downloads them. If you already have a model file, you can point to it in the Models window.",
+    ),
+    (
+        "2. Conversații cu memorie",
+        "2. Conversations with memory",
+        "Scrie în caseta de jos. Poți atașa fișiere și dosare, poți ramifica o conversație dintr-un mesaj anterior și poți ține minte un răspuns. Fereastra «Memorie și constelație» arată harta conversațiilor tale, legate după subiect.",
+        "Write in the box at the bottom. You can attach files and folders, branch a conversation from an earlier message and keep an answer in memory. The “Memory and constellation” window shows the map of your conversations, linked by topic.",
+    ),
+    (
+        "3. Idei și unelte",
+        "3. Ideas and tools",
+        "În meniul «Mai mult» găsești biblioteca de prompturi, automatizările (lanțuri de pași pe care le poți și testa), modelele creative și dueluri între modele, unde votezi orbește răspunsul mai bun.",
+        "The “More” menu holds the prompt library, automations (chains of steps you can also test), creative models and model duels, where you vote blindly for the better answer.",
+    ),
+    (
+        "4. Internetul doar când vrei tu",
+        "4. The internet only when you want it",
+        "Conectarea la GitHub, GitLab și alte platforme e oprită până o pornești tu. Fereastra «Resurse» arată dovada: ce conexiuni există și un jurnal al fiecărei cereri către internet, doar cu numele gazdei.",
+        "Connecting to GitHub, GitLab and other platforms is off until you switch it on. The “Resources” window shows the evidence: which connections exist and a journal of every request to the internet, with host names only.",
+    ),
+    (
+        "5. Pentru toți",
+        "5. For everyone",
+        "Din «Accesibilitate» alegi un profil (vedere slabă, dislexie, cititor de ecran, o singură mână și altele). Limba o schimbi oricând din bara de sus. Apasă Esc ca să închizi o fereastră. Succes!",
+        "In “Accessibility” you choose a profile (low vision, dyslexia, screen reader, one hand and more). You can change the language any time from the top bar. Press Esc to close a window. Enjoy!",
+    ),
+];
+
+impl CompanionApp {
+    pub fn tour_window(&mut self, ctx: &egui::Context) {
+        let Some(step) = self.guide.tour else {
+            return;
+        };
+        let step = step.min(TOUR.len() - 1);
+        let p = self.p;
+        let mut open = true;
+        let mut next: Option<usize> = None;
+        let mut finish = false;
+        let (l_back, l_next, l_skip, l_start) = (
+            self.t("Înapoi", "Back"),
+            self.t("Mai departe", "Next"),
+            self.t("Sari peste", "Skip"),
+            self.t("Începem", "Let's start"),
+        );
+        let (ro, en, tro, ten) = TOUR[step];
+        egui::Window::new(self.t("Ghid de început", "Getting started"))
+            .open(&mut open)
+            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .default_width(560.0)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label(RichText::new(self.t(ro, en)).heading().semibold());
+                ui.add_space(6.0);
+                ui.label(RichText::new(self.t(tro, ten)).size(16.0));
+                if step == 0 {
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for l in companion_core::store::Lang::ALL {
+                            if ui
+                                .selectable_label(self.s.lang == l, l.native_name())
+                                .clicked()
+                            {
+                                self.s.lang = l;
+                                let _ = self.s.save();
+                            }
+                        }
+                    });
+                }
+                ui.add_space(10.0);
+                muted(ui, &p, &format!("{} / {}", step + 1, TOUR.len()));
+                ui.horizontal(|ui| {
+                    if step > 0 && ui.button(l_back).clicked() {
+                        next = Some(step - 1);
+                    }
+                    if step + 1 < TOUR.len() {
+                        if primary_button(ui, &p, l_next).clicked() {
+                            next = Some(step + 1);
+                        }
+                        if ui.button(l_skip).clicked() {
+                            finish = true;
+                        }
+                    } else if primary_button(ui, &p, l_start).clicked() {
+                        finish = true;
+                    }
+                });
+            });
+        if finish || !open {
+            self.guide.tour = None;
+            // Written now, so the tour does not come back on the next start.
+            let _ = self.s.save();
+        } else if let Some(n) = next {
+            self.guide.tour = Some(n);
         }
     }
 }

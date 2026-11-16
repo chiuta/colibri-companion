@@ -10138,6 +10138,182 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "sikertelen",
         ],
     ),
+    (
+        "Getting started",
+        [
+            "Pour bien démarrer",
+            "Per iniziare",
+            "Primeros pasos",
+            "Primeiros passos",
+            "Erste Schritte",
+            "Első lépések",
+        ],
+    ),
+    (
+        "Next",
+        [
+            "Suivant",
+            "Avanti",
+            "Siguiente",
+            "Seguinte",
+            "Weiter",
+            "Tovább",
+        ],
+    ),
+    (
+        "Skip",
+        [
+            "Passer",
+            "Salta",
+            "Omitir",
+            "Saltar",
+            "Überspringen",
+            "Kihagyás",
+        ],
+    ),
+    (
+        "Let's start",
+        [
+            "Commençons",
+            "Cominciamo",
+            "Empecemos",
+            "Vamos começar",
+            "Los geht's",
+            "Kezdjük",
+        ],
+    ),
+    (
+        "Welcome to Colibri Companion",
+        [
+            "Bienvenue dans Colibri Companion",
+            "Benvenuto in Colibri Companion",
+            "Te damos la bienvenida a Colibri Companion",
+            "Bem-vindo ao Colibri Companion",
+            "Willkommen bei Colibri Companion",
+            "Üdvözöl a Colibri Companion",
+        ],
+    ),
+    (
+        "Here you talk to an AI model that runs on your own computer. Conversations, notes and files stay here: the app has no accounts, sends no telemetry and calls no outside AI servers. Pick below the language you want to use.",
+        [
+            "Ici, vous parlez à un modèle d'IA qui tourne sur votre propre ordinateur. Les conversations, notes et fichiers restent ici : l'application n'a pas de comptes, n'envoie aucune télémétrie et n'appelle aucun serveur d'IA externe. Choisissez ci-dessous la langue à utiliser.",
+            "Qui parli con un modello di IA che gira sul tuo computer. Conversazioni, note e file restano qui: l'app non ha account, non invia telemetria e non chiama server di IA esterni. Scegli qui sotto la lingua da usare.",
+            "Aquí hablas con un modelo de IA que funciona en tu propio ordenador. Las conversaciones, notas y archivos se quedan aquí: la aplicación no tiene cuentas, no envía telemetría y no llama a servidores de IA externos. Elige abajo el idioma que quieres usar.",
+            "Aqui falas com um modelo de IA que funciona no teu próprio computador. As conversas, notas e ficheiros ficam aqui: a aplicação não tem contas, não envia telemetria e não chama servidores de IA externos. Escolhe abaixo a língua que queres usar.",
+            "Hier sprichst du mit einem KI-Modell, das auf deinem eigenen Computer läuft. Gespräche, Notizen und Dateien bleiben hier: Die App hat keine Konten, sendet keine Telemetrie und ruft keine externen KI-Server auf. Wähle unten die gewünschte Sprache.",
+            "Itt egy olyan MI-modellel beszélgetsz, amely a saját gépeden fut. A beszélgetések, jegyzetek és fájlok itt maradnak: az alkalmazásnak nincs fiókja, nem küld telemetriát, és nem hív külső MI-szervereket. Lent válaszd ki a használni kívánt nyelvet.",
+        ],
+    ),
+    (
+        "1. A model to answer you",
+        [
+            "1. Un modèle pour vous répondre",
+            "1. Un modello che ti risponda",
+            "1. Un modelo que te responda",
+            "1. Um modelo que te responda",
+            "1. Ein Modell, das dir antwortet",
+            "1. Egy modell, amely válaszol neked",
+        ],
+    ),
+    (
+        "The first time you need a model. The app guides you step by step: it checks what your computer has, shows suitable models and downloads them. If you already have a model file, you can point to it in the Models window.",
+        [
+            "La première fois, il vous faut un modèle. L'application vous guide pas à pas : elle vérifie ce que votre ordinateur possède, propose des modèles adaptés et les télécharge. Si vous avez déjà un fichier de modèle, indiquez-le dans la fenêtre Modèles.",
+            "La prima volta serve un modello. L'app ti guida passo dopo passo: controlla cosa ha il tuo computer, mostra i modelli adatti e li scarica. Se hai già un file di modello, puoi indicarlo nella finestra Modelli.",
+            "La primera vez necesitas un modelo. La aplicación te guía paso a paso: comprueba lo que tiene tu ordenador, muestra modelos adecuados y los descarga. Si ya tienes un archivo de modelo, puedes indicarlo en la ventana Modelos.",
+            "Da primeira vez precisas de um modelo. A aplicação guia-te passo a passo: verifica o que o teu computador tem, mostra modelos adequados e descarrega-os. Se já tens um ficheiro de modelo, podes indicá-lo na janela Modelos.",
+            "Beim ersten Mal brauchst du ein Modell. Die App führt dich Schritt für Schritt: Sie prüft, was dein Computer hat, zeigt passende Modelle und lädt sie herunter. Hast du schon eine Modelldatei, kannst du sie im Fenster Modelle angeben.",
+            "Először egy modellre van szükséged. Az alkalmazás lépésről lépésre végigvezet: megnézi, mi van a gépeden, megmutatja a megfelelő modelleket, és letölti őket. Ha már van modellfájlod, a Modellek ablakban megadhatod.",
+        ],
+    ),
+    (
+        "2. Conversations with memory",
+        [
+            "2. Des conversations avec mémoire",
+            "2. Conversazioni con memoria",
+            "2. Conversaciones con memoria",
+            "2. Conversas com memória",
+            "2. Gespräche mit Gedächtnis",
+            "2. Beszélgetések memóriával",
+        ],
+    ),
+    (
+        "Write in the box at the bottom. You can attach files and folders, branch a conversation from an earlier message and keep an answer in memory. The “Memory and constellation” window shows the map of your conversations, linked by topic.",
+        [
+            "Écrivez dans la zone en bas. Vous pouvez joindre des fichiers et des dossiers, créer une branche à partir d'un message précédent et garder une réponse en mémoire. La fenêtre « Mémoire et constellation » montre la carte de vos conversations, reliées par sujet.",
+            "Scrivi nella casella in basso. Puoi allegare file e cartelle, creare un ramo da un messaggio precedente e tenere a mente una risposta. La finestra «Memoria e costellazione» mostra la mappa delle tue conversazioni, collegate per argomento.",
+            "Escribe en el cuadro de abajo. Puedes adjuntar archivos y carpetas, ramificar una conversación desde un mensaje anterior y guardar una respuesta en la memoria. La ventana «Memoria y constelación» muestra el mapa de tus conversaciones, enlazadas por tema.",
+            "Escreve na caixa de baixo. Podes anexar ficheiros e pastas, ramificar uma conversa a partir de uma mensagem anterior e guardar uma resposta na memória. A janela «Memória e constelação» mostra o mapa das tuas conversas, ligadas por tema.",
+            "Schreibe in das Feld unten. Du kannst Dateien und Ordner anhängen, ein Gespräch ab einer früheren Nachricht verzweigen und eine Antwort im Gedächtnis behalten. Das Fenster „Gedächtnis und Konstellation“ zeigt die Karte deiner Gespräche, nach Thema verbunden.",
+            "Írj az alsó mezőbe. Csatolhatsz fájlokat és mappákat, egy korábbi üzenettől elágaztathatod a beszélgetést, és megjegyeztethetsz egy választ. A „Memória és csillagkép” ablak a beszélgetéseid térképét mutatja, téma szerint összekötve.",
+        ],
+    ),
+    (
+        "3. Ideas and tools",
+        [
+            "3. Idées et outils",
+            "3. Idee e strumenti",
+            "3. Ideas y herramientas",
+            "3. Ideias e ferramentas",
+            "3. Ideen und Werkzeuge",
+            "3. Ötletek és eszközök",
+        ],
+    ),
+    (
+        "The “More” menu holds the prompt library, automations (chains of steps you can also test), creative models and model duels, where you vote blindly for the better answer.",
+        [
+            "Le menu « Plus » contient la bibliothèque de prompts, les automatisations (des chaînes d'étapes que vous pouvez aussi tester), les modèles créatifs et les duels de modèles, où vous votez à l'aveugle pour la meilleure réponse.",
+            "Il menu «Altro» contiene la libreria di prompt, le automazioni (catene di passaggi che puoi anche testare), i modelli creativi e i duelli tra modelli, dove voti alla cieca la risposta migliore.",
+            "El menú «Más» contiene la biblioteca de prompts, las automatizaciones (cadenas de pasos que también puedes probar), los modelos creativos y los duelos de modelos, donde votas a ciegas la mejor respuesta.",
+            "O menu «Mais» contém a biblioteca de prompts, as automatizações (cadeias de passos que também podes testar), os modelos criativos e os duelos de modelos, onde votas às cegas na melhor resposta.",
+            "Das Menü „Mehr“ enthält die Prompt-Bibliothek, Automatisierungen (Schrittketten, die du auch testen kannst), kreative Modelle und Modell-Duelle, in denen du blind für die bessere Antwort stimmst.",
+            "A „Továbbiak” menüben van a promptkönyvtár, az automatizálások (lépéssorok, amelyeket tesztelhetsz is), a kreatív modellek és a modellpárbajok, ahol vakon szavazol a jobb válaszra.",
+        ],
+    ),
+    (
+        "4. The internet only when you want it",
+        [
+            "4. Internet seulement quand vous le voulez",
+            "4. Internet solo quando vuoi tu",
+            "4. Internet solo cuando tú quieras",
+            "4. A internet só quando quiseres",
+            "4. Internet nur, wenn du es willst",
+            "4. Internet csak akkor, ha te akarod",
+        ],
+    ),
+    (
+        "Connecting to GitHub, GitLab and other platforms is off until you switch it on. The “Resources” window shows the evidence: which connections exist and a journal of every request to the internet, with host names only.",
+        [
+            "La connexion à GitHub, GitLab et à d'autres plateformes est désactivée tant que vous ne l'activez pas. La fenêtre « Ressources » montre la preuve : quelles connexions existent et un journal de chaque requête vers Internet, avec les noms d'hôte seulement.",
+            "Il collegamento a GitHub, GitLab e altre piattaforme è spento finché non lo accendi tu. La finestra «Risorse» mostra la prova: quali connessioni esistono e un registro di ogni richiesta verso internet, solo con i nomi degli host.",
+            "La conexión con GitHub, GitLab y otras plataformas está desactivada hasta que la actives. La ventana «Recursos» muestra la prueba: qué conexiones existen y un registro de cada solicitud a internet, solo con nombres de host.",
+            "A ligação ao GitHub, GitLab e outras plataformas está desligada até a ligares. A janela «Recursos» mostra a prova: que ligações existem e um registo de cada pedido para a internet, apenas com nomes de anfitrião.",
+            "Die Verbindung zu GitHub, GitLab und anderen Plattformen ist aus, bis du sie einschaltest. Das Fenster „Ressourcen“ zeigt den Beweis: welche Verbindungen es gibt und ein Protokoll jeder Internetanfrage, nur mit Hostnamen.",
+            "A GitHubhoz, GitLabhoz és más platformokhoz való kapcsolódás ki van kapcsolva, amíg be nem kapcsolod. Az „Erőforrások” ablak mutatja a bizonyítékot: milyen kapcsolatok vannak, és minden internetes kérés naplóját, csak a gazdagép nevével.",
+        ],
+    ),
+    (
+        "5. For everyone",
+        [
+            "5. Pour tout le monde",
+            "5. Per tutti",
+            "5. Para todos",
+            "5. Para todos",
+            "5. Für alle",
+            "5. Mindenkinek",
+        ],
+    ),
+    (
+        "In “Accessibility” you choose a profile (low vision, dyslexia, screen reader, one hand and more). You can change the language any time from the top bar. Press Esc to close a window. Enjoy!",
+        [
+            "Dans « Accessibilité », vous choisissez un profil (basse vision, dyslexie, lecteur d'écran, une seule main et autres). Vous pouvez changer de langue à tout moment depuis la barre du haut. Appuyez sur Échap pour fermer une fenêtre. Bonne découverte !",
+            "In «Accessibilità» scegli un profilo (ipovisione, dislessia, lettore di schermo, una sola mano e altri). Puoi cambiare lingua in qualsiasi momento dalla barra in alto. Premi Esc per chiudere una finestra. Buon divertimento!",
+            "En «Accesibilidad» eliges un perfil (baja visión, dislexia, lector de pantalla, una sola mano y más). Puedes cambiar el idioma en cualquier momento desde la barra superior. Pulsa Esc para cerrar una ventana. ¡Que lo disfrutes!",
+            "Em «Acessibilidade» escolhes um perfil (baixa visão, dislexia, leitor de ecrã, uma só mão e outros). Podes mudar a língua em qualquer momento a partir da barra de cima. Prime Esc para fechar uma janela. Boa utilização!",
+            "Unter „Barrierefreiheit“ wählst du ein Profil (Sehschwäche, Legasthenie, Screenreader, einhändig und mehr). Die Sprache kannst du jederzeit in der oberen Leiste ändern. Esc schließt ein Fenster. Viel Freude!",
+            "A „Hozzáférhetőség” alatt profilt választhatsz (gyengénlátás, diszlexia, képernyőolvasó, egykezes használat és más). A nyelvet bármikor átállíthatod a felső sávon. Az Esc bezár egy ablakot. Jó szórakozást!",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
@@ -10818,6 +10994,18 @@ mod tests {
         assert_eq!(lookup(Lang::Hu, "Settings"), Some("Beállítások"));
         assert_eq!(lookup(Lang::En, "Send"), None);
         assert_eq!(lookup(Lang::Fr, "no such text"), None);
+    }
+
+    /// The tour texts are in a table, not in `t(..)` calls, so the scan above cannot see them.
+    #[test]
+    fn the_tour_is_translated() {
+        for lang in [Lang::Fr, Lang::It, Lang::Es, Lang::Pt, Lang::De, Lang::Hu] {
+            for (_, en, _, ten) in crate::guide_ui::TOUR {
+                for text in [en, ten] {
+                    assert!(lookup(lang, text).is_some(), "{lang:?}: {text}");
+                }
+            }
+        }
     }
 
     /// Every `t("romanian", "english")` in the sources must have all six translations.

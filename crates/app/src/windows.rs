@@ -66,6 +66,7 @@ impl CompanionApp {
                                     10,
                                 ),
                                 (self.t("Dueluri între modele", "Model duels"), 11),
+                                (self.t("Ghid de început", "Getting started"), 12),
                             ] {
                                 if self.s.access.simple_menus
                                     && matches!(which, 0 | 1 | 6 | 7 | 8 | 9 | 11)
@@ -85,6 +86,7 @@ impl CompanionApp {
                                         9 => self.open_flows(),
                                         10 => self.open_memory(),
                                         11 => self.open_duel(),
+                                        12 => self.guide.tour = Some(0),
                                         _ => self.guide.legal = true,
                                     }
                                     ui.close();

@@ -329,7 +329,13 @@ pub struct CompanionApp {
 }
 
 impl CompanionApp {
-    pub fn new(ctx: egui::Context, mut settings: Settings, demo_base: Option<String>) -> Self {
+    pub fn new(
+        ctx: egui::Context,
+        mut settings: Settings,
+        demo_base: Option<String>,
+        first_run: bool,
+    ) -> Self {
+        let show_tour = first_run && demo_base.is_none();
         let (tx, rx) = channel();
         let poll = Arc::new(Mutex::new(PollCfg {
             coli: None,
@@ -394,7 +400,11 @@ impl CompanionApp {
             demo,
             show_settings: false,
             show_about: false,
-            guide: Default::default(),
+            guide: crate::guide_ui::GuideState {
+                // The very first start shows the short tour once; the demo never does.
+                tour: show_tour.then_some(0),
+                ..Default::default()
+            },
             prompts: Default::default(),
             online: Default::default(),
             studio: Default::default(),
