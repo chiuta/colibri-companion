@@ -398,19 +398,28 @@ mod tests {
     #[test]
     fn large_files_load_in_linear_time() {
         // duplicate-key and crossref lookups used to scan all earlier entries for each entry
-        let n = 30_000;
-        let mut text = String::new();
-        for i in 0..n {
-            text.push_str(&format!(
-                "@article{{k{i}, author={{A, B}}, title={{T {i}}}, journal={{J}}, year={{2000}}, crossref={{k0}}}}\n"
-            ));
-        }
-        text.push_str("@article{K5, title={dup}}\n");
-        let t = std::time::Instant::now();
-        let f = read(&text);
-        assert_eq!(f.entries.len(), n);
-        assert!(f.warnings.iter().any(|w| w.contains("duplicate key `K5`")));
-        assert!(t.elapsed().as_secs_f32() < 3.0, "{:?}", t.elapsed());
+        let run = |n: usize| {
+            let mut text = String::new();
+            for i in 0..n {
+                text.push_str(&format!(
+                    "@article{{k{i}, author={{A, B}}, title={{T {i}}}, journal={{J}}, year={{2000}}, crossref={{k0}}}}\n"
+                ));
+            }
+            text.push_str("@article{K5, title={dup}}\n");
+            let t = std::time::Instant::now();
+            let f = read(&text);
+            let took = t.elapsed();
+            assert_eq!(f.entries.len(), n);
+            assert!(f.warnings.iter().any(|w| w.contains("duplicate key `K5`")));
+            took
+        };
+        // Doubling the work must not much more than double the time (a quadratic scan would
+        // quadruple it); a ratio does not depend on how slow the machine is.
+        let (small, big) = (run(15_000), run(30_000));
+        assert!(
+            big.as_secs_f64() < small.as_secs_f64() * 3.2 + 0.05,
+            "not linear: {small:?} then {big:?}"
+        );
     }
 
     fn one(src: &str) -> RawEntry {
