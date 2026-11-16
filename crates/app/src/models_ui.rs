@@ -135,6 +135,7 @@ impl CompanionApp {
                 .size(17.0)
                 .semibold(),
         );
+        self.model_filter_bar(ui);
         match self.catalog.clone() {
             crate::app::Loadable::Ready(models) => {
                 let have: Vec<&str> = installed.iter().map(|i| i.id.as_str()).collect();
@@ -142,8 +143,9 @@ impl CompanionApp {
                     .iter()
                     .filter(|m| m.is_chat_model() && !have.contains(&m.id.as_str()))
                     .filter(|m| top.as_deref() != Some(m.id.as_str()))
+                    .filter(|m| self.model_shown(m))
                     .partition(|m| m.fits);
-                if fit.is_empty() && nofit.is_empty() && top.is_none() {
+                if fit.is_empty() && nofit.is_empty() && top.is_none() && !self.models_filtered() {
                     muted(
                         ui,
                         &p,
@@ -573,6 +575,53 @@ impl CompanionApp {
 
     /// The most sophisticated model this computer can run, with an explanation of how a small
     /// computer manages it. Returns its id so the caller does not list it a second time.
+    /// A search box and quick filters for the model list.
+    pub fn model_filter_bar(&mut self, ui: &mut Ui) {
+        use companion_core::coli::ModelFilter as F;
+        let hint = self.t("Caută un model…", "Search for a model…");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.model_query)
+                .hint_text(hint)
+                .desired_width(280.0),
+        );
+        ui.horizontal_wrapped(|ui| {
+            for f in F::ALL {
+                let label = match f {
+                    F::All => self.t("Toate", "All"),
+                    F::Immediate => self.t("Imediat", "Ready now"),
+                    F::Top => self.t("Recomandate", "Recommended"),
+                    F::Rapid => self.t("Rapide", "Fast"),
+                    F::Code => self.t("Cod", "Code"),
+                    F::Creative => self.t("Creative", "Creative"),
+                    F::Math => self.t("Matematică și logică", "Math and reasoning"),
+                    F::Multilingual => self.t("Multilingve", "Multilingual"),
+                };
+                if ui.selectable_label(self.model_filter == f, label).clicked() {
+                    self.model_filter = f;
+                }
+            }
+        });
+        if !matches!(self.model_filter, F::All | F::Immediate | F::Top | F::Rapid) {
+            muted(
+                ui,
+                &self.p,
+                self.t(
+                    "Filtrul se bazează pe cuvintele din descrierea modelului; un model poate lipsi dacă descrierea nu spune nimic despre asta.",
+                    "This filter goes by the words in the model's description; a model can be missing if its description says nothing about it.",
+                ),
+            );
+        }
+    }
+
+    fn models_filtered(&self) -> bool {
+        !self.model_query.trim().is_empty()
+            || self.model_filter != companion_core::coli::ModelFilter::All
+    }
+
+    pub fn model_shown(&self, m: &ModelInfo) -> bool {
+        m.passes(self.model_filter) && m.matches_query(&self.model_query)
+    }
+
     pub fn strongest_card(&mut self, ui: &mut Ui, in_window: bool) -> Option<String> {
         let p = self.p;
         let models = self.catalog.ready()?.clone();

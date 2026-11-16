@@ -334,11 +334,18 @@ impl CompanionApp {
                 }
             }
             Loadable::Ready(models) => {
+                self.model_filter_bar(ui);
+                ui.add_space(6.0);
                 let (fit, nofit): (Vec<_>, Vec<_>) = models
                     .iter()
                     .filter(|m| top.as_deref() != Some(m.id.as_str()))
+                    .filter(|m| self.model_shown(m))
                     .partition(|m| m.fits && m.is_chat_model());
-                if fit.is_empty() && top.is_none() {
+                if fit.is_empty()
+                    && top.is_none()
+                    && self.model_query.trim().is_empty()
+                    && self.model_filter == companion_core::coli::ModelFilter::All
+                {
                     tinted(ui, p.warn_soft, p.warn, |ui| {
                         ui.label(
                             RichText::new(self.t(

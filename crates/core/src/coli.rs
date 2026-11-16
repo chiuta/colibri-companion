@@ -42,6 +42,78 @@ pub struct ModelInfo {
     pub doc: String,
 }
 
+/// A quick way to narrow the model list. Several are approximations drawn from the catalogue's own
+/// words (name, family, summary), so a model can be missing from "Code" if its description never says so.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ModelFilter {
+    #[default]
+    All,
+    /// Fits this computer and is ready to download and run.
+    Immediate,
+    /// The catalogue's own recommendation.
+    Top,
+    /// Runs from RAM (no streaming from the SSD) and is a modest download.
+    Rapid,
+    Code,
+    Creative,
+    Math,
+    Multilingual,
+}
+
+impl ModelFilter {
+    pub const ALL: [ModelFilter; 8] = [
+        ModelFilter::All,
+        ModelFilter::Immediate,
+        ModelFilter::Top,
+        ModelFilter::Rapid,
+        ModelFilter::Code,
+        ModelFilter::Creative,
+        ModelFilter::Math,
+        ModelFilter::Multilingual,
+    ];
+
+    fn words(self) -> &'static [&'static str] {
+        match self {
+            ModelFilter::Code => &["code", "coder", "coding", "programming", "developer"],
+            ModelFilter::Creative => &[
+                "creative", "story", "stories", "roleplay", "writing", "fiction",
+            ],
+            ModelFilter::Math => &["math", "reasoning", "thinking", "logic", "science"],
+            ModelFilter::Multilingual => &["multilingual", "languages", "translation"],
+            _ => &[],
+        }
+    }
+}
+
+impl ModelInfo {
+    fn text_blob(&self) -> String {
+        format!("{} {} {} {}", self.id, self.name, self.family, self.summary).to_lowercase()
+    }
+
+    pub fn passes(&self, f: ModelFilter) -> bool {
+        match f {
+            ModelFilter::All => true,
+            ModelFilter::Immediate => self.fits && self.status == "good",
+            ModelFilter::Top => self.recommended,
+            ModelFilter::Rapid => {
+                self.fits && !self.streams_from_disk() && self.download_gb <= 10.0
+            }
+            other => {
+                let blob = self.text_blob();
+                other.words().iter().any(|w| blob.contains(w))
+            }
+        }
+    }
+
+    /// Every word typed must appear in the name, family, summary or id.
+    pub fn matches_query(&self, query: &str) -> bool {
+        let blob = self.text_blob();
+        query
+            .split_whitespace()
+            .all(|w| blob.contains(&w.to_lowercase()))
+    }
+}
+
 impl ModelInfo {
     /// This app is a chat interface: only text models can be used in it.
     pub fn is_chat_model(&self) -> bool {
@@ -722,5 +794,47 @@ mod tests {
         fs::write(dir.join("M.colibri/config.json"), b"{}").unwrap();
         assert_eq!(imported_dir(&first, before), Some(dir.join("M.colibri")));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn filters_and_search_narrow_the_list() {
+        let m =
+            |id: &str, summary: &str, fits: bool, status: &str, gb: f64, runs: &str| ModelInfo {
+                id: id.into(),
+                name: id.into(),
+                summary: summary.into(),
+                fits,
+                status: status.into(),
+                download_gb: gb,
+                runs: runs.into(),
+                ..Default::default()
+            };
+        let coder = m(
+            "qwen-coder",
+            "A coding model",
+            true,
+            "good",
+            5.0,
+            "from RAM",
+        );
+        let big = m(
+            "big",
+            "Reasoning and math",
+            true,
+            "tight",
+            80.0,
+            "streams experts from the SSD",
+        );
+        assert!(coder.passes(ModelFilter::All));
+        assert!(coder.passes(ModelFilter::Immediate));
+        assert!(!big.passes(ModelFilter::Immediate));
+        assert!(coder.passes(ModelFilter::Rapid));
+        assert!(!big.passes(ModelFilter::Rapid));
+        assert!(coder.passes(ModelFilter::Code) && !big.passes(ModelFilter::Code));
+        assert!(big.passes(ModelFilter::Math));
+        assert!(!coder.passes(ModelFilter::Top));
+        assert!(coder.matches_query("QWEN coding"));
+        assert!(!coder.matches_query("qwen math"));
+        assert!(coder.matches_query("   "));
     }
 }

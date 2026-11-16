@@ -10314,6 +10314,83 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A „Hozzáférhetőség” alatt profilt választhatsz (gyengénlátás, diszlexia, képernyőolvasó, egykezes használat és más). A nyelvet bármikor átállíthatod a felső sávon. Az Esc bezár egy ablakot. Jó szórakozást!",
         ],
     ),
+    (
+        "Search for a model…",
+        [
+            "Rechercher un modèle…",
+            "Cerca un modello…",
+            "Buscar un modelo…",
+            "Procurar um modelo…",
+            "Modell suchen…",
+            "Modell keresése…",
+        ],
+    ),
+    (
+        "Ready now",
+        [
+            "Prêts maintenant",
+            "Pronti ora",
+            "Listos ya",
+            "Prontos agora",
+            "Sofort bereit",
+            "Azonnal kész",
+        ],
+    ),
+    (
+        "Recommended",
+        [
+            "Recommandés",
+            "Consigliati",
+            "Recomendados",
+            "Recomendados",
+            "Empfohlen",
+            "Ajánlott",
+        ],
+    ),
+    (
+        "Fast",
+        [
+            "Rapides",
+            "Veloci",
+            "Rápidos",
+            "Rápidos",
+            "Schnell",
+            "Gyors",
+        ],
+    ),
+    (
+        "Math and reasoning",
+        [
+            "Maths et raisonnement",
+            "Matematica e ragionamento",
+            "Matemáticas y razonamiento",
+            "Matemática e raciocínio",
+            "Mathe und Logik",
+            "Matematika és logika",
+        ],
+    ),
+    (
+        "Multilingual",
+        [
+            "Multilingues",
+            "Multilingue",
+            "Multilingües",
+            "Multilingues",
+            "Mehrsprachig",
+            "Többnyelvű",
+        ],
+    ),
+    (
+        "This filter goes by the words in the model's description; a model can be missing if its description says nothing about it.",
+        [
+            "Ce filtre se base sur les mots de la description du modèle ; un modèle peut manquer si sa description n'en dit rien.",
+            "Questo filtro si basa sulle parole della descrizione del modello; un modello può mancare se la descrizione non ne parla.",
+            "Este filtro se basa en las palabras de la descripción del modelo; un modelo puede faltar si su descripción no dice nada al respecto.",
+            "Este filtro baseia-se nas palavras da descrição do modelo; um modelo pode faltar se a descrição não disser nada sobre isso.",
+            "Dieser Filter geht nach den Wörtern der Modellbeschreibung; ein Modell kann fehlen, wenn seine Beschreibung nichts dazu sagt.",
+            "Ez a szűrő a modell leírásának szavai alapján működik; egy modell hiányozhat, ha a leírása nem szól erről.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
