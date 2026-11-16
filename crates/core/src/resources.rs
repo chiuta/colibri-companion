@@ -40,6 +40,8 @@ pub struct Snapshot {
     pub disk_free_gb: Option<f64>,
     pub disk_total_gb: Option<f64>,
     pub procs: Vec<ProcUse>,
+    /// Programs that are not ours, grouped by name, largest memory first (name, GB).
+    pub others: Vec<(String, f64)>,
 }
 
 pub struct Sampler {
@@ -81,7 +83,14 @@ impl Sampler {
             .iter()
             .filter_map(|(label, root)| tree_use(sys, label, *root))
             .collect();
+        let ours: std::collections::HashSet<u32> = targets
+            .iter()
+            .flat_map(|(_, root)| tree_pids(sys, *root))
+            .chain(std::iter::once(std::process::id()))
+            .collect();
+        let others = other_programs(sys, &ours);
         Snapshot {
+            others,
             cpu_percent: sys.global_cpu_usage(),
             cores: sys.cpus().len(),
             ram_used_gb: sys.used_memory() as f64 / GB,
@@ -100,6 +109,22 @@ impl Sampler {
             .as_ref()
             .map_or_else(|| vec![root], |s| tree_pids(s, root))
     }
+}
+
+/// Memory held by everything outside `ours`, summed per program name; the top five.
+fn other_programs(sys: &System, ours: &std::collections::HashSet<u32>) -> Vec<(String, f64)> {
+    let mut by: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for (pid, p) in sys.processes() {
+        if ours.contains(&pid.as_u32()) {
+            continue;
+        }
+        *by.entry(p.name().to_string_lossy().into_owned())
+            .or_default() += p.memory();
+    }
+    let mut v: Vec<(String, f64)> = by.into_iter().map(|(n, b)| (n, b as f64 / GB)).collect();
+    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    v.truncate(5);
+    v
 }
 
 fn tree_pids(sys: &System, root: u32) -> Vec<u32> {
@@ -217,5 +242,7 @@ mod tests {
         assert!(snap.procs[0].rss_gb > 0.0);
         assert!(snap.disk_free_gb.is_some());
         assert!(s.tree_pids(me).contains(&me));
+        assert!(snap.others.len() <= 5);
+        assert!(!snap.others.iter().any(|(n, _)| n.is_empty()));
     }
 }

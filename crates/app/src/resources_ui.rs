@@ -65,6 +65,8 @@ impl CompanionApp {
         };
         self.privacy_section(ui, &view);
         ui.add_space(10.0);
+        self.advice_section(ui, &view);
+        ui.add_space(10.0);
 
         // ---- resources
         ui.label(

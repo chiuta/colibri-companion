@@ -2,6 +2,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod access_ui;
+mod advice_ui;
 mod app;
 mod chat_ui;
 mod demo;

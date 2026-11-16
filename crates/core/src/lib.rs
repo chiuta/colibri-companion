@@ -6,6 +6,7 @@
 //! independent, each under its own licence.
 
 pub mod access;
+pub mod advisor;
 pub mod attach;
 pub mod blocks;
 pub mod chat;
@@ -15,6 +16,7 @@ pub mod duel;
 pub mod fetch;
 pub mod flow_eval;
 pub mod flows;
+pub mod gpu;
 pub mod http;
 pub mod locate;
 pub mod mcp;

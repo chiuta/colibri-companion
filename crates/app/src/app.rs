@@ -35,6 +35,7 @@ pub enum Event {
     Root(Option<PathBuf>),
     Catalog(Result<Vec<ModelInfo>, String>),
     Hardware(Result<Hardware, String>),
+    Gpus(Vec<companion_core::gpu::GpuInfo>),
     Status(Result<StatusReport, String>),
     Health(Health),
     ModelIds(Vec<String>),
@@ -331,6 +332,8 @@ pub struct CompanionApp {
     pub show_resources: bool,
     /// The dedicated AI chip, when there is one.
     pub npu: Option<String>,
+    /// Graphics cards the operating system reports; `None` while still looking.
+    pub gpus: Option<Vec<companion_core::gpu::GpuInfo>>,
     pub upd: UpdateState,
     update_after_stop: bool,
     pub res: Option<ResView>,
@@ -442,6 +445,7 @@ impl CompanionApp {
             show_models: false,
             show_resources: false,
             npu: None,
+            gpus: None,
             upd: UpdateState::default(),
             update_after_stop: false,
             res: None,
@@ -639,6 +643,9 @@ impl CompanionApp {
         });
         self.spawn(|tx| {
             let _ = tx.send(Event::Npu(npu::detect()));
+        });
+        self.spawn(|tx| {
+            let _ = tx.send(Event::Gpus(companion_core::gpu::detect()));
         });
     }
 
@@ -1842,6 +1849,7 @@ impl CompanionApp {
             Event::Catalog(r) => {
                 self.catalog = r.map(Loadable::Ready).unwrap_or_else(Loadable::Failed)
             }
+            Event::Gpus(list) => self.gpus = Some(list),
             Event::Hardware(r) => {
                 self.hardware = r.map(Loadable::Ready).unwrap_or_else(Loadable::Failed)
             }
