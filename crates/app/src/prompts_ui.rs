@@ -114,7 +114,7 @@ impl CompanionApp {
         let mut open = true;
         let mut all = self.builtin_prompts();
         all.extend(self.prompts.lib.own.clone());
-        let h_search = self.t("Caută…", "Search…");
+        let h_search = self.t("Căutați…", "Search…");
         let h_fav = self.t("★ Favorite", "★ Favourites");
         let h_mine = self.t("Ale mele", "Mine");
         let h_path = self.t(
@@ -183,7 +183,7 @@ impl CompanionApp {
                         .show(&mut cols[0], |ui| {
                             if shown.is_empty() {
                                 muted(ui, &p, self.t(
-                                    "Niciun prompt nu se potrivește. Încearcă alt cuvânt sau altă categorie.",
+                                    "Niciun prompt nu se potrivește. Încercați alt cuvânt sau altă categorie.",
                                     "No prompt matches. Try another word or category.",
                                 ));
                             }
@@ -212,7 +212,7 @@ impl CompanionApp {
                         .and_then(|id| all.iter().find(|x| &x.id == id));
                     match chosen {
                         None => muted(ui, &p, self.t(
-                            "Alege un prompt din listă. Completezi spațiile libere, apoi îl pui în mesaj.",
+                            "Alegeți un prompt din listă. Completați spațiile libere, apoi îl plasați în mesaj.",
                             "Pick a prompt from the list. Fill in the blanks, then put it in your message.",
                         )),
                         Some(x) => {
@@ -233,17 +233,17 @@ impl CompanionApp {
                                 ui.label(RichText::new(&text).color(p.muted));
                             });
                             ui.horizontal(|ui| {
-                                if ui.button(self.t("Pune în mesaj", "Put in message")).clicked() {
+                                if ui.button(self.t("Plasați în mesaj", "Put in message")).clicked() {
                                     use_text = Some(text.clone());
                                 }
-                                if ui.button(self.t("Copiază", "Copy")).clicked() {
+                                if ui.button(self.t("Copiați", "Copy")).clicked() {
                                     ui.ctx().copy_text(text.clone());
                                 }
                                 if x.own {
                                     if ui.button(self.t("Editează", "Edit")).clicked() {
                                         edit_new = Some((*x).clone());
                                     }
-                                    if ui.button(self.t("Șterge", "Delete")).clicked() {
+                                    if ui.button(self.t("Ștergeți", "Delete")).clicked() {
                                         delete = Some(x.id.clone());
                                     }
                                 }
@@ -323,7 +323,7 @@ impl CompanionApp {
                 ui.label(self.t("Categorie", "Category"));
                 ui.add(egui::TextEdit::singleline(&mut e.category).desired_width(f32::INFINITY));
                 ui.label(self.t(
-                    "Text (pune [CUVINTE] pentru spațiile de completat)",
+                    "Text (puneți [CUVINTE] pentru spațiile de completat)",
                     "Text (use [WORDS] for the blanks)",
                 ));
                 ui.add(
@@ -340,7 +340,7 @@ impl CompanionApp {
                             "It needs a title and a text.",
                         ),
                     );
-                } else if ui.button(self.t("Salvează", "Save")).clicked() {
+                } else if ui.button(self.t("Salvați", "Save")).clicked() {
                     save = true;
                 }
             });

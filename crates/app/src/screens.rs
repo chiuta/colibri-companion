@@ -85,15 +85,15 @@ impl CompanionApp {
         self.step_header(
             ui,
             1,
-            self.t("Mai întâi, ai nevoie de Python", "First, you need Python"),
+            self.t("Mai întâi, aveți nevoie de Python", "First, you need Python"),
             self.t(
-                "colibri își pornește treburile cu Python 3.10 sau mai nou. Nu l-am găsit pe acest calculator.",
+                "colibri își pornește procesele cu Python 3.10 sau mai nou. Nu a fost găsit pe acest calculator.",
                 "colibri uses Python 3.10 or newer to set itself up. I couldn't find it on this computer.",
             ),
         );
         card(ui, &p, |ui| {
             ui.label(self.t(
-                "1. Descarcă și instalează Python (gratuit).",
+                "1. Descărcați și instalați Python (gratuit).",
                 "1. Download and install Python (free).",
             ));
             ui.label(self.t(
@@ -101,7 +101,7 @@ impl CompanionApp {
                 "2. On Windows, tick “Add python.exe to PATH” in the installer.",
             ));
             ui.label(self.t(
-                "3. Revino aici și apasă «Caută din nou».",
+                "3. Reveniți aici și apăsați «Caută din nou».",
                 "3. Come back here and press “Check again”.",
             ));
             ui.add_space(8.0);
@@ -109,13 +109,13 @@ impl CompanionApp {
                 if primary_button(
                     ui,
                     &p,
-                    self.t("Deschide pagina Python", "Open the Python page"),
+                    self.t("Deschideți pagina Python", "Open the Python page"),
                 )
                 .clicked()
                 {
                     proc::open_externally(locate::PYTHON_DOWNLOAD_URL);
                 }
-                if secondary_button(ui, self.t("Caută din nou", "Check again")).clicked() {
+                if secondary_button(ui, self.t("Căutați din nou", "Check again")).clicked() {
                     self.detect_environment();
                 }
             });
@@ -125,7 +125,7 @@ impl CompanionApp {
             ui,
             &p,
             self.t(
-                "Python se instalează o singură dată. Nu trebuie să scrii nicio comandă.",
+                "Python se instalează o singură dată. Nu este necesar să scrieți nicio comandă.",
                 "Python is installed once. You never have to type a command.",
             ),
         );
@@ -138,7 +138,7 @@ impl CompanionApp {
             1,
             self.t("Unde se află colibri?", "Where is colibri?"),
             self.t(
-                "colibri este motorul care rulează modelele pe calculatorul tău. Îl pot descărca eu sau îl poți arăta tu.",
+                "colibri este motorul care rulează modelele pe calculatorul dumneavoastră. Îl pot descărca eu sau îl puteți indica dumneavoastră.",
                 "colibri is the engine that runs models on your computer. I can download it for you, or you can point me to it.",
             ),
         );
@@ -150,7 +150,7 @@ impl CompanionApp {
                     .size(17.0),
             );
             ui.label(self.t(
-                "Descarc colibri de pe GitHub în folderul tău personal (~/colibri), fără să ai nevoie de git. Ocupă puțin spațiu.",
+                "Descarc colibri de pe GitHub în folderul dumneavoastră personal (~/colibri), fără să fie nevoie de git. Ocupă puțin spațiu.",
                 "I download colibri from GitHub into your home folder (~/colibri), no git needed. It's small.",
             ));
             if self.cloning {
@@ -169,7 +169,7 @@ impl CompanionApp {
                     if primary_button(
                         ui,
                         &p,
-                        self.t("Descarcă colibri pentru mine", "Download colibri for me"),
+                        self.t("Descărcați colibri pentru mine", "Download colibri for me"),
                     )
                     .clicked()
                     {
@@ -199,7 +199,7 @@ impl CompanionApp {
                 ui.label(RichText::new(self.t("Nu merge?", "Not working?")).color(p.muted));
                 if ui
                     .link(self.t(
-                        "Deschide descărcarea ZIP în browser",
+                        "Deschideți descărcarea ZIP în browser",
                         "Open the ZIP download in your browser",
                     ))
                     .clicked()
@@ -216,7 +216,7 @@ impl CompanionApp {
                     .size(17.0),
             );
             ui.label(self.t(
-                "Trage folderul colibri în această fereastră sau lipește calea lui.",
+                "Trageți folderul colibri în această fereastră sau lipiți calea lui.",
                 "Drag the colibri folder into this window, or paste its path.",
             ));
             ui.horizontal(|ui| {
@@ -226,7 +226,7 @@ impl CompanionApp {
                         .desired_width(w)
                         .hint_text("/home/…/colibri"),
                 );
-                if secondary_button(ui, self.t("Folosește acest folder", "Use this folder"))
+                if secondary_button(ui, self.t("Utilizați acest folder", "Use this folder"))
                     .clicked()
                 {
                     let text = self.root_input.clone();
@@ -238,7 +238,7 @@ impl CompanionApp {
             }
             if secondary_button(
                 ui,
-                self.t("Caută din nou automat", "Search again automatically"),
+                self.t("Căutați din nou automat", "Search again automatically"),
             )
             .clicked()
             {
@@ -250,7 +250,7 @@ impl CompanionApp {
             ui,
             &p,
             self.t(
-                "colibri este un proiect separat (Apache-2.0), creat de JustVugg. Această aplicație nu îi modifică codul: doar îl pornește și vorbește cu el.",
+                "colibri este un proiect separat (Apache-2.0), creat de JustVugg. Această aplicație nu îi modifică codul: doar îl pornește și comunică cu el.",
                 "colibri is a separate project (Apache-2.0) by JustVugg. This app never changes its code: it only runs it and talks to it.",
             ),
         );
@@ -263,9 +263,9 @@ impl CompanionApp {
         self.step_header(
             ui,
             2,
-            self.t("Alege un model", "Choose a model"),
+            self.t("Alegeți un model", "Choose a model"),
             self.t(
-                "Un model este «creierul» care răspunde. Ți-am marcat ce se potrivește acestui calculator.",
+                "Un model este «creierul» care formulează răspunsurile. Am marcat ce se potrivește acestui calculator.",
                 "A model is the “brain” that answers. I've marked what suits this computer.",
             ),
         );
@@ -279,7 +279,9 @@ impl CompanionApp {
                 hw.gpus.join(", ")
             };
             tinted(ui, p.accent_soft, p.border, |ui| {
-                ui.label(RichText::new(self.t("Calculatorul tău", "Your computer")).semibold());
+                ui.label(
+                    RichText::new(self.t("Calculatorul dumneavoastră", "Your computer")).semibold(),
+                );
                 ui.label(format!(
                     "{}: {} · RAM: {} ({} {}) · {}: {} {} · {}",
                     self.t("Procesor", "CPU"),
@@ -329,7 +331,7 @@ impl CompanionApp {
                     );
                     ui.label(&e);
                 });
-                if secondary_button(ui, self.t("Încearcă din nou", "Try again")).clicked() {
+                if secondary_button(ui, self.t("Încercați din nou", "Try again")).clicked() {
                     self.refresh_engine_info();
                 }
             }
@@ -356,7 +358,7 @@ impl CompanionApp {
                             .color(p.warn),
                         );
                         ui.label(self.t(
-                            "Eliberează spațiu pe disc sau închide programe care folosesc multă memorie, apoi măsoară din nou. Mai jos poți vedea de ce nu se potrivesc.",
+                            "Eliberați spațiu pe disc sau închideți programele care folosesc multă memorie, apoi măsurați din nou. Mai jos puteți vedea de ce nu se potrivesc.",
                             "Free some disk space or close memory-hungry programs, then measure again. Below you can see why each one doesn't fit.",
                         ));
                     });
@@ -418,7 +420,7 @@ impl CompanionApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(&m.name).size(19.0).semibold());
                     if m.recommended {
-                        pill(ui, self.t("Recomandat pentru tine", "Recommended for you"), p.on_accent, p.accent);
+                        pill(ui, self.t("Recomandat pentru dumneavoastră", "Recommended for you"), p.on_accent, p.accent);
                     }
                     let (txt, fg, bg) = self.status_badge(m);
                     pill(ui, txt, fg, bg);
@@ -450,7 +452,7 @@ impl CompanionApp {
                 if can_install {
                     ui.add_space(4.0);
                     if !selected {
-                        if secondary_button(ui, self.t("Alege acest model", "Choose this model")).clicked() {
+                        if secondary_button(ui, self.t("Alegeți acest model", "Choose this model")).clicked() {
                             self.selected_model = Some(m.id.clone());
                             self.license_ok = false;
                         }
@@ -556,7 +558,7 @@ impl CompanionApp {
             } else {
                 let m = self
                     .t(
-                        "Nu pot scrie în «{}». Alege alt folder sau alt disc.",
+                        "Nu se poate scrie în «{}». Alegeți alt folder sau alt disc.",
                         "I can't write to «{}». Pick another folder or disk.",
                     )
                     .replacen("{}", &dir.display().to_string(), 1);
@@ -606,7 +608,7 @@ impl CompanionApp {
         }
         ui.label(
             RichText::new(self.t(
-                "Poți întrerupe și relua oricând; descărcarea continuă chiar dacă închizi fereastra.",
+                "Puteți întrerupe și relua oricând; descărcarea continuă chiar dacă închideți fereastra.",
                 "You can pause and resume at any time; it keeps going even if you close this window.",
             ))
             .color(p.muted),
@@ -617,7 +619,7 @@ impl CompanionApp {
                 "The model comes from Hugging Face and has its own licence.",
             ));
             if ui
-                .link(self.t("Vezi pagina modelului", "See the model page"))
+                .link(self.t("Vedeți pagina modelului", "See the model page"))
                 .clicked()
             {
                 proc::open_externally(&m.hub_url());
@@ -635,7 +637,7 @@ impl CompanionApp {
                 if primary_button(
                     ui,
                     &p,
-                    self.t("Descarcă și instalează", "Download and install"),
+                    self.t("Descărcați și instalați", "Download and install"),
                 )
                 .clicked()
                 {
@@ -685,7 +687,7 @@ impl CompanionApp {
     pub(crate) fn speed_note(&self, m: &ModelInfo) -> &'static str {
         if m.streams_from_disk() {
             self.t(
-                "Citește părți din model de pe SSD: mai lent, dar foarte capabil. Un SSD rapid ajută mult.",
+                "Citește părți din model de pe SSD: mai lent, dar foarte capabil. Un SSD rapid ajută considerabil.",
                 "Reads parts of the model from your SSD: slower, but very capable. A fast SSD helps a lot.",
             )
         } else {
@@ -741,7 +743,7 @@ impl CompanionApp {
             let phase = inst.as_ref().map(|i| i.phase.as_str()).unwrap_or("build");
             let what = match phase {
                 "build" => self.t(
-                    "Pregătesc motorul pentru calculatorul tău…",
+                    "Se pregătește motorul pentru calculatorul dumneavoastră…",
                     "Preparing the engine for your computer…",
                 ),
                 "download" => self.t("Descarc modelul…", "Downloading the model…"),
@@ -777,12 +779,12 @@ impl CompanionApp {
             }
             ui.add_space(4.0);
             ui.label(RichText::new(self.t(
-                "Poți lăsa fereastra deschisă și face altceva. Dacă o închizi, descărcarea continuă în fundal.",
+                "Puteți lăsa fereastra deschisă și puteți face altceva. Dacă o închideți, descărcarea continuă în fundal.",
                 "Feel free to do something else. If you close this window, the download keeps going in the background.",
             )).color(p.muted));
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if secondary_button(ui, self.t("Pune pe pauză", "Pause")).clicked() {
+                if secondary_button(ui, self.t("Puneți în pauză", "Pause")).clicked() {
                     self.pause_install();
                 }
             });
@@ -804,12 +806,12 @@ impl CompanionApp {
                     .color(p.warn),
                 );
                 ui.label(self.t(
-                    "Pentru a folosi placa video, rulează această comandă într-un terminal (eu nu instalez niciodată pachete de sistem singură), apoi apasă «Reia».",
+                    "Pentru a utiliza placa video, rulați această comandă într-un terminal (aplicația nu instalează niciodată pachete de sistem de la sine), apoi apăsați «Reia».",
                     "To use your graphics card, run this command in a terminal (I never install system packages myself), then press “Resume”.",
                 ));
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&cmd).monospace());
-                    if ui.button(self.t("Copiază", "Copy")).clicked() {
+                    if ui.button(self.t("Copiați", "Copy")).clicked() {
                         ui.ctx().copy_text(cmd.clone());
                         self.toast(self.t("Copiat", "Copied"));
                     }
@@ -881,7 +883,7 @@ impl CompanionApp {
                         .and_then(|s| s.model.clone())
                         .and_then(|m| m.id)
                 });
-            if primary_button(ui, &p, self.t("Reia", "Resume")).clicked() {
+            if primary_button(ui, &p, self.t("Reluați", "Resume")).clicked() {
                 if let (Some(id), Loadable::Ready(models)) = (model.as_deref(), &self.catalog) {
                     if let Some(m) = models.iter().find(|m| m.id == id).cloned() {
                         self.start_install(&m);
@@ -890,7 +892,8 @@ impl CompanionApp {
                     self.show_model_picker = true;
                 }
             }
-            if secondary_button(ui, self.t("Alege alt model", "Choose another model")).clicked() {
+            if secondary_button(ui, self.t("Alegeți alt model", "Choose another model")).clicked()
+            {
                 self.show_model_picker = true;
             }
             if secondary_button(ui, self.t("Arată jurnalul", "Show the log")).clicked() {
@@ -921,11 +924,11 @@ impl CompanionApp {
             ));
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if primary_button(ui, &p, self.t("Pornește modelul", "Start the model")).clicked()
-                {
+                if primary_button(ui, &p, self.t("Porniți modelul", "Start the model")).clicked() {
                     self.start_server();
                 }
-                if secondary_button(ui, self.t("Alege alt model", "Choose another model")).clicked()
+                if secondary_button(ui, self.t("Alegeți alt model", "Choose another model"))
+                    .clicked()
                 {
                     self.show_model_picker = true;
                 }
@@ -942,7 +945,7 @@ impl CompanionApp {
         if !self.chat.list.is_empty()
             && secondary_button(
                 ui,
-                self.t("Vezi conversațiile salvate", "See saved conversations"),
+                self.t("Vedeți conversațiile salvate", "See saved conversations"),
             )
             .clicked()
         {
@@ -970,7 +973,7 @@ impl CompanionApp {
                 );
             });
             ui.label(RichText::new(self.t(
-                "Modelul se citește de pe disc în memorie. La prima pornire poate dura mai mult. Imediat ce e gata, se deschide conversația.",
+                "Modelul se citește de pe disc în memorie. La prima pornire poate dura mai mult. De îndată ce este gata, se deschide conversația.",
                 "The model is being read from disk into memory. The first start can take longer. The chat opens by itself as soon as it's ready.",
             )).color(p.muted));
             ui.add_space(6.0);
@@ -978,7 +981,7 @@ impl CompanionApp {
                 if secondary_button(ui, self.t("Arată jurnalul", "Show the log")).clicked() {
                     self.fetch_logs(false);
                 }
-                if secondary_button(ui, self.t("Oprește", "Stop")).clicked() {
+                if secondary_button(ui, self.t("Opriți", "Stop")).clicked() {
                     self.stop_server();
                 }
             });
@@ -988,7 +991,7 @@ impl CompanionApp {
             if secondary_button(
                 ui,
                 self.t(
-                    "Între timp, vezi conversațiile salvate",
+                    "Între timp, vedeți conversațiile salvate",
                     "Meanwhile, see saved conversations",
                 ),
             )

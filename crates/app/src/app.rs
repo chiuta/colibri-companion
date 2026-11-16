@@ -615,7 +615,7 @@ impl CompanionApp {
             None => {
                 self.root_msg = Some(
                     self.t(
-                        "Folderul acesta nu pare a fi colibri (lipsește c/coli). Alege folderul care conține «c», «docs» și «README.md».",
+                        "Acest folder nu pare a fi colibri (lipsește c/coli). Alegeți folderul care conține «c», «docs» și «README.md».",
                         "That folder doesn't look like colibri (c/coli is missing). Pick the folder that contains «c», «docs» and «README.md».",
                     )
                     .into(),
@@ -788,7 +788,7 @@ impl CompanionApp {
         if path.is_file() {
             if !is_first_gguf(&path) {
                 self.toast(self.t(
-                    "Alege primul fișier (cel cu «-00001-of-…» în nume) sau un fișier .gguf întreg.",
+                    "Alegeți primul fișier (cel cu «-00001-of-…» în nume) sau un fișier .gguf întreg.",
                     "Pick the first file (the one with “-00001-of-…” in its name) or a single .gguf file.",
                 ));
                 return;
@@ -1157,7 +1157,7 @@ impl CompanionApp {
         if let (Some(coli), Some(pid)) = (&self.coli, pid) {
             let _ = coli.pause_install(pid);
             self.toast(self.t(
-                "Descărcarea a fost oprită. O poți relua oricând.",
+                "Descărcarea a fost oprită. O puteți relua oricând.",
                 "The download was paused. You can resume it any time.",
             ));
         }
@@ -1505,7 +1505,7 @@ impl CompanionApp {
             self.existing_path = g.display().to_string();
             self.show_models = true;
             self.toast(self.t(
-                "Fișier de model găsit. Apasă «Folosește acest model» în fereastra Modele.",
+                "Fișier de model găsit. Apăsați «Folosește acest model» în fereastra Modele.",
                 "Model file found. Press “Use this model” in the Models window.",
             ));
             return;
@@ -1669,7 +1669,7 @@ impl CompanionApp {
             Err(e) => self.toast(format!(
                 "{}: {e}",
                 self.t(
-                    "Nu am putut deschide previzualizarea",
+                    "Previzualizarea nu a putut fi deschisă",
                     "Could not open the preview"
                 )
             )),
@@ -1930,7 +1930,7 @@ impl CompanionApp {
                     Ok(()) => {
                         self.upd.colibri = None;
                         self.toast(self.t(
-                            "colibri este la zi. Verifică lista de modele: pot fi modele noi.",
+                            "colibri este la zi. Verificați lista de modele: pot exista modele noi.",
                             "colibri is up to date. Check the model list: there may be new models.",
                         ));
                         self.refresh_engine_info();
@@ -2001,7 +2001,7 @@ impl CompanionApp {
                     }
                     Err(e) => self.toast(format!(
                         "{}: {e}",
-                        self.t("Nu am putut șterge modelul", "Could not delete the model")
+                        self.t("Modelul nu a putut fi șters", "Could not delete the model")
                     )),
                 }
                 self.refresh_installed();

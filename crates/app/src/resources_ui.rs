@@ -71,7 +71,7 @@ impl CompanionApp {
         // ---- resources
         ui.label(
             RichText::new(self.t(
-                "Ce folosește acum calculatorul",
+                "Ce utilizează acum calculatorul",
                 "What your computer is using now",
             ))
             .size(17.0)
@@ -221,7 +221,7 @@ impl CompanionApp {
                     .color(p.ok),
                 );
                 ui.label(self.t(
-                    "Aplicația și motorul colibri vorbesc doar între ele, în interiorul calculatorului tău. Conversațiile tale nu sunt trimise nicăieri.",
+                    "Aplicația și motorul colibri comunică doar între ele, în interiorul calculatorului dumneavoastră. Conversațiile dumneavoastră nu sunt trimise nicăieri.",
                     "The app and the colibri engine only talk to each other, inside your computer. Your conversations are not sent anywhere.",
                 ));
             });
@@ -241,7 +241,7 @@ impl CompanionApp {
                     self.base()
                 ));
                 ui.label(self.t(
-                    "Așa ai ales în Setări. Revino la adresa locală (http://127.0.0.1:8000) ca totul să rămână pe acest calculator.",
+                    "Așa ați ales în Setări. Reveniți la adresa locală (http://127.0.0.1:8000) pentru ca totul să rămână pe acest calculator.",
                     "You chose this in Settings. Go back to the local address (http://127.0.0.1:8000) to keep everything on this computer.",
                 ));
             });
@@ -255,7 +255,7 @@ impl CompanionApp {
                 ui.label(
                     RichText::new(if expected {
                         self.t(
-                            "Se descarcă ceva, la cererea ta",
+                            "Se descarcă ceva, la solicitarea dumneavoastră",
                             "Something is downloading, because you asked for it",
                         )
                     } else {
@@ -274,7 +274,7 @@ impl CompanionApp {
                 }
                 if expected {
                     ui.label(self.t(
-                        "Descărcarea unui model sau a lui colibri are nevoie de internet. Se oprește singură când termină.",
+                        "Descărcarea unui model sau a lui colibri necesită internet. Se oprește singură la finalizare.",
                         "Downloading a model or colibri needs the internet. It stops by itself when done.",
                     ));
                 }
@@ -380,12 +380,12 @@ impl CompanionApp {
                 });
                 ui.add_space(6.0);
                 ui.label(self.t(
-                    "Poți verifica și singur, cu uneltele sistemului tău, fără să te bazezi pe această aplicație:",
+                    "Puteți verifica și singur, cu instrumentele sistemului dumneavoastră, fără a vă baza pe această aplicație:",
                     "You can also check for yourself with your system's own tools, without relying on this app:",
                 ));
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(net::verify_command()).monospace());
-                    if secondary_button(ui, self.t("Copiază", "Copy")).clicked() {
+                    if secondary_button(ui, self.t("Copiați", "Copy")).clicked() {
                         ui.ctx().copy_text(net::verify_command().to_string());
                     }
                 });
@@ -393,7 +393,7 @@ impl CompanionApp {
                     ui,
                     &p,
                     self.t(
-                        "Aceasta este o fotografie a momentului de față. Singurele situații în care internetul este folosit sunt cele cerute de tine: descărcarea lui colibri, a unui model, verificarea de actualizări sau platformele conectate de tine.",
+                        "Aceasta este o imagine a momentului de față. Singurele situații în care se utilizează internetul sunt cele solicitate de dumneavoastră: descărcarea lui colibri sau a unui model, verificarea actualizărilor ori platformele conectate de dumneavoastră.",
                         "This is a snapshot of right now. The only times the internet is used are the ones you ask for: downloading colibri, downloading a model, checking for updates or the platforms you connected.",
                     ),
                 );
@@ -434,7 +434,7 @@ impl CompanionApp {
                     ui,
                     &p,
                     self.t(
-                        "Se păstrează doar numele gazdei și felul cererii, niciodată calea, parametrii sau jetoanele. Jurnalul se șterge când închizi aplicația.",
+                        "Se păstrează doar numele gazdei și tipul cererii, niciodată calea, parametrii sau jetoanele. Jurnalul se șterge la închiderea aplicației.",
                         "Only the host name and the kind of request are kept, never the path, the parameters or tokens. The journal is erased when you close the app.",
                     ),
                 );
@@ -486,7 +486,7 @@ impl CompanionApp {
                             .replacen("{}", u.title.trim(), 1);
                         ui.label(msg);
                         let label = if self.server_ready() {
-                            self.t("Oprește modelul și actualizează", "Stop the model and update")
+                            self.t("Opriți modelul și actualizați", "Stop the model and update")
                         } else {
                             self.t("Actualizează colibri", "Update colibri")
                         };
@@ -508,7 +508,7 @@ impl CompanionApp {
                             )
                             .replacen("{}", &r.tag, 1),
                         );
-                        if secondary_button(ui, self.t("Vezi descărcarea", "See the download")).clicked() {
+                        if secondary_button(ui, self.t("Vedeți descărcarea", "See the download")).clicked() {
                             companion_core::proc::open_externally(&r.url);
                         }
                     }

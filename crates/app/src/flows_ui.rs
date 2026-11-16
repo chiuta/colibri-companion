@@ -229,14 +229,14 @@ impl Env for Real {
 
 fn kind_name(app: &CompanionApp, s: &Step) -> &'static str {
     match s {
-        Step::Fetch { .. } => app.t("Citește o pagină web", "Read a web page"),
-        Step::ReadFolder { .. } => app.t("Citește un dosar", "Read a folder"),
-        Step::ReadFile { .. } => app.t("Citește un fișier", "Read a file"),
-        Step::RepoFile { .. } => app.t("Citește din depozit", "Read from a repository"),
+        Step::Fetch { .. } => app.t("Citiți o pagină web", "Read a web page"),
+        Step::ReadFolder { .. } => app.t("Citiți un dosar", "Read a folder"),
+        Step::ReadFile { .. } => app.t("Citiți un fișier", "Read a file"),
+        Step::RepoFile { .. } => app.t("Citiți din depozit", "Read from a repository"),
         Step::Ask { .. } => app.t("Întreabă modelul", "Ask the model"),
-        Step::Save { .. } => app.t("Salvează ca fișier", "Save as a file"),
+        Step::Save { .. } => app.t("Salvați ca fișier", "Save as a file"),
         Step::Webhook { .. } => app.t(
-            "Trimite la un webhook (cu acordul tău)",
+            "Trimiteți la un webhook (cu acordul dumneavoastră)",
             "Send to a webhook (with your consent)",
         ),
         Step::Notify { .. } => app.t("Arată rezultatul", "Show the result"),
@@ -434,7 +434,7 @@ impl CompanionApp {
             self.t("Automatizarea s-a terminat.", "The automation finished.")
         } else {
             self.t(
-                "Automatizarea s-a oprit; vezi jurnalul.",
+                "Automatizarea s-a oprit; consultați jurnalul.",
                 "The automation stopped; see the journal.",
             )
         };
@@ -481,7 +481,7 @@ impl CompanionApp {
         let mut open = true;
         let mut changed = false;
         let t_new = self.t("Nouă", "New");
-        let t_tpl = self.t("Adaugă modelele de pornire", "Add the starter templates");
+        let t_tpl = self.t("Adăugați modelele de pornire", "Add the starter templates");
         egui::Window::new(self.t("Automatizări", "Automations"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
@@ -489,7 +489,7 @@ impl CompanionApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 muted(ui, &p, self.t(
-                    "Un lanț scurt de pași, pe care îl pornești tu sau care rulează singur cât timp aplicația e deschisă: citești o pagină sau un dosar, întrebi modelul, salvezi sau trimiți. Cel mult 12 pași și 20 de întrebări către model; o întrebare eșuată se reîncearcă de 3 ori. Textul adus de afară ajunge la model doar marcat ca material, nu ca instrucțiuni. Trimiterile cer mereu acordul tău și nu se fac niciodată fără tine. Rulează doar cât aplicația e deschisă și modelul pornit.",
+                    "Un lanț scurt de pași, pe care îl porniți dumneavoastră sau care rulează singur cât timp aplicația este deschisă: citirea unei pagini sau a unui dosar, interogarea modelului, salvarea sau trimiterea. Cel mult 12 pași și 20 de întrebări către model; o întrebare eșuată se reîncearcă de 3 ori. Textul adus din exterior ajunge la model doar marcat ca material, nu ca instrucțiuni. Trimiterile necesită întotdeauna acordul dumneavoastră și nu se efectuează niciodată fără dumneavoastră. Rulează doar cât timp aplicația este deschisă și modelul pornit.",
                     "A short chain of steps that you start, or that runs by itself while the app is open: read a page or a folder, ask the model, save or send. At most 12 steps and 20 model calls; a failed model call is retried 3 times. Text brought in from outside reaches the model only marked as material, not as instructions. Sending always needs your consent and is never done without you. It runs only while the app is open and the model is running.",
                 ));
                 ui.add_space(4.0);
@@ -537,7 +537,7 @@ impl CompanionApp {
                     ui.separator();
                     ui.vertical(|ui| {
                         let Some(i) = self.flows.sel.filter(|i| *i < self.flows.lib.flows.len()) else {
-                            muted(ui, &p, self.t("Alege o automatizare din stânga, sau creează una nouă.", "Pick an automation on the left, or create a new one."));
+                            muted(ui, &p, self.t("Alegeți o automatizare din stânga sau creați una nouă.", "Pick an automation on the left, or create a new one."));
                             return;
                         };
                         let busy = self.flows.running;
@@ -548,8 +548,8 @@ impl CompanionApp {
                             self.t("Ce primește (adresă, dosar, fișier sau text):", "What it gets (address, folder, file or text):"),
                             self.t("+ Pas", "+ Step"),
                             self.t("Rulează acum", "Run now"),
-                            self.t("Oprește", "Stop"),
-                            self.t("Șterge automatizarea", "Delete the automation"),
+                            self.t("Opriți", "Stop"),
+                            self.t("Ștergeți automatizarea", "Delete the automation"),
                         );
                         let (m_manual, m_start, m_every) = (
                             self.t("Doar manual", "Manual only"),
@@ -558,7 +558,7 @@ impl CompanionApp {
                         );
                         let mut delete = false;
                         let names: Vec<&str> = (0..8).map(|j| kind_name(self, &blank_like(j))).collect();
-                        let warn_send = self.t("Pasul «Trimite» nu rulează fără tine: o rulare pe timp se oprește la el.", "The “Send” step never runs without you: a timed run stops at it.");
+                        let warn_send = self.t("Pasul «Trimite» nu rulează fără dumneavoastră: o rulare programată se oprește la el.", "The “Send” step never runs without you: a timed run stops at it.");
                         {
                             let f = &mut self.flows.lib.flows[i];
                             ui.horizontal(|ui| {
@@ -686,7 +686,7 @@ impl CompanionApp {
                                 }
                             }
                             if !self.server_ready() {
-                                muted(ui, &p, self.t("Pornește mai întâi modelul.", "Start the model first."));
+                                muted(ui, &p, self.t("Porniți mai întâi modelul.", "Start the model first."));
                             }
                             if ui.button(l_del).clicked() {
                                 delete = true;
@@ -695,11 +695,11 @@ impl CompanionApp {
                         ui.add_space(4.0);
                         let l_test = self.t("Testează automatizarea", "Test the automation");
                         let l_test_help = self.t(
-                            "Câte un caz pe linie: «intrare ::: cuvânt ; alt cuvânt ; !interzis». Fără «:::» cazul trece dacă automatizarea se termină bine. Nimic nu se salvează și nu se trimite în timpul testului.",
+                            "Câte un caz pe linie: «intrare ::: cuvânt ; alt cuvânt ; !interzis». Fără «:::» cazul este reușit dacă automatizarea se încheie fără erori. Nimic nu se salvează și nu se trimite în timpul testului.",
                             "One case per line: “input ::: word ; other word ; !forbidden”. Without “:::” a case passes if the automation ends well. Nothing is saved or sent during a test.",
                         );
                         let l_rep = self.t("Repetări pe caz", "Repeats per case");
-                        let l_go = self.t("Pornește testul", "Start the test");
+                        let l_go = self.t("Porniți testul", "Start the test");
                         egui::CollapsingHeader::new(l_test).id_salt("flow-test").show(ui, |ui| {
                             muted(ui, &p, l_test_help);
                             ui.add(
@@ -748,7 +748,7 @@ impl CompanionApp {
                                 };
                                 ui.label(RichText::new(head).semibold());
                                 if r.stopped {
-                                    muted(ui, &p, self.t("Oprit de tine: rezultatul e parțial.", "Stopped by you: the result is partial."));
+                                    muted(ui, &p, self.t("Oprit de dumneavoastră: rezultatul este parțial.", "Stopped by you: the result is partial."));
                                 }
                                 if *cases > 1 {
                                     for (k, (ok, n)) in r.per_case.iter().enumerate() {
@@ -771,7 +771,7 @@ impl CompanionApp {
                 if let Some((what, _)) = self.flows.approval.clone() {
                     ui.separator();
                     egui::Frame::group(ui.style()).fill(p.warn_soft).show(ui, |ui| {
-                        ui.label(RichText::new(self.t("Cere acordul tău", "Needs your consent")).semibold().color(p.warn));
+                        ui.label(RichText::new(self.t("Solicită acordul dumneavoastră", "Needs your consent")).semibold().color(p.warn));
                         ui.label(what);
                         ui.horizontal(|ui| {
                             if ui.button(self.t("Da, trimite", "Yes, send")).clicked() {
@@ -803,7 +803,7 @@ impl CompanionApp {
                         ui.label(&self.flows.result);
                     });
                     ui.horizontal(|ui| {
-                        if ui.button(self.t("Copiază", "Copy")).clicked() {
+                        if ui.button(self.t("Copiați", "Copy")).clicked() {
                             ui.ctx().copy_text(self.flows.result.clone());
                         }
                         muted(ui, &p, &format!("{} {}", self.t("Fișierele salvate sunt în", "Saved files are in"), paths::data_dir().join("automations-out").display()));

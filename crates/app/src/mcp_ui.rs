@@ -190,7 +190,7 @@ impl CompanionApp {
             "Short name (letters and digits)",
         );
         let hint_cmd = self.t(
-            "Comanda, de ex. npx -y @modelcontextprotocol/server-filesystem /calea/ta",
+            "Comanda, de ex. npx -y @modelcontextprotocol/server-filesystem /calea/dumneavoastră",
             "The command, e.g. npx -y @modelcontextprotocol/server-filesystem /your/path",
         );
         let mut add = false;
@@ -207,7 +207,7 @@ impl CompanionApp {
                 tinted(ui, p.warn_soft, p.warn, |ui| {
                     ui.label(
                         self.t(
-                            "Un server MCP este un program care rulează pe calculatorul tău, cu drepturile tale. Adaugă doar programe în care ai încredere. Nu pornește singur: îl pornești tu, iar fiecare apel de unealtă îți cere acordul.",
+                            "Un server MCP este un program care rulează pe calculatorul dumneavoastră, cu drepturile dumneavoastră. Adăugați doar programe în care aveți încredere. Nu pornește singur: îl porniți dumneavoastră, iar fiecare apel de unealtă vă solicită acordul.",
                             "An MCP server is a program that runs on your computer with your rights. Add only programs you trust. It never starts by itself: you start it, and every tool call asks for your approval.",
                         ),
                     );
@@ -224,7 +224,7 @@ impl CompanionApp {
                             .hint_text(hint_cmd)
                             .desired_width(ui.available_width() - 90.0),
                     );
-                    if secondary_button(ui, self.t("Adaugă", "Add")).clicked() {
+                    if secondary_button(ui, self.t("Adăugați", "Add")).clicked() {
                         add = true;
                     }
                 });
@@ -250,17 +250,17 @@ impl CompanionApp {
                     ui.horizontal(|ui| {
                         if starting {
                             ui.add(egui::Spinner::new());
-                            ui.label(self.t("Pornește…", "Starting…"));
+                            ui.label(self.t("Porniți…", "Starting…"));
                         } else if running {
                             pill(ui, self.t("pornit", "running"), p.ok, p.accent_soft);
                             let n = self.mcp.tools.iter().filter(|(sv, _)| sv == &s.name).count();
                             ui.label(
                                 self.t("{} unelte", "{} tools").replacen("{}", &n.to_string(), 1),
                             );
-                            if ui.small_button(self.t("Oprește", "Stop")).clicked() {
+                            if ui.small_button(self.t("Opriți", "Stop")).clicked() {
                                 stop = Some(s.name.clone());
                             }
-                        } else if ui.button(self.t("Pornește", "Start")).clicked() {
+                        } else if ui.button(self.t("Porniți", "Start")).clicked() {
                             start = Some(s.name.clone());
                         }
                         if !running && !starting && ui.small_button(self.t("Scoate", "Remove")).clicked()
@@ -317,7 +317,7 @@ impl CompanionApp {
                         }
                         if !self.mcp.manual_out.is_empty()
                             && ui
-                                .button(self.t("Pune rezultatul în mesaj", "Put the result in the message"))
+                                .button(self.t("Plasați rezultatul în mesaj", "Put the result in the message"))
                                 .clicked()
                         {
                             let out = self.mcp.manual_out.clone();
@@ -422,7 +422,7 @@ impl CompanionApp {
                     ui,
                     &p,
                     self.t(
-                        "Unealta poate citi sau schimba lucruri pe acest calculator, după cum a fost făcută. Verifică argumentele.",
+                        "Unealta poate citi sau modifica elemente de pe acest calculator, în funcție de modul în care a fost concepută. Verificați argumentele.",
                         "The tool can read or change things on this computer, depending on how it was made. Check the arguments.",
                     ),
                 );

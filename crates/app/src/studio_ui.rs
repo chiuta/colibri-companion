@@ -66,7 +66,7 @@ impl CompanionApp {
         if !local {
             self.studio.result = self
                 .t(
-                    "Adresa serverului nu e bună: aici merg doar servere http:// de pe acest calculator sau din rețeaua ta.",
+                    "Adresa serverului nu este validă: sunt acceptate doar servere http:// de pe acest calculator sau din rețeaua dumneavoastră.",
                     "The server address is not valid: only http:// servers on this computer or your own network work here.",
                 )
                 .into();
@@ -160,7 +160,7 @@ impl CompanionApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 muted(ui, &p, self.t(
-                    "Modele deschise care fac imagini, video, voce și muzică sau înțeleg sunetul, căutate online în noiembrie 2026. colibri servește singur doar Qwen-Image-2.1; celelalte rulează în alt program (ComfyUI, LocalAI), către care poți îndrepta această aplicație. Licențele diferă: verifică pagina fiecărui model.",
+                    "Modele deschise care generează imagini, video, voce și muzică sau înțeleg sunetul, căutate online în noiembrie 2026. colibri servește singur doar Qwen-Image-2.1; celelalte rulează în alt program (ComfyUI, LocalAI), către care puteți îndrepta această aplicație. Licențele diferă: verificați pagina fiecărui model.",
                     "Open models that make pictures, video, voice and music or understand sound, looked up online in November 2026. colibri itself serves only Qwen-Image-2.1; the others run in another program (ComfyUI, LocalAI) that you can point this app at. Licences differ: check each model's page.",
                 ));
                 ui.add_space(4.0);
@@ -187,7 +187,7 @@ impl CompanionApp {
                             let (t, c) = match x.commercial {
                                 Commercial::Yes => (self.t("comercial: da", "commercial: yes"), p.ok),
                                 Commercial::No => (self.t("comercial: nu", "commercial: no"), p.bad),
-                                Commercial::Check => (self.t("comercial: verifică", "commercial: check"), p.warn),
+                                Commercial::Check => (self.t("comercial: verificați", "commercial: check"), p.warn),
                             };
                             ui.label(RichText::new(t).small().color(c));
                         });
@@ -208,7 +208,7 @@ impl CompanionApp {
                     }
                 });
                 ui.separator();
-                ui.label(RichText::new(self.t("Fă o imagine", "Make a picture")).strong());
+                ui.label(RichText::new(self.t("Creați o imagine", "Make a picture")).strong());
                 ui.horizontal(|ui| {
                     ui.label(self.t("Server:", "Server:"));
                     ui.add(egui::TextEdit::singleline(&mut self.studio.endpoint).desired_width(260.0));
@@ -230,7 +230,7 @@ impl CompanionApp {
                         crate::theme::busy(ui);
                     }
                     if let Some(path) = self.studio.last.clone() {
-                        if ui.button(self.t("Deschide imaginea", "Open the picture")).clicked() {
+                        if ui.button(self.t("Deschideți imaginea", "Open the picture")).clicked() {
                             companion_core::proc::open_externally(&path.display().to_string());
                         }
                     }

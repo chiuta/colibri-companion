@@ -184,13 +184,13 @@ impl CompanionApp {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(self.t(
-                        "Trage un fișier în fereastră sau scrie calea lui:",
+                        "Trageți un fișier în fereastră sau scrieți calea lui:",
                         "Drop a file on the window, or type its path:",
                     ))
                     .color(p.muted),
                 );
                 ui.add(egui::TextEdit::singleline(&mut self.guide.path).desired_width(260.0));
-                if ui.button(self.t("Adaugă", "Add")).clicked()
+                if ui.button(self.t("Adăugați", "Add")).clicked()
                     && !self.guide.path.trim().is_empty()
                 {
                     let path = std::path::PathBuf::from(self.guide.path.trim().trim_matches('"'));
@@ -226,7 +226,7 @@ impl CompanionApp {
                     }
                     ui.separator();
                     muted(ui, &p, self.t(
-                        "Modelele AI pot greși. Pentru probleme medicale, juridice sau financiare, întreabă un specialist.",
+                        "Modelele AI pot greși. Pentru probleme medicale, juridice sau financiare, adresați-vă unui specialist.",
                         "AI models can make mistakes. For medical, legal or financial matters, ask a specialist.",
                     ));
                 });
@@ -242,7 +242,7 @@ impl CompanionApp {
                 .vscroll(true)
                 .show(ctx, |ui| {
                     muted(ui, &p, self.t(
-                        "Alte programe gratuite care rulează AI pe calculatorul tău, ca și colibri. Se deschid în browser doar când apeși. Verifică singur site-ul fiecăruia; lista nu e un catalog complet.",
+                        "Alte programe gratuite care rulează AI pe calculatorul dumneavoastră, la fel ca colibri. Se deschid în browser doar când apăsați. Verificați site-ul fiecăruia; lista nu este un catalog complet.",
                         "Other free programs that run AI on your own computer, like colibri. They open in your browser only when you click. Check each site yourself; this is not a complete catalogue.",
                     ));
                     ui.add_space(6.0);

@@ -19,7 +19,7 @@ impl CompanionApp {
         match c {
             Cap::Chat => self.t("Conversație", "Chat"),
             Cap::Thinking => self.t("Gândire pas cu pas", "Step-by-step thinking"),
-            Cap::Tools => self.t("Folosește unelte", "Uses tools"),
+            Cap::Tools => self.t("Utilizează unelte", "Uses tools"),
             Cap::Vision => self.t("Vede imagini", "Sees pictures"),
             Cap::Code => self.t("Specializat pe cod", "Specialised in code"),
             Cap::ImageOut => self.t("Generează imagini", "Makes pictures"),
@@ -75,7 +75,7 @@ impl CompanionApp {
                 ui.label(if sh.accepts_images() {
                     self.t("Imagini (PNG, JPG, GIF, WebP, BMP): modelul le poate privi.", "Pictures (PNG, JPG, GIF, WebP, BMP): the model can look at them.")
                 } else {
-                    self.t("Imagini: nu, sau colibri nu spune că le poate privi.", "Pictures: no, or colibri doesn't say it can look at them.")
+                    self.t("Imagini: nu, sau colibri nu indică faptul că le poate analiza.", "Pictures: no, or colibri doesn't say it can look at them.")
                 });
                 ui.add_space(4.0);
                 ui.label(RichText::new(self.t("Ce poate produce", "What it can produce")).semibold());
@@ -119,12 +119,12 @@ impl CompanionApp {
                         ui.label(format!("{} {l}", self.t("Licență (producător):", "Licence (maker):")));
                     }
                     muted(ui, &p, self.t(
-                        "Atenție: modelul poate mai mult decât folosește colibri acum. Aici contează ce arată bifele de mai sus (din pagina colibri); ce spune producătorul arată doar potențialul. Date căutate online în noiembrie 2026; verifică pe pagina modelului.",
+                        "Atenție: modelul poate face mai mult decât utilizează colibri în prezent. Aici contează ce arată bifele de mai sus (din pagina colibri); ce spune producătorul indică doar potențialul. Date căutate online în noiembrie 2026; verificați pe pagina modelului.",
                         "Note: the model may be able to do more than colibri uses today. What counts here is the ticks above (from the colibri page); the maker's claims show only the potential. Data looked up online in November 2026; check the model's own page.",
                     ));
                 }
                 ui.add_space(4.0);
-                if ui.button(self.t("Compară cu AI-urile online", "Compare with online AIs")).clicked() {
+                if ui.button(self.t("Comparați cu AI-urile online", "Compare with online AIs")).clicked() {
                     self.sheets.compare = true;
                 }
             });
@@ -143,7 +143,7 @@ impl CompanionApp {
                 .vscroll(true)
                 .show(ctx, |ui| {
                     muted(ui, &p, self.t(
-                        "Modelele locale: datele vin din pagina colibri; «?» înseamnă că pagina nu spune. AI-urile online: doar funcții pe care le prezintă chiar site-urile lor, fără scoruri sau teste; verifică pe site, ele se schimbă des. Diferența sigură: modelele locale rulează pe calculatorul tău, fără cont și fără trimiterea conversației către alți.",
+                        "Modelele locale: datele provin din pagina colibri; «?» înseamnă că pagina nu precizează. AI-urile online: doar funcții prezentate chiar de site-urile lor, fără scoruri sau teste; verificați pe site, deoarece se schimbă des. Diferența sigură: modelele locale rulează pe calculatorul dumneavoastră, fără cont și fără trimiterea conversației către terți.",
                         "Local models: the data comes from the colibri page; “?” means the page doesn't say. Online AIs: only features their own sites advertise, no scores or tests; check the site, they change often. The sure difference: local models run on your computer, with no account and without sending your conversation to anyone else.",
                     ));
                     ui.add_space(6.0);
@@ -174,7 +174,7 @@ impl CompanionApp {
                             self.t("Imagini primite", "Pictures in"),
                             self.t("Generează imagini", "Makes pictures"),
                             self.t("Căutare pe web", "Web search"),
-                            self.t("Rulează la tine", "Runs on your PC"),
+                            self.t("Rulează local", "Runs on your PC"),
                         ] {
                             ui.label(RichText::new(h).small().semibold());
                         }
@@ -198,7 +198,7 @@ impl CompanionApp {
                         ui.end_row();
                     });
                     muted(ui, &p, self.t(
-                        "Pentru colibri: fișiere și imagini depind de modelul ales (vezi fișa lui); imaginile se generează doar cu Qwen-Image-2.1; aplicația nu caută pe web.",
+                        "Pentru colibri: fișierele și imaginile depind de modelul ales (consultați fișa lui); imaginile se generează doar cu Qwen-Image-2.1; aplicația nu caută pe web.",
                         "For colibri: files and pictures depend on the model you pick (see its sheet); pictures are made only with Qwen-Image-2.1; this app does not search the web.",
                     ));
                 });
@@ -223,7 +223,7 @@ impl CompanionApp {
         let base = self.base().trim_end_matches('/').to_string();
         let model = self.model_id.clone().unwrap_or_else(|| "colibri".into());
         ui.label(self.t(
-            "Orice program de pe acest calculator care vorbește «OpenAI» sau «Anthropic» poate folosi colibri prin aceeași adresă locală. Nimic nu iese din calculator. Copiază setările de mai jos în programul respectiv.",
+            "Orice program de pe acest calculator care utilizează «OpenAI» sau «Anthropic» poate folosi colibri prin aceeași adresă locală. Nimic nu iese din calculator. Copiați setările de mai jos în programul respectiv.",
             "Any program on this computer that speaks “OpenAI” or “Anthropic” can use colibri through the same local address. Nothing leaves the computer. Copy the settings below into that program.",
         ));
         ui.add_space(6.0);
@@ -235,7 +235,7 @@ impl CompanionApp {
                 muted(ui, &p, hint);
             }
             ui.add(egui::Label::new(RichText::new(&text).monospace()).selectable(true));
-            if ui.small_button(self.t("Copiază", "Copy")).clicked() {
+            if ui.small_button(self.t("Copiați", "Copy")).clicked() {
                 copy = Some(text);
             }
         };
@@ -246,7 +246,7 @@ impl CompanionApp {
                 "Programs with an “OpenAI provider” setting (code editors, agents, interfaces)",
             ),
             self.t(
-                "Pune adresa de bază, numele modelului și orice cheie nenulă (nu se verifică).",
+                "Introduceți adresa de bază, numele modelului și orice cheie nenulă (nu se verifică).",
                 "Enter the base URL, the model name and any non-empty key (it isn't checked).",
             ),
             format!("Base URL: {base}/v1\nModel:    {model}\nAPI key:  local"),
@@ -295,7 +295,7 @@ impl CompanionApp {
         ui.horizontal_wrapped(|ui| {
             if ui
                 .button(self.t(
-                    "Deschide panoul colibri în browser",
+                    "Deschideți panoul colibri în browser",
                     "Open the colibri dashboard in the browser",
                 ))
                 .clicked()
@@ -304,7 +304,7 @@ impl CompanionApp {
             }
             if ui
                 .button(self.t(
-                    "Deschide folderul conversațiilor",
+                    "Deschideți folderul conversațiilor",
                     "Open the conversations folder",
                 ))
                 .clicked()
@@ -314,7 +314,10 @@ impl CompanionApp {
                 companion_core::proc::open_externally(&dir.display().to_string());
             }
             if ui
-                .button(self.t("Deschide folderul Descărcări", "Open the Downloads folder"))
+                .button(self.t(
+                    "Deschideți folderul Descărcări",
+                    "Open the Downloads folder",
+                ))
                 .clicked()
             {
                 companion_core::proc::open_externally(

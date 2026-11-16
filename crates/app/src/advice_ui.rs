@@ -49,9 +49,12 @@ impl CompanionApp {
         let p = self.p;
         let s = &view.snap;
         ui.label(
-            RichText::new(self.t("Calculatorul tău, analizat", "Your computer, analysed"))
-                .size(17.0)
-                .semibold(),
+            RichText::new(self.t(
+                "Calculatorul dumneavoastră, analizat",
+                "Your computer, analysed",
+            ))
+            .size(17.0)
+            .semibold(),
         );
         // ---- graphics cards
         match self.gpus.clone() {
@@ -148,7 +151,7 @@ impl CompanionApp {
                 Tip::SwapHeavy { swap_gb } => {
                     ui.label(
                         self.t(
-                            "Windows mută memorie pe disc ({} GB în swap). Asta încetinește totul: închide programe sau alege un model mai mic.",
+                            "Windows mută memorie pe disc ({} GB în swap). Aceasta încetinește totul: închideți programe sau alegeți un model mai mic.",
                             "The system is moving memory to the disk ({} GB of swap). That slows everything down: close programs or pick a smaller model.",
                         )
                         .replacen("{}", &format!("{swap_gb:.1}"), 1),
@@ -176,7 +179,7 @@ impl CompanionApp {
                         );
                     }
                     if ui
-                        .button(self.t("Deschide lista de modele", "Open the model list"))
+                        .button(self.t("Deschideți lista de modele", "Open the model list"))
                         .clicked()
                     {
                         open_models = true;
@@ -190,7 +193,7 @@ impl CompanionApp {
                         .join(", ");
                     ui.label(
                         self.t(
-                            "Alte programe țin multă memorie: {}. Închide-le înainte de a genera.",
+                            "Alte programe rețin multă memorie: {}. Închideți-le înainte de a genera.",
                             "Other programs hold a lot of memory: {}. Close them before generating.",
                         )
                         .replacen("{}", &names, 1),
@@ -220,7 +223,7 @@ impl CompanionApp {
                 Tip::DiskNearlyFull { free_gb } => {
                     ui.label(
                         self.t(
-                            "Mai ai doar {} GB liberi pe disc: lasă loc pentru modele și pentru swap.",
+                            "Mai aveți doar {} GB liberi pe disc: lăsați loc pentru modele și pentru swap.",
                             "Only {} GB of disk space is free: leave room for models and swap.",
                         )
                         .replacen("{}", &format!("{free_gb:.0}"), 1),

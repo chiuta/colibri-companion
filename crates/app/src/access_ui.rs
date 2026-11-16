@@ -66,7 +66,7 @@ fn preset_name(app: &CompanionApp, p: Preset) -> (&'static str, &'static str) {
         Preset::Deaf => (
             app.t("Aud puțin sau deloc", "Deaf or hard of hearing"),
             app.t(
-                "Aplicația nu folosește sunete; te anunță vizual când e gata un răspuns.",
+                "Aplicația nu folosește sunete; vă anunță vizual când un răspuns este gata.",
                 "The app uses no sounds; it tells you visually when an answer is ready.",
             ),
         ),
@@ -139,7 +139,7 @@ impl CompanionApp {
                 }
             },
             None => self.toast(self.t(
-                "Nu am găsit un program de citire cu voce. Pe Linux instalează espeak-ng.",
+                "Nu a fost găsit un program de citire cu voce. Pe Linux, instalați espeak-ng.",
                 "No speech program found. On Linux, install espeak-ng.",
             )),
         }
@@ -190,11 +190,11 @@ impl CompanionApp {
             .vscroll(true)
             .show(ctx, |ui| {
                 muted(ui, &p, self.t(
-                    "Alege ce ți se potrivește. Totul se schimbă pe loc și poate fi anulat oricând. Poți combina oricâte opțiuni.",
+                    "Alegeți ce vi se potrivește. Totul se modifică pe loc și poate fi anulat oricând. Puteți combina oricâte opțiuni.",
                     "Pick what suits you. Everything changes at once and can be undone any time. You can combine as many options as you like.",
                 ));
                 ui.add_space(6.0);
-                ui.label(RichText::new(self.t("Pornește rapid", "Quick start")).semibold());
+                ui.label(RichText::new(self.t("Pornire rapidă", "Quick start")).semibold());
                 for pr in Preset::ALL {
                     let (name, what) = preset_name(self, pr);
                     ui.horizontal_wrapped(|ui| {
@@ -232,12 +232,12 @@ impl CompanionApp {
                 ui.checkbox(&mut self.s.access.readable_font, l);
                 let l = self.t("Culori pentru daltonism (albastru și portocaliu în loc de verde și roșu)", "Colours for colour blindness (blue and orange instead of green and red)");
                 ui.checkbox(&mut self.s.access.colour_blind, l);
-                let l = self.t("Contur gros în jurul elementului la care ești cu tastatura", "A thick outline around the item the keyboard is on");
+                let l = self.t("Contur gros în jurul elementului selectat cu tastatura", "A thick outline around the item the keyboard is on");
                 ui.checkbox(&mut self.s.access.strong_focus, l);
                 ui.add_space(6.0);
 
                 ui.label(RichText::new(self.t("Citire cu voce", "Reading aloud")).semibold());
-                let l = self.t("Citește singur fiecare răspuns, când e gata", "Read every answer aloud by itself when it is done");
+                let l = self.t("Citește automat fiecare răspuns, când este gata", "Read every answer aloud by itself when it is done");
                 ui.checkbox(&mut self.s.access.read_aloud_auto, l);
                 ui.horizontal(|ui| {
                     ui.label(self.t("Viteză", "Speed"));
@@ -245,23 +245,23 @@ impl CompanionApp {
                     ui.add(egui::Slider::new(&mut self.s.access.speech_rate, 100..=300).suffix(unit));
                 });
                 ui.horizontal(|ui| {
-                    if ui.button(self.t("Încearcă vocea", "Try the voice")).clicked() {
-                        let t = self.t("Bună! Așa sună vocea. Poți schimba viteza.", "Hello! This is how the voice sounds. You can change the speed.");
+                    if ui.button(self.t("Încercați vocea", "Try the voice")).clicked() {
+                        let t = self.t("Bună ziua! Așa sună vocea. Puteți modifica viteza.", "Hello! This is how the voice sounds. You can change the speed.");
                         self.speak(t);
                     }
-                    if self.is_speaking() && ui.button(self.t("Oprește citirea", "Stop reading")).clicked() {
+                    if self.is_speaking() && ui.button(self.t("Opriți citirea", "Stop reading")).clicked() {
                         self.stop_speaking();
                     }
                 });
                 let none = self.access.found.as_ref().is_some_and(|f| f.is_empty()) && std::env::consts::OS == "linux";
                 if none {
                     ui.label(RichText::new(self.t(
-                        "Nu am găsit niciun program de voce. Instalează espeak-ng (de ex. «sudo apt install espeak-ng»).",
+                        "Nu a fost găsit niciun program de voce. Instalați espeak-ng (de ex. «sudo apt install espeak-ng»).",
                         "No speech program found. Install espeak-ng (for example “sudo apt install espeak-ng”).",
                     )).color(p.warn));
                 }
                 muted(ui, &p, self.t(
-                    "Se folosește vocea sistemului tău; pe Windows și macOS limba vocii e cea aleasă în sistem. Fiecare răspuns are și un buton «Citește». Scurtătură: Ctrl+Shift+S.",
+                    "Se utilizează vocea sistemului dumneavoastră; pe Windows și macOS, limba vocii este cea aleasă în sistem. Fiecare răspuns are și un buton «Citește». Scurtătură: Ctrl+Shift+S.",
                     "It uses your system's own voice; on Windows and macOS the voice language is the one set in the system. Every answer also has a “Read aloud” button. Shortcut: Ctrl+Shift+S.",
                 ));
                 ui.add_space(6.0);
@@ -275,11 +275,11 @@ impl CompanionApp {
                     ui.selectable_value(&mut self.s.access.targets, Targets::Huge, c);
                 });
                 muted(ui, &p, self.t(
-                    "Aplicația se poate folosi doar cu tastatura: Tab și Shift+Tab mută de la un element la altul, Spațiu sau Enter apasă, Esc oprește un răspuns. Nu e nevoie de mouse, de tragere sau de mișcări precise. Scurtături: Ctrl+N conversație nouă, Ctrl+, setări, Ctrl+P prompturi, Ctrl+K căutare, Ctrl+Shift+A această fereastră, Ctrl+Shift+S citește ultimul răspuns.",
+                    "Aplicația poate fi utilizată doar cu tastatura: Tab și Shift+Tab trec de la un element la altul, Spațiu sau Enter acționează, Esc oprește un răspuns. Nu sunt necesare mouse-ul, tragerea sau mișcări precise. Scurtături: Ctrl+N conversație nouă, Ctrl+, setări, Ctrl+P prompturi, Ctrl+K căutare, Ctrl+Shift+A această fereastră, Ctrl+Shift+S citește ultimul răspuns.",
                     "The app can be used with the keyboard alone: Tab and Shift+Tab move between items, Space or Enter presses, Esc stops an answer. No mouse, dragging or precise movement is needed. Shortcuts: Ctrl+N new chat, Ctrl+, settings, Ctrl+P prompts, Ctrl+K search, Ctrl+Shift+A this window, Ctrl+Shift+S read the last answer.",
                 ));
                 muted(ui, &p, self.t(
-                    "Pentru a dicta în loc să scrii, folosește dictarea sistemului: Windows Win+H, macOS Fn de două ori, Linux depinde de mediu. Funcționează în orice câmp de text de aici.",
+                    "Pentru a dicta în loc să scrieți, utilizați dictarea sistemului: Windows Win+H, macOS Fn de două ori, Linux în funcție de mediu. Funcționează în orice câmp de text de aici.",
                     "To dictate instead of typing, use your system's dictation: Windows Win+H, macOS press Fn twice, Linux depends on the desktop. It works in any text box here.",
                 ));
                 ui.add_space(6.0);
@@ -312,7 +312,7 @@ impl CompanionApp {
 
                 ui.label(RichText::new(self.t("Cititoare de ecran", "Screen readers")).semibold());
                 muted(ui, &p, self.t(
-                    "Aplicația își descrie conținutul sistemului (prin AccessKit), deci NVDA, JAWS, Narrator, VoiceOver și Orca pot citi butoanele și textele. Nu am putut încă încerca aplicația cu un cititor de ecran real: dacă ceva nu se citește bine, spune-mi ce și corectez. Alternativ, butonul «Citește» de mai sus nu are nevoie de cititor de ecran.",
+                    "Aplicația își descrie conținutul sistemului (prin AccessKit), astfel încât NVDA, JAWS, Narrator, VoiceOver și Orca pot citi butoanele și textele. Aplicația nu a putut fi încă testată cu un cititor de ecran real: dacă ceva nu se citește corect, vă rugăm să ne indicați ce, iar noi vom corecta. Alternativ, butonul «Citește» de mai sus nu necesită cititor de ecran.",
                     "The app describes its contents to the system (through AccessKit), so NVDA, JAWS, Narrator, VoiceOver and Orca can read the buttons and texts. I have not yet been able to try the app with a real screen reader: if something is not read well, tell me what and I will fix it. The “Read aloud” button above does not need a screen reader.",
                 ));
                 ui.add_space(4.0);
