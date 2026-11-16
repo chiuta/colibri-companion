@@ -45,6 +45,11 @@ pub enum Event {
         total: u64,
     },
     FetchUnpacking,
+    Online {
+        what: crate::online_ui::OnlineWhat,
+        kind: companion_core::connect::Kind,
+        result: Result<Vec<u8>, companion_core::connect::ConnectError>,
+    },
     Attached {
         name: String,
         result: Result<companion_core::attach::Extracted, companion_core::attach::AttachError>,
@@ -265,6 +270,7 @@ pub struct CompanionApp {
     pub show_about: bool,
     pub guide: crate::guide_ui::GuideState,
     pub prompts: crate::prompts_ui::PromptState,
+    pub online: crate::online_ui::OnlineState,
     pub sheets: crate::sheets_ui::SheetState,
     pub existing_path: String,
     pub show_models: bool,
@@ -357,6 +363,7 @@ impl CompanionApp {
             show_about: false,
             guide: Default::default(),
             prompts: Default::default(),
+            online: Default::default(),
             sheets: Default::default(),
             existing_path: String::new(),
             show_models: false,
@@ -1789,6 +1796,7 @@ impl CompanionApp {
             Event::Installed(list) => self.installed = list,
             Event::Npu(n) => self.npu = n,
             Event::Attached { name, result } => self.attached(name, result),
+            Event::Online { what, kind, result } => self.online_done(what, kind, result),
             Event::Resources(v) => {
                 for (hist, val) in [
                     (&mut self.cpu_hist, v.snap.cpu_percent),

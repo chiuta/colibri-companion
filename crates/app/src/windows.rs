@@ -41,6 +41,8 @@ impl CompanionApp {
                                 (self.t("Sfaturi", "Tips"), 3),
                                 (self.t("Legal", "Legal"), 4),
                                 (self.t("Prompturi", "Prompts"), 5),
+                                (self.t("Conexiuni online", "Online connections"), 6),
+                                (self.t("Catalog de platforme", "Platform catalogue"), 7),
                             ] {
                                 if ui.button(label).clicked() {
                                     match which {
@@ -49,6 +51,8 @@ impl CompanionApp {
                                         2 => self.guide.explore = true,
                                         3 => self.guide.tips = true,
                                         5 => self.open_prompts(),
+                                        6 => self.open_online(),
+                                        7 => self.open_catalog(),
                                         _ => self.guide.legal = true,
                                     }
                                     ui.close();
@@ -198,6 +202,7 @@ impl CompanionApp {
         self.resources_window(ctx);
         self.guide_windows(ctx);
         self.prompt_window(ctx);
+        self.online_windows(ctx);
         self.sheet_windows(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);

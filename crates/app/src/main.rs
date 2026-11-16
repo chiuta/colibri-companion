@@ -7,6 +7,7 @@ mod demo;
 mod guide_ui;
 mod i18n;
 mod models_ui;
+mod online_ui;
 mod prompts_ui;
 mod resources_ui;
 mod screens;
