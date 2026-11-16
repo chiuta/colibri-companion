@@ -51,6 +51,14 @@ pub fn settings_file() -> PathBuf {
     data_dir().join("settings.json")
 }
 
+pub fn mcp_file() -> PathBuf {
+    data_dir().join("mcp.json")
+}
+
+pub fn documents_file() -> PathBuf {
+    data_dir().join("documents.json")
+}
+
 pub fn conversations_dir() -> PathBuf {
     data_dir().join("conversations")
 }

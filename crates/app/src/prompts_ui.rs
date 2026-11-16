@@ -102,6 +102,7 @@ impl CompanionApp {
             {
                 self.open_prompts();
             }
+            self.docs_inline(ui);
         });
     }
 

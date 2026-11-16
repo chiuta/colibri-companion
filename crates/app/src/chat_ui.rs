@@ -329,6 +329,7 @@ impl CompanionApp {
             self.t("Copiază", "Copy"),
             self.t("Regenerează", "Regenerate"),
         );
+        let w_sources = self.t("Surse din documente", "Sources from your documents");
         let w_edit = self.t("Editează", "Edit");
         let w_branch = self.t("Ramifică de aici", "Branch from here");
         let w_speak = self.t("Citește cu voce", "Read aloud");
@@ -443,6 +444,21 @@ impl CompanionApp {
                         }
                         if m.stopped && !streaming {
                             ui.label(RichText::new(w_stopped).small().color(p.muted));
+                        }
+                        if !m.sources.is_empty() && !streaming {
+                            egui::CollapsingHeader::new(
+                                RichText::new(w_sources).small().color(p.muted),
+                            )
+                            .id_salt(("sources", i))
+                            .show(ui, |ui| {
+                                for (n, s) in m.sources.iter().enumerate() {
+                                    ui.label(
+                                        RichText::new(format!("[{}] {s}", n + 1))
+                                            .small()
+                                            .color(p.muted),
+                                    );
+                                }
+                            });
                         }
                         if !streaming && (m.content.contains("```") || m.content.contains("~~~")) {
                             let blocks = companion_core::blocks::extract(&m.content);

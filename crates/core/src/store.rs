@@ -193,6 +193,8 @@ pub struct Settings {
     pub use_npu: bool,
     /// Unix seconds of the last check.
     pub last_update_check: u64,
+    /// The document collection the chat answers from, when the person turned it on.
+    pub docs_active: Option<String>,
 }
 
 impl Default for Settings {
@@ -203,6 +205,7 @@ impl Default for Settings {
             font_scale: 1.1,
             access: Default::default(),
             memory_on: true,
+            docs_active: None,
             colibri_root: None,
             models_dir: None,
             server_url: "http://127.0.0.1:8000".into(),
@@ -257,6 +260,8 @@ pub struct StoredMessage {
     pub images: Vec<String>,
     /// What the person sees in their own bubble when the sent text includes attached files.
     pub display: String,
+    /// Document passages this answer was written from, numbered like [1], [2] in the text.
+    pub sources: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

@@ -52,6 +52,20 @@ pub enum Event {
     },
     Picture(Result<PathBuf, String>),
     Memory(Box<(companion_core::memory::Index, companion_core::memory::Graph)>),
+    McpStarted {
+        name: String,
+        result: Result<Box<(companion_core::mcp::Client, Vec<companion_core::mcp::Tool>)>, String>,
+    },
+    McpResult {
+        req: companion_core::mcp::ToolRequest,
+        result: Result<String, String>,
+    },
+    McpManual(Result<String, String>),
+    DocsRead {
+        coll: String,
+        name: String,
+        result: Result<companion_core::attach::Extracted, companion_core::attach::AttachError>,
+    },
     Summary {
         conv: String,
         upto: usize,
@@ -309,6 +323,8 @@ pub struct CompanionApp {
     pub access: crate::access_ui::AccessState,
     pub flows: crate::flows_ui::FlowState,
     pub memory: crate::memory_ui::MemoryState,
+    pub docs: crate::docs_ui::DocsState,
+    pub mcp: crate::mcp_ui::McpState,
     pub sheets: crate::sheets_ui::SheetState,
     pub existing_path: String,
     pub show_models: bool,
@@ -419,6 +435,8 @@ impl CompanionApp {
             access: Default::default(),
             flows: Default::default(),
             memory: Default::default(),
+            docs: Default::default(),
+            mcp: Default::default(),
             sheets: Default::default(),
             existing_path: String::new(),
             show_models: false,
@@ -1291,6 +1309,9 @@ impl CompanionApp {
         self.stop_generation();
         self.persist_conversation();
         self.chat.conv = Conversation::new();
+        self.mcp.trusted.clear();
+        self.mcp.rounds = 0;
+        self.mcp.approval = None;
         self.chat.error = None;
         self.chat.focus_input = true;
     }
@@ -1301,6 +1322,9 @@ impl CompanionApp {
         self.persist_conversation();
         let b = self.chat.conv.branch_at(upto, "(↳)");
         self.chat.conv = b;
+        self.mcp.trusted.clear();
+        self.mcp.rounds = 0;
+        self.mcp.approval = None;
         self.chat.error = None;
         self.chat.focus_input = true;
         self.persist_conversation();
@@ -1321,6 +1345,9 @@ impl CompanionApp {
         self.persist_conversation();
         if let Some(c) = self.store.load(id) {
             self.chat.conv = c;
+            self.mcp.trusted.clear();
+            self.mcp.rounds = 0;
+            self.mcp.approval = None;
             self.chat.error = None;
         }
     }
@@ -1330,6 +1357,9 @@ impl CompanionApp {
         if self.chat.conv.id == id {
             self.stop_generation();
             self.chat.conv = Conversation::new();
+            self.mcp.trusted.clear();
+            self.mcp.rounds = 0;
+            self.mcp.approval = None;
         }
         self.chat.list = self.store.summaries();
     }
@@ -1360,6 +1390,7 @@ impl CompanionApp {
         }
         self.chat.input.clear();
         self.chat.error = None;
+        self.mcp.rounds = 0;
         let images = std::mem::take(&mut self.chat.pending_images)
             .into_iter()
             .map(|(_, url, _)| url)
@@ -1382,7 +1413,7 @@ impl CompanionApp {
         self.push_user_turn(first, images);
     }
 
-    fn push_user_turn(&mut self, content: String, images: Vec<String>) {
+    pub fn push_user_turn(&mut self, content: String, images: Vec<String>) {
         self.chat.conv.messages.push(StoredMessage {
             role: "user".into(),
             content,
@@ -1545,7 +1576,7 @@ impl CompanionApp {
         }
     }
 
-    fn attach_error(&self, name: &str, e: &companion_core::attach::AttachError) -> String {
+    pub fn attach_error(&self, name: &str, e: &companion_core::attach::AttachError) -> String {
         use companion_core::attach::AttachError as E;
         let why = match e {
             E::Unreadable => self
@@ -1700,6 +1731,36 @@ impl CompanionApp {
         let system = companion_core::prompts::with_style(&self.s.system_prompt, self.prompts.style);
         let system_chars = system.chars().count();
         let (extra, rest, _dropped) = self.memory_messages(system_chars);
+        // Passages from the person's documents, when a collection is switched on.
+        let question = self
+            .chat
+            .conv
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| m.content.chars().take(800).collect::<String>())
+            .unwrap_or_default();
+        let doc_ctx = self.docs_context(&question);
+        if let Some(last) = self.chat.conv.messages.last_mut() {
+            if last.role == "assistant" {
+                last.sources = doc_ctx
+                    .as_ref()
+                    .map(|c| c.sources.clone())
+                    .unwrap_or_default();
+            }
+        }
+        let extra = match doc_ctx {
+            Some(c) if extra.is_empty() => c.text,
+            Some(c) => format!("{extra}\n\n{}", c.text),
+            None => extra,
+        };
+        let tools_note = self.mcp_system_note();
+        let extra = match (extra.is_empty(), tools_note.is_empty()) {
+            (_, true) => extra,
+            (true, false) => tools_note,
+            (false, false) => format!("{extra}\n\n{tools_note}"),
+        };
         let system = match (system.is_empty(), extra.is_empty()) {
             (_, true) => system,
             (true, false) => extra,
@@ -1879,6 +1940,10 @@ impl CompanionApp {
             Event::DuelPiece { round, side, piece } => self.duel_piece(round, side, piece),
             Event::DuelEnd { round, side, err } => self.duel_end(round, side, err),
             Event::Memory(b) => self.memory_built(*b),
+            Event::DocsRead { coll, name, result } => self.docs_read(coll, name, result),
+            Event::McpStarted { name, result } => self.mcp_started(name, result),
+            Event::McpResult { req, result } => self.mcp_result(req, result),
+            Event::McpManual(r) => self.mcp_manual_result(r),
             Event::Summary { conv, upto, result } => self.summary_done(conv, upto, result),
             Event::FlowLog(l) => {
                 let l = crate::i18n::engine_text(self.s.lang, &l);
@@ -2015,6 +2080,7 @@ impl CompanionApp {
                                 self.answer_ready(&t);
                             }
                         }
+                        self.mcp_after_answer();
                     }
                     if self.chat.error.is_some()
                         || self

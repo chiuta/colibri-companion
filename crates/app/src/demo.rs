@@ -140,10 +140,15 @@ fn chat(stream: &mut TcpStream, body: &str, lang: Lang) -> io::Result<()> {
         }
     }
     let quoted: String = last_user.chars().take(120).collect();
-    let answer = format!(
+    let system = v["messages"]
+        .as_array()
+        .and_then(|a| a.iter().find(|m| m["role"] == "system"))
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or("");
+    let answer = scripted_answer(system, &last_user).unwrap_or_else(|| format!(
         "## {}\n\n{}\n\n{}: *“{quoted}”*\n\n{}:\n\n- {}\n- {}\n- {}\n\n```python\nprint(\"{}\")\n```\n\n> {}\n",
         w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8]
-    );
+    ));
     let delay = if last_user.trim() == "/slow" { 400 } else { 22 };
     let mut tokens = 0u64;
     for w in answer.split_inclusive(' ') {
@@ -158,6 +163,38 @@ fn chat(stream: &mut TcpStream, body: &str, lang: Lang) -> io::Result<()> {
     let usage = serde_json::json!({ "choices": [], "usage": { "prompt_tokens": last_user.len() / 4 + 8, "completion_tokens": tokens } });
     stream.write_all(format!("data: {usage}\n\ndata: [DONE]\n\n").as_bytes())?;
     stream.flush()
+}
+
+/// Answers that show the document and tool features without a real model: the demo quotes the
+/// first document passage it was given, asks for the first listed tool when the message says
+/// `/tool`, and repeats what a tool returned.
+fn scripted_answer(system: &str, last_user: &str) -> Option<String> {
+    if let Some(rest) = last_user.strip_prefix("Tool ") {
+        let body = rest.split("```").nth(1).unwrap_or("").trim();
+        let shown: String = body.chars().take(160).collect();
+        return Some(format!("The tool answered: {shown}"));
+    }
+    if last_user.contains("/tool") {
+        if let Some(line) = system
+            .lines()
+            .find(|l| l.starts_with("- ") && l.contains('/'))
+        {
+            let name = line[2..].split(':').next().unwrap_or("");
+            if let Some((server, tool)) = name.split_once('/') {
+                return Some(format!(
+                    "I will ask the tool.\n```tool\n{{\"server\": \"{server}\", \"tool\": \"{tool}\", \"arguments\": {{\"text\": \"hello\"}}}}\n```"
+                ));
+            }
+        }
+    }
+    if system.contains("answer from their documents") {
+        let start = system.find("\n[1] ")?;
+        let mut lines = system[start + 1..].lines();
+        lines.next()?; // "[1] file, part n"
+        let passage: String = lines.next()?.chars().take(220).collect();
+        return Some(format!("From your documents: {passage} [1]"));
+    }
+    None
 }
 
 /// The demo answer's wording in every interface language.

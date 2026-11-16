@@ -67,9 +67,11 @@ impl CompanionApp {
                                 ),
                                 (self.t("Dueluri între modele", "Model duels"), 11),
                                 (self.t("Ghid de început", "Getting started"), 12),
+                                (self.t("Documente", "Documents"), 13),
+                                (self.t("Unelte MCP", "MCP tools"), 14),
                             ] {
                                 if self.s.access.simple_menus
-                                    && matches!(which, 0 | 1 | 6 | 7 | 8 | 9 | 11)
+                                    && matches!(which, 0 | 1 | 6 | 7 | 8 | 9 | 11 | 14)
                                 {
                                     continue;
                                 }
@@ -87,6 +89,8 @@ impl CompanionApp {
                                         10 => self.open_memory(),
                                         11 => self.open_duel(),
                                         12 => self.guide.tour = Some(0),
+                                        13 => self.open_docs(),
+                                        14 => self.open_mcp(),
                                         _ => self.guide.legal = true,
                                     }
                                     ui.close();
@@ -135,7 +139,7 @@ impl CompanionApp {
             let _ = self.s.save();
             return;
         }
-        let flags: [&mut bool; 16] = [
+        let flags: [&mut bool; 18] = [
             &mut self.guide.tips,
             &mut self.guide.explore,
             &mut self.guide.legal,
@@ -145,6 +149,8 @@ impl CompanionApp {
             &mut self.sheets.compare,
             &mut self.flows.open,
             &mut self.memory.open,
+            &mut self.docs.open,
+            &mut self.mcp.open,
             &mut self.studio.open,
             &mut self.duel.open,
             &mut self.access.open,
@@ -281,6 +287,8 @@ impl CompanionApp {
         self.access_window(ctx);
         self.flows_window(ctx);
         self.memory_window(ctx);
+        self.docs_window(ctx);
+        self.mcp_windows(ctx);
         self.sheet_windows(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);

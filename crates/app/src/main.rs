@@ -5,10 +5,12 @@ mod access_ui;
 mod app;
 mod chat_ui;
 mod demo;
+mod docs_ui;
 mod duel_ui;
 mod flows_ui;
 mod guide_ui;
 mod i18n;
+mod mcp_ui;
 mod memory_ui;
 mod models_ui;
 mod online_ui;
@@ -149,6 +151,9 @@ impl CompanionApp {
             .collect();
         if paths.is_empty() {
             return;
+        }
+        if self.docs.open {
+            return; // the Documents window takes dropped files for its collection
         }
         if self.coli.is_none() {
             self.root_input = paths[0].display().to_string();
