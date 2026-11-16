@@ -2,7 +2,7 @@
 
 [English](README.md) · **Română** · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · [Magyar](README.hu.md)
 
-O aplicație desktop simplă pentru [colibri](https://github.com/JustVugg/colibri): alegi un model potrivit calculatorului tău, îl descarci cu un clic, iar apoi conversezi — totul local, fără cont și fără cloud.
+O aplicație desktop simplă pentru [colibri](https://github.com/JustVugg/colibri): alegeți un model potrivit calculatorului dumneavoastră, descărcați-l cu un clic, apoi conversați — totul local, fără cont și fără cloud.
 
 ## Pornire
 
@@ -14,7 +14,7 @@ cargo run --release -p colibri-companion -- --demo  # demo, fără colibri
 
 ### Cei patru pași
 
-(1) găsește Python și colibri (și îți propune să descarce colibri dacă lipsește), (2) alegi modelul (cele care nu încap în RAM sunt ascunse; cel recomandat e marcat), (3) descarcă și instalează cu progres, pauză și reluare, (4) pornește serverul și deschide chatul.
+(1) găsește Python și colibri (și propune descărcarea colibri dacă lipsește), (2) vă permite să alegeți un model (cele care nu încap în RAM sunt ascunse; cel recomandat este marcat), (3) descarcă și instalează cu progres, pauză și reluare, (4) pornește serverul și deschide chatul.
 
 Chat: răspunsuri în flux, Stop instant, Markdown, raționament pliabil, conversații salvate, stil (Precis / Echilibrat / Creativ), copiere și regenerare. Teme: deschisă, închisă, contrast ridicat.
 
@@ -32,11 +32,11 @@ Aplicația nu include colibri. Rulează comenzile JSON ale lui colibri (`setup -
 
 Linux (x86-64, ARM64; Wayland și X11), Windows 10/11 și macOS (Intel și Apple Silicon) — un singur cod sursă, randare OpenGL (merge și pe plăci video vechi sau în mașini virtuale). `.github/workflows/build.yml` construiește și testează toate variantele și produce arhive gata de distribuit. Pe Linux, `packaging/linux/install.sh` adaugă aplicația în meniu. Scalare HiDPI, scurtături Ctrl/⌘+N, Ctrl/⌘+, și Esc, suport pentru cititoare de ecran (AccessKit).
 
-**Documente și unelte:** adaugă fișiere (**Mai mult → Documente**) și pune întrebări despre ele: aplicația le caută pe calculatorul tău (după cuvinte, fără cloud) și arată sub fiecare răspuns pasajele folosite. **Mai mult → Unelte MCP** conectează servere MCP adăugate și pornite de tine; modelul poate cere o unealtă, iar fiecare apel cere aprobarea ta (funcție timpurie, depinde de cât de bine urmează modelul formatul).
+**Documente și unelte:** adăugați fișiere (**Mai mult → Documente**) și puneți întrebări despre ele: aplicația le caută pe calculatorul dumneavoastră (după cuvinte, fără cloud) și arată sub fiecare răspuns pasajele folosite. **Mai mult → Unelte MCP** conectează servere MCP adăugate și pornite de dumneavoastră; modelul poate solicita o unealtă, iar fiecare apel necesită aprobarea dumneavoastră (funcție timpurie, depinde de cât de bine urmează modelul formatul).
 
-Modele: păstrează mai multe pe calculator, trece între ele sau adaugă altele dintr-o singură fereastră (**Modele**); primul sugerat este cel mai capabil model pe care îl poate rula calculatorul tău (cele cu puțină memorie citesc experții din SSD). Viteză: CUDA pentru NVIDIA, Vulkan pentru alte cipuri grafice, altfel procesorul, alese automat. **Resurse** arată în direct procesorul, memoria, placa video și discul, plus dovada că nimic nu iese din calculator (toate conexiunile deschise ale aplicației și ale motorului, cu comanda ca să verifici singur). Dacă lipsește colibri, e descărcat pentru tine (fără git), iar o verificare zilnică (poate fi oprită) te anunță când colibri sau această aplicație au o versiune nouă.
+Modele: păstrați mai multe pe calculator, treceți între ele sau adăugați altele dintr-o singură fereastră (**Modele**); primul sugerat este cel mai capabil model pe care îl poate rula calculatorul dumneavoastră (cele cu puțină memorie citesc experții din SSD). Viteză: CUDA pentru NVIDIA, Vulkan pentru alte cipuri grafice, altfel procesorul, alese automat. **Resurse** arată în direct procesorul, memoria, placa video și discul, plus dovada că nimic nu iese din calculator (toate conexiunile deschise ale aplicației și ale motorului, cu comanda pentru verificare proprie). Dacă lipsește colibri, este descărcat pentru dumneavoastră (fără git), iar o verificare zilnică (care poate fi oprită) vă anunță când colibri sau această aplicație au o versiune nouă.
 
-**Calculatorul tău, analizat:** în **Resurse**, aplicația găsește singură plăcile video și spune pe înțeles dacă modelul încape în memorie și de ce poate fi lent (swap, alte programe, o placă nefolosită). Doar sfătuiește; nu schimbă nicio setare de la sine.
+**Calculatorul dumneavoastră, analizat:** în **Resurse**, aplicația găsește singură plăcile video și spune pe înțeles dacă modelul încape în memorie și de ce poate fi lent (swap, alte programe, o placă neutilizată). Doar sfătuiește; nu schimbă nicio setare de la sine.
 
 ## Limbi
 

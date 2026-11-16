@@ -2,7 +2,7 @@
 
 [English](README.md) · [Română](README.ro.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Español](README.es.md) · [Português](README.pt.md) · [Deutsch](README.de.md) · **Magyar**
 
-Barátságos asztali alkalmazás a [colibrihez](https://github.com/JustVugg/colibri): válassz a számítógépedhez illő modellt, töltsd le egy kattintással, majd csevegj — minden helyben, fiók és felhő nélkül.
+Egyszerű asztali alkalmazás a [colibrihez](https://github.com/JustVugg/colibri): válasszon a számítógépéhez illő modellt, töltse le egy kattintással, majd csevegjen — minden helyben, fiók és felhő nélkül.
 
 ## Indítás
 
@@ -14,7 +14,7 @@ cargo run --release -p colibri-companion -- --demo  # demó, colibri nélkül
 
 ### A négy lépés
 
-(1) megkeresi a Pythont és a colibrit (és felajánlja a colibri letöltését, ha hiányzik), (2) modellt választhatsz (amelyik nem fér a RAM-ba, el van rejtve; az ajánlott meg van jelölve), (3) letölt és telepít folyamatjelzéssel, szünettel és folytatással, (4) elindítja a szervert, és megnyitja a csevegést.
+(1) megkeresi a Pythont és a colibrit (és felajánlja a colibri letöltését, ha hiányzik), (2) lehetővé teszi a modell kiválasztását (amelyik nem fér a RAM-ba, el van rejtve; az ajánlott meg van jelölve), (3) letölt és telepít folyamatjelzéssel, szünettel és folytatással, (4) elindítja a szervert, és megnyitja a csevegést.
 
 Csevegés: folyamatos válaszok, azonnali leállítás, Markdown, összecsukható gondolkodás, mentett beszélgetések, stílus (Pontos / Kiegyensúlyozott / Kreatív), másolás és újragenerálás. Témák: világos, sötét, nagy kontraszt.
 
@@ -34,7 +34,7 @@ Linux (x86-64, ARM64; Wayland és X11), Windows 10/11 és macOS (Intel és Apple
 
 **Dokumentumok és eszközök:** adjon hozzá fájlokat (**Továbbiak → Dokumentumok**), és kérdezzen róluk: az alkalmazás a számítógépén keresi őket (kulcsszavak, felhő nélkül), és a válasz alatt megmutatja a felhasznált részeket. A **Továbbiak → MCP-eszközök** az Ön által hozzáadott és elindított MCP-szervereket köti be; a modell eszközt kérhet, és minden hívás az Ön jóváhagyását kéri (korai funkció, függ attól, hogy a modell követi-e a formátumot).
 
-Modellek: tarts több modellt a számítógépen, válts közöttük, vagy adj hozzá újakat egyetlen ablakból (**Modellek**); először a számítógéped által futtatható legképesebb modellt javasolja (kevés RAM esetén a szakértőket az SSD-ről olvassa). Sebesség: CUDA az NVIDIA-hoz, Vulkan más grafikus chipekhez, különben a processzor, automatikusan választva. Az **Erőforrások** élőben mutatja a processzor-, memória-, videokártya- és lemezhasználatot, valamint a bizonyítékot, hogy semmi sem hagyja el a számítógépedet (az alkalmazás és a motor minden nyitott kapcsolata, és a parancs, amivel magad ellenőrizheted). Ha a colibri hiányzik, letöltöm helyetted (git nélkül), és egy napi ellenőrzés (kikapcsolható) szól, ha a colibrinek vagy ennek az alkalmazásnak új verziója van.
+Modellek: tartson több modellt a számítógépén, váltson közöttük, vagy adjon hozzá újakat egyetlen ablakból (**Modellek**); először a számítógépe által futtatható legképesebb modellt javasolja (kevés RAM esetén a szakértőket az SSD-ről olvassa). Sebesség: CUDA az NVIDIA-hoz, Vulkan más grafikus chipekhez, különben a processzor, automatikusan választva. Az **Erőforrások** élőben mutatja a processzor-, memória-, videokártya- és lemezhasználatot, valamint a bizonyítékot, hogy semmi sem hagyja el a számítógépét (az alkalmazás és a motor minden nyitott kapcsolata, és a parancs, amellyel saját maga ellenőrizheti). Ha a colibri hiányzik, az alkalmazás letölti Önnek (git nélkül), és egy napi ellenőrzés (kikapcsolható) jelzi, ha a colibrinek vagy ennek az alkalmazásnak új verziója van.
 
 **A számítógépe elemzése:** az **Erőforrások** ablakban az alkalmazás magától megtalálja a videokártyákat, és egyszerűen megmondja, elfér-e a modell a memóriában, és miért lehet lassú (swap, más programok, kihasználatlan kártya). Csak tanácsot ad; magától nem módosít beállítást.
 
