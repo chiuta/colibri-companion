@@ -1,0 +1,10 @@
+[package]
+name = "expert-streamer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Clean-room groundwork for a model-weight streaming engine: safetensors reader, expert index and cache-policy simulator"
+
+[dependencies]
+serde_json.workspace = true
