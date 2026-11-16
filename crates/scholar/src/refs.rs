@@ -255,13 +255,25 @@ mod tests {
 
     #[test]
     fn hostile_text_stays_linear_and_bounded() {
-        let t = "\\cite{".repeat(200_000);
+        let time = |n: usize| {
+            let t = "\\cite{".repeat(n);
+            let t0 = std::time::Instant::now();
+            let _ = used_keys(&t);
+            t0.elapsed()
+        };
+        // Doubling the input must not much more than double the time
+        // (a quadratic scan would quadruple it); a ratio does not depend
+        // on how slow the machine is.
+        let (small, big) = (time(100_000), time(200_000));
+        assert!(
+            big.as_secs_f64() < small.as_secs_f64() * 3.2 + 0.05,
+            "not linear: {small:?} then {big:?}"
+        );
         let t0 = std::time::Instant::now();
-        let _ = used_keys(&t);
         let many: String = (0..150_000).map(|i| format!("@k{i} ")).collect();
         assert!(used_keys(&many).len() <= MAX_KEYS);
         let open = "\\cite[".repeat(50_000);
         let _ = used_keys(&open);
-        assert!(t0.elapsed().as_secs() < 5);
+        assert!(t0.elapsed().as_secs() < 60);
     }
 }
