@@ -342,6 +342,8 @@ pub struct CompanionApp {
     pub show_model_picker: bool,
     pub installing_since: Option<Instant>,
     pub install_spawning: bool,
+    /// "Light models" list: only those documented for tool calling.
+    pub light_agents_only: bool,
     pub install_log: String,
     install_log_read: Option<Instant>,
     pub install_exit: Option<i32>,
@@ -469,6 +471,7 @@ impl CompanionApp {
             show_model_picker: false,
             installing_since: None,
             install_spawning: false,
+            light_agents_only: false,
             install_log: String::new(),
             install_log_read: None,
             install_exit: None,

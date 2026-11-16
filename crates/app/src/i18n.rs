@@ -8,6 +8,127 @@ use std::sync::OnceLock;
 
 static TABLE: &[(&str, [&str; 6])] = &[
     (
+        "Light models for your memory",
+        [
+            "Modèles légers pour ta mémoire",
+            "Modelli leggeri per la tua memoria",
+            "Modelos ligeros para tu memoria",
+            "Modelos leves para a tua memória",
+            "Leichte Modelle für deinen Speicher",
+            "Könnyű modellek a géped memóriájához",
+        ],
+    ),
+    (
+        "Small models that fit comfortably in this computer's memory. They run through a server such as Ollama; set its address in Settings.",
+        [
+            "Petits modèles qui tiennent confortablement dans la mémoire de cet ordinateur. Ils tournent via un serveur comme Ollama ; indique son adresse dans les Réglages.",
+            "Modelli piccoli che stanno comodamente nella memoria di questo computer. Girano tramite un server come Ollama; imposta il suo indirizzo nelle Impostazioni.",
+            "Modelos pequeños que caben cómodamente en la memoria de este ordenador. Se ejecutan mediante un servidor como Ollama; indica su dirección en Ajustes.",
+            "Modelos pequenos que cabem confortavelmente na memória deste computador. Funcionam através de um servidor como o Ollama; indica o endereço dele nas Definições.",
+            "Kleine Modelle, die bequem in den Speicher dieses Computers passen. Sie laufen über einen Server wie Ollama; trage seine Adresse in den Einstellungen ein.",
+            "Kis modellek, amelyek kényelmesen elférnek ennek a számítógépnek a memóriájában. Egy Ollama-szerű szerveren futnak; a címét add meg a Beállításokban.",
+        ],
+    ),
+    (
+        "Memory tier used:",
+        [
+            "Palier de mémoire utilisé :",
+            "Fascia di memoria usata:",
+            "Nivel de memoria usado:",
+            "Nível de memória usado:",
+            "Verwendete Speicherstufe:",
+            "Használt memóriaszint:",
+        ],
+    ),
+    (
+        "Only models with documented tool calling (for local agents)",
+        [
+            "Seulement les modèles avec appel d'outils documenté (pour agents locaux)",
+            "Solo modelli con chiamata di strumenti documentata (per agenti locali)",
+            "Solo modelos con llamada a herramientas documentada (para agentes locales)",
+            "Só modelos com chamada de ferramentas documentada (para agentes locais)",
+            "Nur Modelle mit dokumentiertem Tool-Aufruf (für lokale Agenten)",
+            "Csak dokumentált eszközhívású modellek (helyi ügynökökhöz)",
+        ],
+    ),
+    (
+        "No light model in the catalogue fits this memory tier.",
+        [
+            "Aucun modèle léger du catalogue ne convient à ce palier de mémoire.",
+            "Nessun modello leggero del catalogo si adatta a questa fascia di memoria.",
+            "Ningún modelo ligero del catálogo cabe en este nivel de memoria.",
+            "Nenhum modelo leve do catálogo cabe neste nível de memória.",
+            "Kein leichtes Modell im Katalog passt zu dieser Speicherstufe.",
+            "A katalógus egyik könnyű modellje sem fér el ezen a memóriaszinten.",
+        ],
+    ),
+    (
+        "The licence is not a standard permissive one: read it before use.",
+        [
+            "La licence n'est pas une licence permissive standard : lis-la avant d'utiliser le modèle.",
+            "La licenza non è una normale licenza permissiva: leggila prima di usare il modello.",
+            "La licencia no es una licencia permisiva habitual: léela antes de usar el modelo.",
+            "A licença não é uma licença permissiva habitual: lê-a antes de usar o modelo.",
+            "Die Lizenz ist keine übliche freizügige Lizenz: Lies sie, bevor du das Modell nutzt.",
+            "A licenc nem szokásos megengedő licenc: használat előtt olvasd el.",
+        ],
+    ),
+    (
+        "Copy start command",
+        [
+            "Copier la commande de démarrage",
+            "Copia il comando di avvio",
+            "Copiar el comando de inicio",
+            "Copiar o comando de arranque",
+            "Startbefehl kopieren",
+            "Indítóparancs másolása",
+        ],
+    ),
+    (
+        "Command copied. Run it in a terminal, then point the app to the server in Settings.",
+        [
+            "Commande copiée. Lance-la dans un terminal, puis indique le serveur dans les Réglages.",
+            "Comando copiato. Eseguilo in un terminale, poi indica il server nelle Impostazioni.",
+            "Comando copiado. Ejecútalo en un terminal y luego indica el servidor en Ajustes.",
+            "Comando copiado. Executa-o num terminal e depois indica o servidor nas Definições.",
+            "Befehl kopiert. Führe ihn in einem Terminal aus und gib dann den Server in den Einstellungen an.",
+            "A parancs másolva. Futtasd egy terminálban, majd add meg a szervert a Beállításokban.",
+        ],
+    ),
+    (
+        "Source",
+        [
+            "Source",
+            "Fonte",
+            "Fuente",
+            "Fonte",
+            "Quelle",
+            "Forrás",
+        ],
+    ),
+    (
+        "Figures were read from the vendors' own pages on",
+        [
+            "Les chiffres ont été lus sur les pages des éditeurs le",
+            "Le cifre sono state lette dalle pagine dei produttori il",
+            "Las cifras se leyeron en las páginas de los proveedores el",
+            "Os números foram lidos nas páginas dos fornecedores em",
+            "Die Zahlen wurden auf den Seiten der Hersteller gelesen am",
+            "Az adatokat a gyártók saját oldalairól olvastuk ki ekkor:",
+        ],
+    ),
+    (
+        "Nothing here was run in this app, and a tools badge does not make a small model reliable.",
+        [
+            "Rien ici n'a été exécuté dans cette application, et un badge d'outils ne rend pas fiable un petit modèle.",
+            "Niente di questo è stato eseguito in questa app, e un badge degli strumenti non rende affidabile un modello piccolo.",
+            "Nada de esto se ha ejecutado en esta aplicación, y una insignia de herramientas no hace fiable a un modelo pequeño.",
+            "Nada disto foi executado nesta aplicação, e um selo de ferramentas não torna fiável um modelo pequeno.",
+            "Nichts davon wurde in dieser App ausgeführt, und ein Tool-Abzeichen macht ein kleines Modell nicht zuverlässig.",
+            "Ebből semmit sem futtattunk ebben az alkalmazásban, és az eszköz-jelvény még nem teszi megbízhatóvá a kis modellt.",
+        ],
+    ),
+    (
         "That folder doesn't look like colibri (c/coli is missing). Pick the folder that contains «c», «docs» and «README.md».",
         [
             "Ce dossier ne ressemble pas à colibri (c/coli est introuvable). Choisis le dossier qui contient « c », « docs » et « README.md ».",
@@ -12977,6 +13098,7 @@ mod tests {
             include_str!("mcp_ui.rs"),
             include_str!("sheets_ui.rs"),
             include_str!("speed_tools_ui.rs"),
+            include_str!("light_ui.rs"),
         ];
         let (mut checked, mut missing) = (0, Vec::new());
         for src in sources {

@@ -39,6 +39,8 @@ impl CompanionApp {
             "You can keep several models on this computer and switch between them any time. Only one runs at a time, so memory isn't overloaded.",
         ));
         ui.add_space(6.0);
+        self.light_models_section(ui);
+        ui.add_space(6.0);
         egui::CollapsingHeader::new(
             RichText::new(self.t("Am deja un model descărcat", "I already have a model downloaded"))
                 .semibold(),
