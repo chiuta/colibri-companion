@@ -9,6 +9,10 @@ use companion_core::gpu::GpuInfo;
 use egui::{RichText, Ui};
 
 impl CompanionApp {
+    fn latest_ram_total(&self) -> f64 {
+        self.res.as_ref().map_or(0.0, |v| v.snap.ram_total_gb)
+    }
+
     /// Size in GB of the model that is loaded or was last set up, when it is known.
     fn active_model_gb(&self) -> Option<f64> {
         let st = self.status.as_ref()?;
@@ -504,6 +508,36 @@ impl CompanionApp {
             .filter(|m| m.is_chat_model() && m.status != "unsupported")
             .collect();
         rows.sort_by(|a, b| a.download_gb.total_cmp(&b.download_gb));
+        if let Some((m, why)) = advisor::recommend(
+            models,
+            self.latest_ram_total(),
+            self.disk_speed
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .map(|mb| classify(*mb)),
+        ) {
+            let (ro, en) = match why {
+                advisor::Why::FromMemory => (
+                    "Cel mai capabil model care rulează integral din memorie pe acest calculator: {} ({} GB).",
+                    "The most capable model that runs entirely from memory on this computer: {} ({} GB).",
+                ),
+                advisor::Why::FastDrive => (
+                    "Discul este rapid și memoria ajunge: cel mai capabil model potrivit este {} ({} GB).",
+                    "The drive is fast and the memory is enough: the most capable fitting model is {} ({} GB).",
+                ),
+            };
+            ui.add_space(4.0);
+            tinted(ui, p.accent_soft, p.accent, |ui| {
+                ui.label(
+                    RichText::new(self.t(ro, en).replacen("{}", &m.name, 1).replacen(
+                        "{}",
+                        &format!("{:.0}", m.download_gb),
+                        1,
+                    ))
+                    .semibold(),
+                );
+            });
+        }
         ui.add_space(6.0);
         ui.label(
             RichText::new(self.t(

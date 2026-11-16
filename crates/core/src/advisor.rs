@@ -277,3 +277,93 @@ mod tier_tests {
         assert_eq!(tier_fit(8.0, 16.0, 32.0), TierFit::No);
     }
 }
+
+/// Why a model is recommended for this computer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    /// It runs entirely from memory: the fastest way.
+    FromMemory,
+    /// It reads experts from the drive, and the drive tested fast enough for that.
+    FastDrive,
+}
+
+/// The most capable catalogue chat model this computer can run well.
+/// Without a fast drive (or before the drive was tested) only models that run from memory are
+/// offered; with a fast drive a streaming model is offered when memory reaches colibri's "good".
+/// "Most capable" is taken as the largest download, the only size the catalogue gives.
+pub fn recommend<'a>(
+    models: &'a [crate::coli::ModelInfo],
+    ram_total_gb: f64,
+    drive: Option<crate::diskbench::DiskClass>,
+) -> Option<(&'a crate::coli::ModelInfo, Why)> {
+    let usable = usable_ram_gb(ram_total_gb);
+    let chat = |m: &&crate::coli::ModelInfo| m.is_chat_model() && m.status != "unsupported";
+    let in_memory = models
+        .iter()
+        .filter(chat)
+        .filter(|m| !m.streams_from_disk() && m.download_gb <= usable)
+        .max_by(|a, b| a.download_gb.total_cmp(&b.download_gb));
+    let streaming = if drive == Some(crate::diskbench::DiskClass::Fast) {
+        models
+            .iter()
+            .filter(chat)
+            .filter(|m| {
+                m.streams_from_disk()
+                    && tier_fit(ram_total_gb, m.ram_min_gb, m.ram_good_gb) == TierFit::Good
+            })
+            .max_by(|a, b| a.download_gb.total_cmp(&b.download_gb))
+    } else {
+        None
+    };
+    match (streaming, in_memory) {
+        (Some(m), _) => Some((m, Why::FastDrive)),
+        (None, Some(m)) => Some((m, Why::FromMemory)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod recommend_tests {
+    use super::*;
+    use crate::coli::ModelInfo;
+    use crate::diskbench::DiskClass;
+
+    fn m(id: &str, dl: f64, min: f64, good: f64, ssd: bool) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            download_gb: dl,
+            ram_min_gb: min,
+            ram_good_gb: good,
+            kind: "text".into(),
+            runs: if ssd {
+                "streams experts from the SSD".into()
+            } else {
+                "from RAM".into()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn follows_memory_and_drive() {
+        let cat = [
+            m("small", 8.0, 6.0, 10.0, false),
+            m("mid", 19.0, 8.0, 18.0, false),
+            m("giant", 167.0, 16.0, 32.0, true),
+        ];
+        // 16 GB: nothing streaming is "good" yet, and the in-memory pick must fit
+        assert_eq!(recommend(&cat, 16.0, None).unwrap().0.id, "small");
+        assert_eq!(
+            recommend(&cat, 16.0, Some(DiskClass::Fast)).unwrap().0.id,
+            "small"
+        );
+        // 32 GB with a fast drive: the giant is good
+        let (g, why) = recommend(&cat, 32.0, Some(DiskClass::Fast)).unwrap();
+        assert_eq!((g.id.as_str(), why), ("giant", Why::FastDrive));
+        // 32 GB with a slow drive: stay in memory
+        assert_eq!(
+            recommend(&cat, 32.0, Some(DiskClass::Slow)).unwrap().0.id,
+            "mid"
+        );
+    }
+}

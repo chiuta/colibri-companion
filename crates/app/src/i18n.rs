@@ -11425,6 +11425,28 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Lassú meghajtó: az arról olvasó modellek nagyon lassúak lesznek. Csak a memóriába beférő modelleket válassza, vagy használjon NVMe SSD-t.",
         ],
     ),
+    (
+        "The most capable model that runs entirely from memory on this computer: {} ({} GB).",
+        [
+            "Le modèle le plus capable qui tourne entièrement en mémoire sur cet ordinateur : {} ({} Go).",
+            "Il modello più capace che gira interamente in memoria su questo computer: {} ({} GB).",
+            "El modelo más capaz que funciona íntegramente en memoria en este ordenador: {} ({} GB).",
+            "O modelo mais capaz que funciona inteiramente em memória neste computador: {} ({} GB).",
+            "Das leistungsfähigste Modell, das auf diesem Computer vollständig im Speicher läuft: {} ({} GB).",
+            "A legképesebb modell, amely ezen a számítógépen teljes egészében a memóriában fut: {} ({} GB).",
+        ],
+    ),
+    (
+        "The drive is fast and the memory is enough: the most capable fitting model is {} ({} GB).",
+        [
+            "Le disque est rapide et la mémoire suffit : le modèle adapté le plus capable est {} ({} Go).",
+            "Il disco è veloce e la memoria è sufficiente: il modello adatto più capace è {} ({} GB).",
+            "El disco es rápido y la memoria basta: el modelo adecuado más capaz es {} ({} GB).",
+            "O disco é rápido e a memória é suficiente: o modelo adequado mais capaz é {} ({} GB).",
+            "Die Festplatte ist schnell und der Speicher reicht aus: Das leistungsfähigste passende Modell ist {} ({} GB).",
+            "A meghajtó gyors, és a memória elegendő: a legképesebb megfelelő modell a(z) {} ({} GB).",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
