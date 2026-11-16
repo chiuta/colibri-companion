@@ -376,6 +376,17 @@ pub fn send(python: Option<&PythonCmd>, req: &Request) -> Result<Vec<u8>, Connec
     check_url(&req.url)?;
     clean_headers(req)?;
     let python = python.ok_or(ConnectError::NeedsPython)?;
+    let r = send_checked(python, req);
+    let purpose = if req.method == "POST" {
+        "message"
+    } else {
+        "read"
+    };
+    crate::net::record_egress(&req.url, req.method, purpose, r.is_ok());
+    r
+}
+
+fn send_checked(python: &PythonCmd, req: &Request) -> Result<Vec<u8>, ConnectError> {
     let mut cmd = python.command();
     cmd.arg("-I")
         .arg("-c")

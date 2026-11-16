@@ -88,10 +88,13 @@ pub fn spawn_zip_download(python: &PythonCmd, url: &str, dest: &Path) -> io::Res
     let mut c = python.command();
     c.args(["-I", "-c", SCRIPT, url]).arg(dest);
     hide_window(&mut c);
-    c.stdin(Stdio::null())
+    let child = c
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn();
+    crate::net::record_egress(url, "GET", "download", child.is_ok());
+    child
 }
 
 #[cfg(test)]

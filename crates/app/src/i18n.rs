@@ -10028,6 +10028,116 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Az intervallum azt mutatja, mennyire térhet el a valódi arány: kevés futásnál széles, és nem garancia.",
         ],
     ),
+    (
+        "This is a snapshot of right now. The only times the internet is used are the ones you ask for: downloading colibri, downloading a model, checking for updates or the platforms you connected.",
+        [
+            "Ceci est un instantané du moment présent. Internet n'est utilisé que lorsque vous le demandez : téléchargement de colibri, d'un modèle, vérification des mises à jour ou plateformes que vous avez connectées.",
+            "Questa è un'istantanea del momento. Internet viene usato solo quando lo chiedi tu: scaricare colibri, scaricare un modello, controllare gli aggiornamenti o le piattaforme che hai collegato.",
+            "Esta es una instantánea del momento actual. Internet solo se usa cuando tú lo pides: descargar colibri, descargar un modelo, buscar actualizaciones o las plataformas que has conectado.",
+            "Esta é uma fotografia do momento atual. A internet só é usada quando tu pedes: descarregar o colibri, descarregar um modelo, verificar atualizações ou as plataformas que ligaste.",
+            "Dies ist eine Momentaufnahme. Das Internet wird nur genutzt, wenn du es verlangst: colibri herunterladen, ein Modell herunterladen, nach Updates suchen oder die von dir verbundenen Plattformen.",
+            "Ez a pillanatnyi állapot képe. Az internet csak akkor van használatban, ha te kéred: a colibri vagy egy modell letöltése, frissítések keresése, vagy az általad összekapcsolt platformok.",
+        ],
+    ),
+    (
+        "Since it started, nothing has gone out to the internet (platforms, update checks, downloads).",
+        [
+            "Depuis le démarrage, rien n'est parti vers Internet (plateformes, mises à jour, téléchargements).",
+            "Dall'avvio non è uscito nulla verso internet (piattaforme, controlli aggiornamenti, download).",
+            "Desde que arrancó, no ha salido nada a internet (plataformas, búsqueda de actualizaciones, descargas).",
+            "Desde o arranque, nada saiu para a internet (plataformas, verificação de atualizações, descargas).",
+            "Seit dem Start ist nichts ins Internet gegangen (Plattformen, Update-Prüfungen, Downloads).",
+            "Az indítás óta semmi sem ment az internetre (platformok, frissítésellenőrzés, letöltések).",
+        ],
+    ),
+    (
+        "Since it started, {} requests went out to the internet, to:",
+        [
+            "Depuis le démarrage, {} requêtes sont parties vers Internet, vers :",
+            "Dall'avvio sono uscite {} richieste verso internet, dirette a:",
+            "Desde que arrancó, han salido {} solicitudes a internet, hacia:",
+            "Desde o arranque, saíram {} pedidos para a internet, para:",
+            "Seit dem Start gingen {} Anfragen ins Internet, an:",
+            "Az indítás óta {} kérés ment az internetre, ide:",
+        ],
+    ),
+    (
+        "Journal of requests to the internet",
+        [
+            "Journal des requêtes vers Internet",
+            "Registro delle richieste verso internet",
+            "Registro de solicitudes a internet",
+            "Registo dos pedidos para a internet",
+            "Protokoll der Internetanfragen",
+            "Az internetes kérések naplója",
+        ],
+    ),
+    (
+        "Only the host name and the kind of request are kept, never the path, the parameters or tokens. The journal is erased when you close the app.",
+        [
+            "Seuls le nom d'hôte et le type de requête sont conservés, jamais le chemin, les paramètres ni les jetons. Le journal est effacé à la fermeture de l'application.",
+            "Si conservano solo il nome dell'host e il tipo di richiesta, mai il percorso, i parametri o i token. Il registro si cancella alla chiusura dell'app.",
+            "Solo se guarda el nombre del host y el tipo de solicitud, nunca la ruta, los parámetros ni los tokens. El registro se borra al cerrar la aplicación.",
+            "Guarda-se apenas o nome do anfitrião e o tipo de pedido, nunca o caminho, os parâmetros ou os tokens. O registo apaga-se quando fechas a aplicação.",
+            "Es werden nur Hostname und Anfragetyp gespeichert, nie Pfad, Parameter oder Token. Das Protokoll wird beim Schließen der App gelöscht.",
+            "Csak a gazdagép neve és a kérés fajtája marad meg, soha az útvonal, a paraméterek vagy a tokenek. A napló az alkalmazás bezárásakor törlődik.",
+        ],
+    ),
+    (
+        "sending",
+        [
+            "envoi",
+            "invio",
+            "envío",
+            "envio",
+            "Senden",
+            "küldés",
+        ],
+    ),
+    (
+        "update check",
+        [
+            "vérification des mises à jour",
+            "controllo aggiornamenti",
+            "búsqueda de actualizaciones",
+            "verificação de atualizações",
+            "Update-Prüfung",
+            "frissítésellenőrzés",
+        ],
+    ),
+    (
+        "download",
+        [
+            "téléchargement",
+            "download",
+            "descarga",
+            "descarga",
+            "Download",
+            "letöltés",
+        ],
+    ),
+    (
+        "reading",
+        [
+            "lecture",
+            "lettura",
+            "lectura",
+            "leitura",
+            "Lesen",
+            "olvasás",
+        ],
+    ),
+    (
+        "failed",
+        [
+            "échec",
+            "fallito",
+            "falló",
+            "falhou",
+            "fehlgeschlagen",
+            "sikertelen",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

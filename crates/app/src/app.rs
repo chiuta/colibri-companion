@@ -115,6 +115,8 @@ pub struct ResView {
     pub conns: Vec<(String, Conn)>,
     pub conns_error: Option<String>,
     pub applog: LogSummary,
+    /// Requests that went to the internet through the helper script (host names only).
+    pub egress: Vec<net::Egress>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -920,6 +922,7 @@ impl CompanionApp {
                     conns,
                     conns_error,
                     applog: net::log_summary(),
+                    egress: net::egress_log(),
                 };
                 if tx.send(Event::Resources(Box::new(view))).is_err() {
                     return;

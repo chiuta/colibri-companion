@@ -339,6 +339,9 @@ impl CompanionApp {
             }
         }
 
+        // what went out to the internet (only host names are ever kept)
+        self.egress_block(ui, &view.egress);
+
         // the evidence itself
         egui::CollapsingHeader::new(self.t("Arată dovada (toate conexiunile)", "Show the evidence (every connection)"))
             .default_open(false)
@@ -388,8 +391,8 @@ impl CompanionApp {
                     ui,
                     &p,
                     self.t(
-                        "Aceasta este o fotografie a momentului de față. Singurele situații în care internetul este folosit sunt cele cerute de tine: descărcarea lui colibri, a unui model sau verificarea de actualizări.",
-                        "This is a snapshot of right now. The only times the internet is used are the ones you ask for: downloading colibri, downloading a model, or checking for updates.",
+                        "Aceasta este o fotografie a momentului de față. Singurele situații în care internetul este folosit sunt cele cerute de tine: descărcarea lui colibri, a unui model, verificarea de actualizări sau platformele conectate de tine.",
+                        "This is a snapshot of right now. The only times the internet is used are the ones you ask for: downloading colibri, downloading a model, checking for updates or the platforms you connected.",
                     ),
                 );
             });
@@ -397,6 +400,65 @@ impl CompanionApp {
 }
 
 impl CompanionApp {
+    fn egress_block(&self, ui: &mut egui::Ui, log: &[net::Egress]) {
+        let p = self.p;
+        if log.is_empty() {
+            ui.label(
+                RichText::new(self.t(
+                    "De la pornire, nimic nu a plecat spre internet (platforme, verificări de actualizări, descărcări).",
+                    "Since it started, nothing has gone out to the internet (platforms, update checks, downloads).",
+                ))
+                .color(p.ok),
+            );
+            return;
+        }
+        ui.label(
+            RichText::new(
+                self.t(
+                    "De la pornire, {} cereri au plecat spre internet, către:",
+                    "Since it started, {} requests went out to the internet, to:",
+                )
+                .replacen("{}", &log.len().to_string(), 1),
+            )
+            .color(p.warn),
+        );
+        for (host, n) in net::egress_hosts(log) {
+            ui.label(RichText::new(format!("{host}  ×{n}")).monospace());
+        }
+        egui::CollapsingHeader::new(self.t("Jurnalul cererilor către internet", "Journal of requests to the internet"))
+            .id_salt("egress-journal")
+            .show(ui, |ui| {
+                muted(
+                    ui,
+                    &p,
+                    self.t(
+                        "Se păstrează doar numele gazdei și felul cererii, niciodată calea, parametrii sau jetoanele. Jurnalul se șterge când închizi aplicația.",
+                        "Only the host name and the kind of request are kept, never the path, the parameters or tokens. The journal is erased when you close the app.",
+                    ),
+                );
+                egui::Grid::new("egress-grid").striped(true).show(ui, |ui| {
+                    for e in log.iter().rev().take(100) {
+                        let secs = e.at.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+                        ui.label(RichText::new(format!("{}s", secs)).color(p.muted));
+                        ui.label(RichText::new(&e.host).monospace());
+                        ui.label(e.method);
+                        ui.label(match e.purpose {
+                            "message" => self.t("trimitere", "sending"),
+                            "update check" => self.t("verificare actualizări", "update check"),
+                            "download" => self.t("descărcare", "download"),
+                            _ => self.t("citire", "reading"),
+                        });
+                        if e.ok {
+                            ui.label(RichText::new("✔").color(p.ok));
+                        } else {
+                            ui.label(RichText::new(self.t("eșuat", "failed")).color(p.bad));
+                        }
+                        ui.end_row();
+                    }
+                });
+            });
+    }
+
     /// A slim bar under the top bar when colibri or this app has something new.
     pub fn update_banner(&mut self, ui: &mut Ui) {
         if self.upd.dismissed || self.demo || (self.upd.colibri.is_none() && self.upd.app.is_none())

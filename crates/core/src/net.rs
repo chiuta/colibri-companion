@@ -68,6 +68,65 @@ pub fn log_summary() -> LogSummary {
     LOG.lock().map(|l| summarize(&l)).unwrap_or_default()
 }
 
+// ------------------------------------------------------------------ what went out through Python
+
+/// One request made through the helper script (platforms, update checks, downloads). Only the
+/// host name and the kind of request are kept: never the path, the query, a header or a token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Egress {
+    pub at: SystemTime,
+    pub host: String,
+    pub method: &'static str,
+    pub purpose: &'static str,
+    pub ok: bool,
+}
+
+static EGRESS: Mutex<Vec<Egress>> = Mutex::new(Vec::new());
+
+/// The host of an address, lower case, without user, port, path or query.
+pub fn host_only(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let auth = auth.rsplit('@').next().unwrap_or("");
+    let host = if let Some(v6) = auth.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else {
+        auth.split(':').next().unwrap_or("")
+    };
+    host.to_ascii_lowercase()
+}
+
+/// Called for every request that goes out through the helper script.
+pub fn record_egress(url: &str, method: &'static str, purpose: &'static str, ok: bool) {
+    if let Ok(mut log) = EGRESS.lock() {
+        if log.len() >= LOG_CAP {
+            log.remove(0);
+        }
+        log.push(Egress {
+            at: SystemTime::now(),
+            host: host_only(url),
+            method,
+            purpose,
+            ok,
+        });
+    }
+}
+
+pub fn egress_log() -> Vec<Egress> {
+    EGRESS.lock().map(|l| l.clone()).unwrap_or_default()
+}
+
+/// Hosts and how often each was contacted, most frequent first.
+pub fn egress_hosts(log: &[Egress]) -> Vec<(String, usize)> {
+    let mut m: BTreeMap<String, usize> = BTreeMap::new();
+    for e in log {
+        *m.entry(e.host.clone()).or_default() += 1;
+    }
+    let mut v: Vec<_> = m.into_iter().collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    v
+}
+
 // ------------------------------------------------------------------ addresses
 
 /// Loopback (this computer talking to itself) and unspecified (a socket that is merely open).
@@ -555,5 +614,42 @@ python3 4242 me    8u  IPv6 0xabf      0t0  TCP [::1]:9000 (LISTEN)\n";
             "{conns:?}"
         );
         drop(client);
+    }
+
+    #[test]
+    fn the_egress_log_keeps_only_the_host() {
+        assert_eq!(
+            host_only("https://user:pw@API.GitHub.com:443/repos/x?token=abc#f"),
+            "api.github.com"
+        );
+        assert_eq!(host_only("http://[::1]:8000/v1"), "::1");
+        assert_eq!(host_only("example.org/path"), "example.org");
+        let log = vec![
+            Egress {
+                at: SystemTime::now(),
+                host: "a.com".into(),
+                method: "GET",
+                purpose: "x",
+                ok: true,
+            },
+            Egress {
+                at: SystemTime::now(),
+                host: "b.com".into(),
+                method: "GET",
+                purpose: "x",
+                ok: true,
+            },
+            Egress {
+                at: SystemTime::now(),
+                host: "b.com".into(),
+                method: "POST",
+                purpose: "y",
+                ok: false,
+            },
+        ];
+        assert_eq!(
+            egress_hosts(&log),
+            vec![("b.com".to_string(), 2), ("a.com".to_string(), 1)]
+        );
     }
 }

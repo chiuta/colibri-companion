@@ -27,7 +27,14 @@ pub fn http_get(python: &PythonCmd, url: &str) -> Result<String, String> {
     let mut c = python.command();
     c.args(["-I", "-c", GET_SCRIPT, url]);
     hide_window(&mut c);
-    let out = run_capture(c, Duration::from_secs(25)).map_err(|e| e.to_string())?;
+    let out = run_capture(c, Duration::from_secs(25)).map_err(|e| e.to_string());
+    crate::net::record_egress(
+        url,
+        "GET",
+        "update check",
+        out.as_ref().is_ok_and(|o| o.status.success()),
+    );
+    let out = out?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
