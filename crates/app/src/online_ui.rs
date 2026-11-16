@@ -452,7 +452,7 @@ impl CompanionApp {
                     }
                 });
                 if self.online.busy {
-                    ui.spinner();
+                    crate::theme::busy(ui);
                 }
                 if !self.online.status.is_empty() {
                     ui.label(RichText::new(&self.online.status).color(p.accent));

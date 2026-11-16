@@ -2,6 +2,7 @@
 //! for low vision. Targets are large and spaced out on purpose.
 
 use companion_core::Theme;
+use companion_core::access::Access;
 use egui::{Color32, CornerRadius, Stroke, Theme as EguiTheme, Visuals, vec2};
 
 #[derive(Clone, Copy)]
@@ -23,7 +24,37 @@ pub struct Palette {
     pub bubble_user: Color32,
 }
 
-pub fn palette(theme: Theme) -> Palette {
+/// With `colour_blind`, good and bad are blue and orange instead of green and red, which the
+/// common kinds of colour blindness keep apart.
+pub fn palette_for(theme: Theme, colour_blind: bool) -> Palette {
+    let mut p = base_palette(theme);
+    if colour_blind {
+        let c = Color32::from_rgb;
+        match theme {
+            Theme::Light => {
+                p.ok = c(0, 60, 130);
+                p.warn = c(110, 82, 0);
+                p.bad = c(180, 60, 0);
+                p.bad_soft = c(253, 236, 224);
+            }
+            Theme::Dark => {
+                p.ok = c(150, 210, 255);
+                p.warn = c(240, 228, 66);
+                p.bad = c(235, 120, 60);
+                p.bad_soft = c(70, 38, 20);
+            }
+            Theme::HighContrast => {
+                p.ok = c(120, 200, 255);
+                p.warn = c(255, 240, 80);
+                p.bad = c(255, 160, 90);
+                p.bad_soft = c(50, 20, 0);
+            }
+        }
+    }
+    p
+}
+
+fn base_palette(theme: Theme) -> Palette {
     match theme {
         Theme::Light => Palette {
             bg: Color32::from_rgb(250, 250, 247),
@@ -79,8 +110,8 @@ pub fn palette(theme: Theme) -> Palette {
     }
 }
 
-pub fn apply(ctx: &egui::Context, theme: Theme, zoom: f32) {
-    let p = palette(theme);
+pub fn apply(ctx: &egui::Context, theme: Theme, zoom: f32, a: &Access) {
+    let p = palette_for(theme, a.colour_blind);
     let dark = theme != Theme::Light;
     let mut v = if dark {
         Visuals::dark()
@@ -150,15 +181,43 @@ pub fn apply(ctx: &egui::Context, theme: Theme, zoom: f32) {
         },
         v,
     );
+    let sp = a.spacing.clamp(1.0, 2.0);
+    let big = a.targets.height();
+    let focus = if a.strong_focus { 3.5 } else { 1.5 };
+    let readable = a.readable_font;
     ctx.global_style_mut(|s| {
-        s.spacing.item_spacing = vec2(10.0, 9.0);
-        s.spacing.button_padding = vec2(14.0, 8.0);
-        s.spacing.interact_size.y = 34.0;
+        s.spacing.item_spacing = vec2(10.0 * sp.min(1.4), 9.0 * sp);
+        s.spacing.button_padding = vec2(14.0, 8.0 + (big - 34.0) / 4.0);
+        s.spacing.interact_size.y = big;
+        s.spacing.interact_size.x = (big * 1.3).max(40.0);
+        s.spacing.icon_width = (big * 0.55).max(18.0);
+        s.visuals.selection.stroke = Stroke::new(focus, p.accent);
+        s.animation_time = if a.reduce_motion { 0.0 } else { 1.0 / 12.0 };
+        let _ = readable;
         s.spacing.text_edit_width = 320.0;
         s.spacing.scroll.floating = true;
         s.interaction.tooltip_delay = 0.4;
     });
-    ctx.set_zoom_factor(zoom.clamp(0.8, 2.0));
+    ctx.set_zoom_factor(zoom.clamp(0.8, 3.0));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("reduce-motion"), a.reduce_motion));
+    let key = egui::Id::unique("font-readable");
+    if ctx.data(|d| d.get_temp::<bool>(key)) != Some(a.readable_font) {
+        install_fonts(ctx, a.readable_font);
+        ctx.data_mut(|d| d.insert_temp(key, a.readable_font));
+    }
+}
+
+/// A spinner, or just three dots when the person asked for no movement.
+pub fn busy(ui: &mut egui::Ui) {
+    let still = ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(egui::Id::unique("reduce-motion")))
+        .unwrap_or(false);
+    if still {
+        ui.label("…");
+    } else {
+        ui.spinner();
+    }
 }
 
 /// Name of the font family used for emphasis (egui has no synthetic bold).
@@ -166,7 +225,7 @@ pub const SEMIBOLD: &str = "semibold";
 
 /// Inter for text and JetBrains Mono for code, both under the SIL OFL 1.1 (see licenses/).
 /// The built-in fonts stay as fallbacks for symbols and other scripts.
-pub fn install_fonts(ctx: &egui::Context) {
+pub fn install_fonts(ctx: &egui::Context, readable: bool) {
     use egui::{FontData, FontDefinitions, FontFamily};
     use std::sync::Arc;
     let mut f = FontDefinitions::default();
@@ -186,6 +245,11 @@ pub fn install_fonts(ctx: &egui::Context) {
     );
     add(
         &mut f,
+        "atkinson",
+        include_bytes!("../assets/fonts/AtkinsonHyperlegibleNext-Regular.ttf"),
+    );
+    add(
+        &mut f,
         "jbmono",
         include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"),
     );
@@ -197,12 +261,19 @@ pub fn install_fonts(ctx: &egui::Context) {
     f.families
         .get_mut(&FontFamily::Proportional)
         .unwrap()
-        .insert(0, "inter".into());
+        .insert(0, if readable { "atkinson" } else { "inter" }.into());
     f.families
         .get_mut(&FontFamily::Monospace)
         .unwrap()
         .insert(0, "jbmono".into());
-    let mut bold = vec!["inter-semibold".to_owned()];
+    let mut bold = vec![
+        if readable {
+            "atkinson"
+        } else {
+            "inter-semibold"
+        }
+        .to_owned(),
+    ];
     bold.extend(prop);
     f.families.insert(FontFamily::Name(SEMIBOLD.into()), bold);
     ctx.set_fonts(f);
@@ -215,5 +286,58 @@ pub trait Semibold {
 impl Semibold for egui::RichText {
     fn semibold(self) -> Self {
         self.family(egui::FontFamily::Name(SEMIBOLD.into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use companion_core::access::contrast;
+
+    fn rgb(c: Color32) -> [u8; 3] {
+        [c.r(), c.g(), c.b()]
+    }
+
+    /// Every pair of text and background the interface really uses, in every look, reaches the
+    /// WCAG AA level for normal text (4.5 : 1).
+    #[test]
+    fn every_look_is_readable() {
+        for cb in [false, true] {
+            for t in [Theme::Light, Theme::Dark, Theme::HighContrast] {
+                let p = palette_for(t, cb);
+                let pairs = [
+                    ("text/bg", p.text, p.bg),
+                    ("text/card", p.text, p.card),
+                    ("text/panel", p.text, p.panel),
+                    ("muted/bg", p.muted, p.bg),
+                    ("muted/card", p.muted, p.card),
+                    ("accent/bg", p.accent, p.bg),
+                    ("on_accent/accent", p.on_accent, p.accent),
+                    ("text/accent_soft", p.text, p.accent_soft),
+                    ("text/bubble", p.text, p.bubble_user),
+                    ("ok/bg", p.ok, p.bg),
+                    ("ok/card", p.ok, p.card),
+                    ("warn/warn_soft", p.warn, p.warn_soft),
+                    ("warn/bg", p.warn, p.bg),
+                    ("bad/bad_soft", p.bad, p.bad_soft),
+                    ("bad/bg", p.bad, p.bg),
+                ];
+                for (name, a, b) in pairs {
+                    let r = contrast(rgb(a), rgb(b));
+                    assert!(r >= 4.5, "{t:?} colour_blind={cb} {name}: {r:.2}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn colour_blind_palette_keeps_good_and_bad_apart_by_more_than_hue() {
+        // Good and bad differ clearly in brightness too, so they stay apart in greyscale.
+        for t in [Theme::Light, Theme::Dark] {
+            let p = palette_for(t, true);
+            let r = contrast(rgb(p.ok), rgb(p.bad));
+            assert!(r >= 1.15, "{t:?}: {r:.2}");
+            assert_ne!(p.ok, palette_for(t, false).ok);
+        }
     }
 }

@@ -481,10 +481,11 @@ pub enum Style {
     Brainstorm,
     Telegraphic,
     Coach,
+    Simple,
 }
 
 impl Style {
-    pub const ALL: [Style; 8] = [
+    pub const ALL: [Style; 9] = [
         Style::Normal,
         Style::Exact,
         Style::Didactic,
@@ -493,6 +494,7 @@ impl Style {
         Style::Brainstorm,
         Style::Telegraphic,
         Style::Coach,
+        Style::Simple,
     ];
 
     pub fn instruction(self) -> Option<&'static str> {
@@ -515,6 +517,9 @@ impl Style {
             }
             Style::Telegraphic => {
                 "Answer in the fewest words that stay clear: short lines, no filler."
+            }
+            Style::Simple => {
+                "Write in Easy Read: short sentences of under fifteen words, common everyday words, one idea per sentence, short lists instead of long paragraphs. Explain any hard word the first time. No metaphors, irony or abbreviations."
             }
             Style::Coach => {
                 "Act as a warm, direct coach: ask what the person wants, point out what they are already doing well, and agree on one small next step."

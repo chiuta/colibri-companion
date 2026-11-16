@@ -15,4 +15,4 @@ application before any download.
 
 Third-party Rust crates and fonts are listed in THIRD_PARTY_LICENSES.md.
 
-Embedded fonts: Inter and JetBrains Mono (SIL Open Font License 1.1, see licenses/).
+Embedded fonts: Inter, JetBrains Mono and Atkinson Hyperlegible Next (SIL Open Font License 1.1, see licenses/).

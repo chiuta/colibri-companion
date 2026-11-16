@@ -168,6 +168,8 @@ pub struct Settings {
     pub theme: Theme,
     /// 1.0 = normal. The whole interface scales, for comfortable reading.
     pub font_scale: f32,
+    /// Options for people with disabilities.
+    pub access: crate::access::Access,
     pub colibri_root: Option<PathBuf>,
     pub models_dir: Option<PathBuf>,
     /// Where the OpenAI-compatible server is. Default: colibri's own.
@@ -197,6 +199,7 @@ impl Default for Settings {
             lang: Lang::from_env(),
             theme: Theme::Light,
             font_scale: 1.1,
+            access: Default::default(),
             colibri_root: None,
             models_dir: None,
             server_url: "http://127.0.0.1:8000".into(),

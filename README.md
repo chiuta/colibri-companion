@@ -29,7 +29,7 @@ The app does not include colibri. It runs colibri's JSON commands (`setup --list
 ## Licences
 
 - This project: Apache-2.0 (`LICENSE`, `NOTICE`), like colibri.
-- Dependencies: permissive licences only, checked with `cargo deny check licenses` (`deny.toml`); full list in `THIRD_PARTY_LICENSES.md`. Fonts: Inter and JetBrains Mono (SIL OFL 1.1, in `licenses/`).
+- Dependencies: permissive licences only, checked with `cargo deny check licenses` (`deny.toml`); full list in `THIRD_PARTY_LICENSES.md`. Fonts: Inter, JetBrains Mono and Atkinson Hyperlegible (SIL OFL 1.1, in `licenses/`).
 - Models have their own licences; the app shows them and asks for confirmation before downloading.
 
 ## Platforms

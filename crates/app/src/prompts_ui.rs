@@ -33,6 +33,7 @@ fn style_name(app: &CompanionApp, s: Style) -> &'static str {
         Style::Brainstorm => app.t("Idei multe", "Brainstorm"),
         Style::Telegraphic => app.t("Telegrafic", "Telegraphic"),
         Style::Coach => app.t("Coach", "Coach"),
+        Style::Simple => app.t("Limbaj simplu", "Plain language"),
     }
 }
 

@@ -43,7 +43,12 @@ impl CompanionApp {
                                 (self.t("Prompturi", "Prompts"), 5),
                                 (self.t("Conexiuni online", "Online connections"), 6),
                                 (self.t("Catalog de platforme", "Platform catalogue"), 7),
+                                (self.t("Modele creative", "Creative models"), 8),
                             ] {
+                                if self.s.access.simple_menus && matches!(which, 0 | 1 | 6 | 7 | 8)
+                                {
+                                    continue;
+                                }
                                 if ui.button(label).clicked() {
                                     match which {
                                         0 => self.sheets.local = true,
@@ -53,6 +58,7 @@ impl CompanionApp {
                                         5 => self.open_prompts(),
                                         6 => self.open_online(),
                                         7 => self.open_catalog(),
+                                        8 => self.open_studio(),
                                         _ => self.guide.legal = true,
                                     }
                                     ui.close();
@@ -64,6 +70,12 @@ impl CompanionApp {
                         }
                         if ui.button(self.t("Setări", "Settings")).clicked() {
                             self.show_settings = true;
+                        }
+                        if ui
+                            .button(self.t("Accesibilitate", "Accessibility"))
+                            .clicked()
+                        {
+                            self.open_access();
                         }
                         if self.coli.is_some() && !self.demo {
                             if self.server_ready()
@@ -203,6 +215,8 @@ impl CompanionApp {
         self.guide_windows(ctx);
         self.prompt_window(ctx);
         self.online_windows(ctx);
+        self.studio_window(ctx);
+        self.access_window(ctx);
         self.sheet_windows(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);

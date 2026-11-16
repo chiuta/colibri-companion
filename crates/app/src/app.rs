@@ -50,6 +50,7 @@ pub enum Event {
         kind: companion_core::connect::Kind,
         result: Result<Vec<u8>, companion_core::connect::ConnectError>,
     },
+    Picture(Result<PathBuf, String>),
     Attached {
         name: String,
         result: Result<companion_core::attach::Extracted, companion_core::attach::AttachError>,
@@ -217,7 +218,7 @@ pub struct CompanionApp {
     rx: Receiver<Event>,
     poll: Arc<Mutex<PollCfg>>,
     last_poll_sync: (Option<PathBuf>, String, String, bool),
-    applied_look: Option<(companion_core::Theme, u32)>,
+    applied_look: Option<(companion_core::Theme, u32, companion_core::access::Access)>,
 
     // environment
     pub python: Probe<PythonCmd>,
@@ -271,6 +272,8 @@ pub struct CompanionApp {
     pub guide: crate::guide_ui::GuideState,
     pub prompts: crate::prompts_ui::PromptState,
     pub online: crate::online_ui::OnlineState,
+    pub studio: crate::studio_ui::StudioState,
+    pub access: crate::access_ui::AccessState,
     pub sheets: crate::sheets_ui::SheetState,
     pub existing_path: String,
     pub show_models: bool,
@@ -312,7 +315,7 @@ impl CompanionApp {
         let mut app = Self {
             perf_log: std::env::var_os("COLIBRI_PERF").is_some(),
             ctx: ctx.clone(),
-            p: theme::palette(settings.theme),
+            p: theme::palette_for(settings.theme, settings.access.colour_blind),
             root_input: settings
                 .colibri_root
                 .as_ref()
@@ -364,6 +367,8 @@ impl CompanionApp {
             guide: Default::default(),
             prompts: Default::default(),
             online: Default::default(),
+            studio: Default::default(),
+            access: Default::default(),
             sheets: Default::default(),
             existing_path: String::new(),
             show_models: false,
@@ -1796,6 +1801,7 @@ impl CompanionApp {
             Event::Installed(list) => self.installed = list,
             Event::Npu(n) => self.npu = n,
             Event::Attached { name, result } => self.attached(name, result),
+            Event::Picture(r) => self.picture_done(r),
             Event::Online { what, kind, result } => self.online_done(what, kind, result),
             Event::Resources(v) => {
                 for (hist, val) in [
@@ -1902,6 +1908,14 @@ impl CompanionApp {
                         }
                     }
                     self.finish_assistant_message();
+                    if self.chat.error.is_none() {
+                        if let Some(m) = self.chat.conv.messages.last() {
+                            if m.role == "assistant" && !m.stopped && !m.content.is_empty() {
+                                let t = m.content.clone();
+                                self.answer_ready(&t);
+                            }
+                        }
+                    }
                     if self.chat.error.is_some()
                         || self
                             .chat
@@ -1927,10 +1941,14 @@ impl CompanionApp {
         while let Ok(ev) = self.rx.try_recv() {
             self.handle(ev);
         }
-        let look = (self.s.theme, (self.s.font_scale * 100.0) as u32);
-        if self.applied_look != Some(look) {
-            self.p = theme::palette(self.s.theme);
-            theme::apply(&self.ctx, self.s.theme, self.s.font_scale);
+        let look = (
+            self.s.theme,
+            (self.s.font_scale * 100.0) as u32,
+            self.s.access.clone(),
+        );
+        if self.applied_look.as_ref() != Some(&look) {
+            self.p = theme::palette_for(self.s.theme, self.s.access.colour_blind);
+            theme::apply(&self.ctx, self.s.theme, self.s.font_scale, &self.s.access);
             self.applied_look = Some(look);
         }
         self.sync_poller();

@@ -5,11 +5,13 @@
 //! OpenAI-compatible HTTP API of `coli serve`. That keeps the two programs
 //! independent, each under its own licence.
 
+pub mod access;
 pub mod attach;
 pub mod blocks;
 pub mod chat;
 pub mod coli;
 pub mod connect;
+pub mod duel;
 pub mod fetch;
 pub mod http;
 pub mod locate;
@@ -23,6 +25,7 @@ pub mod prompts;
 pub mod resources;
 pub mod sheets;
 pub mod store;
+pub mod studio;
 pub mod update;
 
 pub use chat::{

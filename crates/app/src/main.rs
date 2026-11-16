@@ -1,6 +1,7 @@
 //! Colibri Companion: a friendly desktop interface for the colibri engine.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod access_ui;
 mod app;
 mod chat_ui;
 mod demo;
@@ -12,6 +13,7 @@ mod prompts_ui;
 mod resources_ui;
 mod screens;
 mod sheets_ui;
+mod studio_ui;
 mod theme;
 mod widgets;
 mod windows;
@@ -165,6 +167,28 @@ impl CompanionApp {
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::P)) {
             self.open_prompts();
         }
+        let cs = Modifiers::COMMAND | Modifiers::SHIFT;
+        if ctx.input_mut(|i| i.consume_key(cs, Key::A)) {
+            self.access.open = !self.access.open;
+            if self.access.open {
+                self.open_access();
+            }
+        }
+        if ctx.input_mut(|i| i.consume_key(cs, Key::S)) {
+            if self.is_speaking() {
+                self.stop_speaking();
+            } else if let Some(t) = self
+                .chat
+                .conv
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "assistant")
+                .map(|m| m.content.clone())
+            {
+                self.speak(&t);
+            }
+        }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::K)) {
             self.chat.focus_search = true;
         }
@@ -263,7 +287,6 @@ fn main() -> eframe::Result {
         "Colibri Companion",
         options,
         Box::new(move |cc| {
-            theme::install_fonts(&cc.egui_ctx);
             Ok(Box::new(CompanionApp::new(
                 cc.egui_ctx.clone(),
                 settings,
