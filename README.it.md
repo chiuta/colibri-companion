@@ -36,6 +36,8 @@ Linux (x86-64, ARM64; Wayland e X11), Windows 10/11 e macOS (Intel e Apple Silic
 
 Modelli: tienine più d'uno sul computer, passa dall'uno all'altro o aggiungine da un'unica finestra (**Modelli**); per primo viene proposto il più capace che il tuo computer può eseguire (con poca RAM gli esperti vengono letti dall'SSD). Velocità: CUDA per NVIDIA, Vulkan per gli altri chip grafici, altrimenti il processore, scelti automaticamente. **Risorse** mostra in tempo reale processore, memoria, scheda grafica e disco, più la prova che nulla esce dal tuo computer (tutte le connessioni aperte dell'app e del motore, con il comando per verificare da solo). Se colibri manca viene scaricato per te (senza git), e un controllo giornaliero (disattivabile) ti avvisa quando colibri o questa app hanno una nuova versione.
 
+**Il tuo computer, analizzato:** in **Risorse**, l'app trova da sola le schede video e dice in modo semplice se il modello sta in memoria e perché può essere lento (swap, altri programmi, scheda inutilizzata). Si limita a consigliare; non cambia impostazioni da sola.
+
 ## Lingue
 
 English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — scelte dalle Impostazioni, con `--lang en|ro|fr|it|es|pt|de|hu`, o in base alla lingua del sistema al primo avvio. Le traduzioni sono in `crates/app/src/i18n.rs` (la chiave è il testo inglese); un test verifica che ogni testo dell'interfaccia abbia tutte le traduzioni. Sono state fatte con l'aiuto di un'IA e non sono state riviste da madrelingua.

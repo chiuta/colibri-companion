@@ -24,6 +24,8 @@ Chat: streaming answers, instant Stop, Markdown, collapsible reasoning, saved co
 
 Models: keep several on the computer, switch between them or add more from one window (**Models**), with the most capable model your computer can run suggested first (small-RAM computers stream experts from the SSD). Speed: CUDA for NVIDIA, Vulkan for other graphics chips, else the processor, chosen automatically. **Resources** shows processor, memory, graphics card and disk use live, plus the evidence that nothing leaves your computer (every open connection of the app and the engine, with the command to check it yourself). If colibri is missing it is downloaded for you (no git needed), and a once-a-day check (can be turned off) tells you when colibri or this app has a new version.
 
+**Your computer, analysed:** in **Resources**, the app finds your graphics cards by itself and says in plain words whether the model fits in memory and why it may be slow (swap, other programs, an unused card). It only advises; it changes no setting on its own.
+
 ## How it works
 
 The app does not include colibri. It runs colibri's JSON commands (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) and talks to its OpenAI-compatible gateway on `127.0.0.1`. It never installs system packages: if something is missing, it shows you the command to copy. Your data (settings, conversations) stays local in the user data folder; `COLIBRI_COMPANION_HOME` can change it.

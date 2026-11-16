@@ -36,6 +36,8 @@ Linux (x86-64, ARM64; Wayland und X11), Windows 10/11 und macOS (Intel und Apple
 
 Modelle: Behalte mehrere auf dem Computer, wechsle zwischen ihnen oder füge in einem Fenster weitere hinzu (**Modelle**); zuerst wird das leistungsfähigste vorgeschlagen, das dein Computer ausführen kann (bei wenig RAM werden die Experten von der SSD gelesen). Tempo: CUDA für NVIDIA, Vulkan für andere Grafikchips, sonst der Prozessor, automatisch gewählt. **Ressourcen** zeigt live Prozessor, Speicher, Grafikkarte und Festplatte sowie den Beweis, dass nichts deinen Computer verlässt (alle offenen Verbindungen der App und der Engine, mit dem Befehl zum Selbstprüfen). Fehlt colibri, wird es für dich heruntergeladen (ohne git), und eine tägliche Prüfung (abschaltbar) meldet, wenn colibri oder diese App eine neue Version hat.
 
+**Ihr Computer, analysiert:** Unter **Ressourcen** findet die App Ihre Grafikkarten selbst und sagt einfach, ob das Modell in den Speicher passt und warum es langsam sein kann (Swap, andere Programme, ungenutzte Karte). Sie berät nur; sie ändert nie von selbst eine Einstellung.
+
 ## Sprachen
 
 English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — gewählt in den Einstellungen, mit `--lang en|ro|fr|it|es|pt|de|hu` oder beim ersten Start nach der Systemsprache. Die Übersetzungen stehen in `crates/app/src/i18n.rs` (der Schlüssel ist der englische Text); ein Test prüft, dass jeder Text der Oberfläche alle Übersetzungen hat. Sie entstanden mit KI-Hilfe und wurden nicht von Muttersprachlern geprüft.

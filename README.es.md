@@ -36,6 +36,8 @@ Linux (x86-64, ARM64; Wayland y X11), Windows 10/11 y macOS (Intel y Apple Silic
 
 Modelos: guarda varios en el ordenador, cambia entre ellos o añade más desde una sola ventana (**Modelos**); primero se sugiere el más capaz que tu ordenador puede ejecutar (con poca RAM, los expertos se leen del SSD). Velocidad: CUDA para NVIDIA, Vulkan para otros chips gráficos, si no el procesador, elegidos automáticamente. **Recursos** muestra en directo procesador, memoria, tarjeta gráfica y disco, y la prueba de que nada sale de tu ordenador (todas las conexiones abiertas de la aplicación y del motor, con el comando para comprobarlo tú mismo). Si falta colibri se descarga por ti (sin git), y una comprobación diaria (se puede desactivar) avisa cuando colibri o esta aplicación tienen una versión nueva.
 
+**Tu ordenador, analizado:** en **Recursos**, la aplicación encuentra sola tus tarjetas gráficas y dice con claridad si el modelo cabe en memoria y por qué puede ir lento (swap, otros programas, tarjeta sin usar). Solo aconseja; no cambia ningún ajuste por sí sola.
+
 ## Idiomas
 
 English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — se eligen en Ajustes, con `--lang en|ro|fr|it|es|pt|de|hu`, o según el idioma del sistema en el primer inicio. Las traducciones están en `crates/app/src/i18n.rs` (la clave es el texto en inglés); una prueba comprueba que cada texto de la interfaz tenga todas las traducciones. Se hicieron con ayuda de una IA y no las han revisado hablantes nativos.

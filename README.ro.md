@@ -36,6 +36,8 @@ Linux (x86-64, ARM64; Wayland și X11), Windows 10/11 și macOS (Intel și Apple
 
 Modele: păstrează mai multe pe calculator, trece între ele sau adaugă altele dintr-o singură fereastră (**Modele**); primul sugerat este cel mai capabil model pe care îl poate rula calculatorul tău (cele cu puțină memorie citesc experții din SSD). Viteză: CUDA pentru NVIDIA, Vulkan pentru alte cipuri grafice, altfel procesorul, alese automat. **Resurse** arată în direct procesorul, memoria, placa video și discul, plus dovada că nimic nu iese din calculator (toate conexiunile deschise ale aplicației și ale motorului, cu comanda ca să verifici singur). Dacă lipsește colibri, e descărcat pentru tine (fără git), iar o verificare zilnică (poate fi oprită) te anunță când colibri sau această aplicație au o versiune nouă.
 
+**Calculatorul tău, analizat:** în **Resurse**, aplicația găsește singură plăcile video și spune pe înțeles dacă modelul încape în memorie și de ce poate fi lent (swap, alte programe, o placă nefolosită). Doar sfătuiește; nu schimbă nicio setare de la sine.
+
 ## Limbi
 
 English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — alese din Setări, cu `--lang en|ro|fr|it|es|pt|de|hu` sau, la prima pornire, după limba sistemului. Traducerile sunt în `crates/app/src/i18n.rs` (cheia e textul englezesc); un test verifică faptul că fiecare text din interfață are toate traducerile. Au fost făcute cu ajutor AI și nu au fost revizuite de vorbitori nativi.

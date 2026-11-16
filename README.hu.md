@@ -36,6 +36,8 @@ Linux (x86-64, ARM64; Wayland és X11), Windows 10/11 és macOS (Intel és Apple
 
 Modellek: tarts több modellt a számítógépen, válts közöttük, vagy adj hozzá újakat egyetlen ablakból (**Modellek**); először a számítógéped által futtatható legképesebb modellt javasolja (kevés RAM esetén a szakértőket az SSD-ről olvassa). Sebesség: CUDA az NVIDIA-hoz, Vulkan más grafikus chipekhez, különben a processzor, automatikusan választva. Az **Erőforrások** élőben mutatja a processzor-, memória-, videokártya- és lemezhasználatot, valamint a bizonyítékot, hogy semmi sem hagyja el a számítógépedet (az alkalmazás és a motor minden nyitott kapcsolata, és a parancs, amivel magad ellenőrizheted). Ha a colibri hiányzik, letöltöm helyetted (git nélkül), és egy napi ellenőrzés (kikapcsolható) szól, ha a colibrinek vagy ennek az alkalmazásnak új verziója van.
 
+**A számítógépe elemzése:** az **Erőforrások** ablakban az alkalmazás magától megtalálja a videokártyákat, és egyszerűen megmondja, elfér-e a modell a memóriában, és miért lehet lassú (swap, más programok, kihasználatlan kártya). Csak tanácsot ad; magától nem módosít beállítást.
+
 ## Nyelvek
 
 English, Română, Français, Italiano, Español, Português, Deutsch, Magyar — a Beállításokban választható, a `--lang en|ro|fr|it|es|pt|de|hu` kapcsolóval, vagy első induláskor a rendszernyelv szerint. A fordítások a `crates/app/src/i18n.rs` fájlban vannak (a kulcs az angol szöveg); egy teszt ellenőrzi, hogy a felület minden szövegének megvan az összes fordítása. MI segítségével készültek, anyanyelvi beszélők nem ellenőrizték őket.
