@@ -44,8 +44,10 @@ impl CompanionApp {
                                 (self.t("Conexiuni online", "Online connections"), 6),
                                 (self.t("Catalog de platforme", "Platform catalogue"), 7),
                                 (self.t("Modele creative", "Creative models"), 8),
+                                (self.t("Automatizări", "Automations"), 9),
                             ] {
-                                if self.s.access.simple_menus && matches!(which, 0 | 1 | 6 | 7 | 8)
+                                if self.s.access.simple_menus
+                                    && matches!(which, 0 | 1 | 6 | 7 | 8 | 9)
                                 {
                                     continue;
                                 }
@@ -59,6 +61,7 @@ impl CompanionApp {
                                         6 => self.open_online(),
                                         7 => self.open_catalog(),
                                         8 => self.open_studio(),
+                                        9 => self.open_flows(),
                                         _ => self.guide.legal = true,
                                     }
                                     ui.close();
@@ -217,6 +220,7 @@ impl CompanionApp {
         self.online_windows(ctx);
         self.studio_window(ctx);
         self.access_window(ctx);
+        self.flows_window(ctx);
         self.sheet_windows(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);

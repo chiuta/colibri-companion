@@ -51,6 +51,13 @@ pub enum Event {
         result: Result<Vec<u8>, companion_core::connect::ConnectError>,
     },
     Picture(Result<PathBuf, String>),
+    FlowLog(String),
+    FlowNotify(String),
+    FlowApprove(String, std::sync::mpsc::Sender<bool>),
+    FlowDone {
+        ok: bool,
+        output: String,
+    },
     Attached {
         name: String,
         result: Result<companion_core::attach::Extracted, companion_core::attach::AttachError>,
@@ -274,6 +281,7 @@ pub struct CompanionApp {
     pub online: crate::online_ui::OnlineState,
     pub studio: crate::studio_ui::StudioState,
     pub access: crate::access_ui::AccessState,
+    pub flows: crate::flows_ui::FlowState,
     pub sheets: crate::sheets_ui::SheetState,
     pub existing_path: String,
     pub show_models: bool,
@@ -369,6 +377,7 @@ impl CompanionApp {
             online: Default::default(),
             studio: Default::default(),
             access: Default::default(),
+            flows: Default::default(),
             sheets: Default::default(),
             existing_path: String::new(),
             show_models: false,
@@ -1802,6 +1811,21 @@ impl CompanionApp {
             Event::Npu(n) => self.npu = n,
             Event::Attached { name, result } => self.attached(name, result),
             Event::Picture(r) => self.picture_done(r),
+            Event::FlowLog(l) => {
+                self.flows.log.push(l);
+                let n = self.flows.log.len();
+                if n > 300 {
+                    self.flows.log.drain(..n - 300);
+                }
+            }
+            Event::FlowNotify(t) => {
+                self.flows.result = t;
+            }
+            Event::FlowApprove(text, tx) => {
+                self.flows.open = true;
+                self.flows.approval = Some((text, tx));
+            }
+            Event::FlowDone { ok, output } => self.flow_done(ok, output),
             Event::Online { what, kind, result } => self.online_done(what, kind, result),
             Event::Resources(v) => {
                 for (hist, val) in [
@@ -1951,6 +1975,7 @@ impl CompanionApp {
             theme::apply(&self.ctx, self.s.theme, self.s.font_scale, &self.s.access);
             self.applied_look = Some(look);
         }
+        self.flows_tick();
         self.sync_poller();
         if self.show_resources {
             self.sync_resource_targets();

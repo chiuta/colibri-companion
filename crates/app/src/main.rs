@@ -5,6 +5,7 @@ mod access_ui;
 mod app;
 mod chat_ui;
 mod demo;
+mod flows_ui;
 mod guide_ui;
 mod i18n;
 mod models_ui;
