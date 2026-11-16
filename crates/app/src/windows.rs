@@ -65,9 +65,10 @@ impl CompanionApp {
                                     self.t("Memorie și constelație", "Memory and constellation"),
                                     10,
                                 ),
+                                (self.t("Dueluri între modele", "Model duels"), 11),
                             ] {
                                 if self.s.access.simple_menus
-                                    && matches!(which, 0 | 1 | 6 | 7 | 8 | 9)
+                                    && matches!(which, 0 | 1 | 6 | 7 | 8 | 9 | 11)
                                 {
                                     continue;
                                 }
@@ -83,6 +84,7 @@ impl CompanionApp {
                                         8 => self.open_studio(),
                                         9 => self.open_flows(),
                                         10 => self.open_memory(),
+                                        11 => self.open_duel(),
                                         _ => self.guide.legal = true,
                                     }
                                     ui.close();
@@ -126,10 +128,11 @@ impl CompanionApp {
 
     /// Escape closes the open tool windows, one at a time (when no text box has the keyboard).
     pub fn close_one_window(&mut self) {
-        let flags: [&mut bool; 8] = [
+        let flags: [&mut bool; 9] = [
             &mut self.flows.open,
             &mut self.memory.open,
             &mut self.studio.open,
+            &mut self.duel.open,
             &mut self.access.open,
             &mut self.prompts.open,
             &mut self.online.open_catalog,
@@ -260,6 +263,7 @@ impl CompanionApp {
         self.prompt_window(ctx);
         self.online_windows(ctx);
         self.studio_window(ctx);
+        self.duel_window(ctx);
         self.access_window(ctx);
         self.flows_window(ctx);
         self.memory_window(ctx);

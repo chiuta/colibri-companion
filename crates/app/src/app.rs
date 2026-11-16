@@ -60,6 +60,16 @@ pub enum Event {
     FlowLog(String),
     FlowNotify(String),
     FlowApprove(String, std::sync::mpsc::Sender<bool>),
+    DuelPiece {
+        round: u64,
+        side: usize,
+        piece: String,
+    },
+    DuelEnd {
+        round: u64,
+        side: usize,
+        err: Option<String>,
+    },
     FlowDone {
         ok: bool,
         output: String,
@@ -286,6 +296,7 @@ pub struct CompanionApp {
     pub prompts: crate::prompts_ui::PromptState,
     pub online: crate::online_ui::OnlineState,
     pub studio: crate::studio_ui::StudioState,
+    pub duel: crate::duel_ui::DuelState,
     pub access: crate::access_ui::AccessState,
     pub flows: crate::flows_ui::FlowState,
     pub memory: crate::memory_ui::MemoryState,
@@ -383,6 +394,7 @@ impl CompanionApp {
             prompts: Default::default(),
             online: Default::default(),
             studio: Default::default(),
+            duel: Default::default(),
             access: Default::default(),
             flows: Default::default(),
             memory: Default::default(),
@@ -1822,6 +1834,8 @@ impl CompanionApp {
             Event::Npu(n) => self.npu = n,
             Event::Attached { name, result } => self.attached(name, result),
             Event::Picture(r) => self.picture_done(r),
+            Event::DuelPiece { round, side, piece } => self.duel_piece(round, side, piece),
+            Event::DuelEnd { round, side, err } => self.duel_end(round, side, err),
             Event::Memory(b) => self.memory_built(*b),
             Event::Summary { conv, upto, result } => self.summary_done(conv, upto, result),
             Event::FlowLog(l) => {

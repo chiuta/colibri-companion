@@ -9445,6 +9445,468 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "ez nem szöveges oldal",
         ],
     ),
+    (
+        "Model duels",
+        [
+            "Duels de modèles",
+            "Duelli tra modelli",
+            "Duelos de modelos",
+            "Duelos de modelos",
+            "Modell-Duelle",
+            "Modellpárbajok",
+        ],
+    ),
+    (
+        "Arena",
+        [
+            "Arène",
+            "Arena",
+            "Arena",
+            "Arena",
+            "Arena",
+            "Aréna",
+        ],
+    ),
+    (
+        "Leaderboard",
+        [
+            "Classement",
+            "Classifica",
+            "Clasificación",
+            "Classificação",
+            "Rangliste",
+            "Ranglista",
+        ],
+    ),
+    (
+        "The same question goes to two anonymous models. You vote for the better answer and only then see who was who. Everything stays on this computer; the models can only be on this computer or on your network.",
+        [
+            "La même question va à deux modèles anonymes. Vous votez pour la meilleure réponse et ce n'est qu'ensuite que vous voyez qui était qui. Tout reste sur cet ordinateur ; les modèles ne peuvent être que sur cet ordinateur ou sur votre réseau.",
+            "La stessa domanda va a due modelli anonimi. Voti la risposta migliore e solo dopo vedi chi era chi. Tutto resta su questo computer; i modelli possono essere solo su questo computer o sulla tua rete.",
+            "La misma pregunta va a dos modelos anónimos. Votas por la mejor respuesta y solo después ves quién era quién. Todo se queda en este ordenador; los modelos solo pueden estar en este ordenador o en tu red.",
+            "A mesma pergunta vai para dois modelos anónimos. Votas na melhor resposta e só depois vês quem era quem. Tudo fica neste computador; os modelos só podem estar neste computador ou na tua rede.",
+            "Dieselbe Frage geht an zwei anonyme Modelle. Du stimmst für die bessere Antwort und siehst erst danach, wer wer war. Alles bleibt auf diesem Computer; die Modelle dürfen nur auf diesem Computer oder in deinem Netzwerk laufen.",
+            "Ugyanaz a kérdés két névtelen modellhez megy. A jobb válaszra szavazol, és csak utána látod, ki kicsoda. Minden ezen a gépen marad; a modellek csak ezen a gépen vagy a saját hálózatodon lehetnek.",
+        ],
+    ),
+    (
+        "You need at least two active models: add them in the “Models” tab.",
+        [
+            "Il faut au moins deux modèles actifs : ajoutez-les dans l'onglet « Modèles ».",
+            "Servono almeno due modelli attivi: aggiungili nella scheda «Modelli».",
+            "Necesitas al menos dos modelos activos: añádelos en la pestaña «Modelos».",
+            "Precisas de pelo menos dois modelos ativos: adiciona-os no separador «Modelos».",
+            "Du brauchst mindestens zwei aktive Modelle: Füge sie im Tab „Modelle“ hinzu.",
+            "Legalább két aktív modell kell: add hozzá őket a „Modellek” fülön.",
+        ],
+    ),
+    (
+        "Go to Models",
+        [
+            "Aller aux modèles",
+            "Vai ai modelli",
+            "Ir a Modelos",
+            "Ir para Modelos",
+            "Zu den Modellen",
+            "Ugrás a modellekhez",
+        ],
+    ),
+    (
+        "Write the question…",
+        [
+            "Écrivez la question…",
+            "Scrivi la domanda…",
+            "Escribe la pregunta…",
+            "Escreve a pergunta…",
+            "Schreibe die Frage…",
+            "Írd meg a kérdést…",
+        ],
+    ),
+    (
+        "Load the sample questions",
+        [
+            "Charger les questions d'exemple",
+            "Carica le domande di esempio",
+            "Cargar las preguntas de ejemplo",
+            "Carregar as perguntas de exemplo",
+            "Beispielfragen laden",
+            "Mintakérdések betöltése",
+        ],
+    ),
+    (
+        "Next question from the set",
+        [
+            "Question suivante du lot",
+            "Prossima domanda del set",
+            "Siguiente pregunta del conjunto",
+            "Pergunta seguinte do conjunto",
+            "Nächste Frage aus dem Set",
+            "Következő kérdés a készletből",
+        ],
+    ),
+    (
+        "Start the duel",
+        [
+            "Lancer le duel",
+            "Avvia il duello",
+            "Iniciar el duelo",
+            "Iniciar o duelo",
+            "Duell starten",
+            "Párbaj indítása",
+        ],
+    ),
+    (
+        "My own set of questions",
+        [
+            "Mon propre lot de questions",
+            "Il mio set di domande",
+            "Mi propio conjunto de preguntas",
+            "O meu conjunto de perguntas",
+            "Mein eigenes Fragenset",
+            "Saját kérdéskészletem",
+        ],
+    ),
+    (
+        "One question per line, or “category | question”",
+        [
+            "Une question par ligne, ou « catégorie | question »",
+            "Una domanda per riga, oppure «categoria | domanda»",
+            "Una pregunta por línea, o «categoría | pregunta»",
+            "Uma pergunta por linha, ou «categoria | pergunta»",
+            "Eine Frage pro Zeile oder „Kategorie | Frage“",
+            "Soronként egy kérdés, vagy „kategória | kérdés”",
+        ],
+    ),
+    (
+        "Use these questions",
+        [
+            "Utiliser ces questions",
+            "Usa queste domande",
+            "Usar estas preguntas",
+            "Usar estas perguntas",
+            "Diese Fragen verwenden",
+            "Ezek a kérdések legyenek",
+        ],
+    ),
+    (
+        "1 · A is better",
+        [
+            "1 · A est meilleur",
+            "1 · A è meglio",
+            "1 · A es mejor",
+            "1 · A é melhor",
+            "1 · A ist besser",
+            "1 · A jobb",
+        ],
+    ),
+    (
+        "2 · B is better",
+        [
+            "2 · B est meilleur",
+            "2 · B è meglio",
+            "2 · B es mejor",
+            "2 · B é melhor",
+            "2 · B ist besser",
+            "2 · B jobb",
+        ],
+    ),
+    (
+        "3 · A tie",
+        [
+            "3 · Égalité",
+            "3 · Pareggio",
+            "3 · Empate",
+            "3 · Empate",
+            "3 · Unentschieden",
+            "3 · Döntetlen",
+        ],
+    ),
+    (
+        "4 · Both are bad",
+        [
+            "4 · Les deux sont mauvais",
+            "4 · Entrambi scarsi",
+            "4 · Ambos son malos",
+            "4 · Ambos são maus",
+            "4 · Beide sind schlecht",
+            "4 · Mindkettő gyenge",
+        ],
+    ),
+    (
+        "You chose",
+        [
+            "Vous avez choisi",
+            "Hai scelto",
+            "Elegiste",
+            "Escolheste",
+            "Du hast gewählt",
+            "Ezt választottad",
+        ],
+    ),
+    (
+        "A tie",
+        [
+            "Égalité",
+            "Pareggio",
+            "Empate",
+            "Empate",
+            "Unentschieden",
+            "Döntetlen",
+        ],
+    ),
+    (
+        "Both are bad",
+        [
+            "Les deux sont mauvais",
+            "Entrambi scarsi",
+            "Ambos son malos",
+            "Ambos são maus",
+            "Beide sind schlecht",
+            "Mindkettő gyenge",
+        ],
+    ),
+    (
+        "All categories",
+        [
+            "Toutes les catégories",
+            "Tutte le categorie",
+            "Todas las categorías",
+            "Todas as categorias",
+            "Alle Kategorien",
+            "Minden kategória",
+        ],
+    ),
+    (
+        "Export CSV",
+        [
+            "Exporter en CSV",
+            "Esporta CSV",
+            "Exportar CSV",
+            "Exportar CSV",
+            "CSV exportieren",
+            "CSV exportálása",
+        ],
+    ),
+    (
+        "Export Markdown",
+        [
+            "Exporter en Markdown",
+            "Esporta Markdown",
+            "Exportar Markdown",
+            "Exportar Markdown",
+            "Markdown exportieren",
+            "Markdown exportálása",
+        ],
+    ),
+    (
+        "Export the votes (JSONL)",
+        [
+            "Exporter les votes (JSONL)",
+            "Esporta i voti (JSONL)",
+            "Exportar los votos (JSONL)",
+            "Exportar os votos (JSONL)",
+            "Stimmen exportieren (JSONL)",
+            "Szavazatok exportálása (JSONL)",
+        ],
+    ),
+    (
+        "Keep the question text in the history",
+        [
+            "Garder le texte des questions dans l'historique",
+            "Conserva il testo delle domande nella cronologia",
+            "Guardar el texto de las preguntas en el historial",
+            "Guardar o texto das perguntas no histórico",
+            "Fragetext im Verlauf behalten",
+            "A kérdések szövegének megőrzése az előzményekben",
+        ],
+    ),
+    (
+        "There are no votes yet. Run a duel in the “Arena” tab.",
+        [
+            "Il n'y a pas encore de vote. Lancez un duel dans l'onglet « Arène ».",
+            "Non ci sono ancora voti. Fai un duello nella scheda «Arena».",
+            "Todavía no hay votos. Haz un duelo en la pestaña «Arena».",
+            "Ainda não há votos. Faz um duelo no separador «Arena».",
+            "Es gibt noch keine Stimmen. Starte ein Duell im Tab „Arena“.",
+            "Még nincs szavazat. Indíts egy párbajt az „Aréna” fülön.",
+        ],
+    ),
+    (
+        "Rank",
+        [
+            "Rang",
+            "Posizione",
+            "Puesto",
+            "Posição",
+            "Platz",
+            "Helyezés",
+        ],
+    ),
+    (
+        "Model",
+        [
+            "Modèle",
+            "Modello",
+            "Modelo",
+            "Modelo",
+            "Modell",
+            "Modell",
+        ],
+    ),
+    (
+        "Rating",
+        [
+            "Score",
+            "Punteggio",
+            "Puntuación",
+            "Pontuação",
+            "Wertung",
+            "Pontszám",
+        ],
+    ),
+    (
+        "Duels",
+        [
+            "Duels",
+            "Duelli",
+            "Duelos",
+            "Duelos",
+            "Duelle",
+            "Párbajok",
+        ],
+    ),
+    (
+        "Wins",
+        [
+            "Victoires",
+            "Vittorie",
+            "Victorias",
+            "Vitórias",
+            "Siege",
+            "Győzelmek",
+        ],
+    ),
+    (
+        "Draws",
+        [
+            "Égalités",
+            "Pareggi",
+            "Empates",
+            "Empates",
+            "Unentschieden",
+            "Döntetlenek",
+        ],
+    ),
+    (
+        "Losses",
+        [
+            "Défaites",
+            "Sconfitte",
+            "Derrotas",
+            "Derrotas",
+            "Niederlagen",
+            "Vereségek",
+        ],
+    ),
+    (
+        "Ratings start at 1000 and are recomputed from the history (Elo, K = 32). With few duels, small differences mean nothing.",
+        [
+            "Les scores partent de 1000 et sont recalculés à partir de l'historique (Elo, K = 32). Avec peu de duels, les petits écarts ne signifient rien.",
+            "I punteggi partono da 1000 e si ricalcolano dalla cronologia (Elo, K = 32). Con pochi duelli, le piccole differenze non significano nulla.",
+            "Las puntuaciones parten de 1000 y se recalculan desde el historial (Elo, K = 32). Con pocos duelos, las diferencias pequeñas no significan nada.",
+            "As pontuações partem de 1000 e são recalculadas a partir do histórico (Elo, K = 32). Com poucos duelos, as diferenças pequenas não significam nada.",
+            "Die Wertungen beginnen bei 1000 und werden aus dem Verlauf neu berechnet (Elo, K = 32). Bei wenigen Duellen bedeuten kleine Unterschiede nichts.",
+            "A pontszámok 1000-ről indulnak, és az előzményekből számolódnak újra (Elo, K = 32). Kevés párbajnál a kis különbségek semmit sem jelentenek.",
+        ],
+    ),
+    (
+        "Any server that speaks the OpenAI chat protocol, on this computer or on your network (colibri, Ollama, LM Studio, llama.cpp…). The address starts with http://.",
+        [
+            "Tout serveur parlant le protocole de chat OpenAI, sur cet ordinateur ou sur votre réseau (colibri, Ollama, LM Studio, llama.cpp…). L'adresse commence par http://.",
+            "Qualsiasi server che parli il protocollo chat OpenAI, su questo computer o sulla tua rete (colibri, Ollama, LM Studio, llama.cpp…). L'indirizzo inizia con http://.",
+            "Cualquier servidor que hable el protocolo de chat de OpenAI, en este ordenador o en tu red (colibri, Ollama, LM Studio, llama.cpp…). La dirección empieza por http://.",
+            "Qualquer servidor que fale o protocolo de chat da OpenAI, neste computador ou na tua rede (colibri, Ollama, LM Studio, llama.cpp…). O endereço começa por http://.",
+            "Jeder Server, der das OpenAI-Chatprotokoll spricht, auf diesem Computer oder in deinem Netzwerk (colibri, Ollama, LM Studio, llama.cpp…). Die Adresse beginnt mit http://.",
+            "Bármely, az OpenAI csevegőprotokollt beszélő szerver ezen a gépen vagy a hálózatodon (colibri, Ollama, LM Studio, llama.cpp…). A cím http://-sel kezdődik.",
+        ],
+    ),
+    (
+        "Remove",
+        [
+            "Retirer",
+            "Rimuovi",
+            "Quitar",
+            "Remover",
+            "Entfernen",
+            "Eltávolítás",
+        ],
+    ),
+    (
+        "Add a model",
+        [
+            "Ajouter un modèle",
+            "Aggiungi un modello",
+            "Añadir un modelo",
+            "Adicionar um modelo",
+            "Modell hinzufügen",
+            "Modell hozzáadása",
+        ],
+    ),
+    (
+        "Display name",
+        [
+            "Nom affiché",
+            "Nome visualizzato",
+            "Nombre mostrado",
+            "Nome apresentado",
+            "Anzeigename",
+            "Megjelenített név",
+        ],
+    ),
+    (
+        "Server address, e.g. http://127.0.0.1:8000",
+        [
+            "Adresse du serveur, p. ex. http://127.0.0.1:8000",
+            "Indirizzo del server, ad es. http://127.0.0.1:8000",
+            "Dirección del servidor, p. ej. http://127.0.0.1:8000",
+            "Endereço do servidor, p. ex. http://127.0.0.1:8000",
+            "Serveradresse, z. B. http://127.0.0.1:8000",
+            "A szerver címe, pl. http://127.0.0.1:8000",
+        ],
+    ),
+    (
+        "Model name",
+        [
+            "Nom du modèle",
+            "Nome del modello",
+            "Nombre del modelo",
+            "Nome do modelo",
+            "Modellname",
+            "A modell neve",
+        ],
+    ),
+    (
+        "Add the model running now",
+        [
+            "Ajouter le modèle en cours d'exécution",
+            "Aggiungi il modello in esecuzione ora",
+            "Añadir el modelo que se ejecuta ahora",
+            "Adicionar o modelo em execução agora",
+            "Das jetzt laufende Modell hinzufügen",
+            "A most futó modell hozzáadása",
+        ],
+    ),
+    (
+        "The address is not valid: only http:// servers on this computer or your own network.",
+        [
+            "L'adresse n'est pas valide : uniquement des serveurs http:// sur cet ordinateur ou votre réseau.",
+            "L'indirizzo non è valido: solo server http:// su questo computer o sulla tua rete.",
+            "La dirección no es válida: solo servidores http:// de este ordenador o de tu red.",
+            "O endereço não é válido: apenas servidores http:// neste computador ou na tua rede.",
+            "Die Adresse ist ungültig: nur http://-Server auf diesem Computer oder in deinem Netzwerk.",
+            "A cím érvénytelen: csak ezen a gépen vagy a saját hálózatodon lévő http:// szerverek.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
@@ -9469,7 +9931,6 @@ pub fn lookup(lang: Lang, english: &str) -> Option<&'static str> {
 
 /// The ready-made questions for comparing models, in the given language: Romanian and
 /// Hungarian have their own sets; the other languages translate the English set line by line.
-#[allow(dead_code)] // used by the model duel screen, which is not wired yet
 pub fn demo_set(lang: Lang) -> String {
     use companion_core::duel;
     match lang {
@@ -10157,6 +10618,7 @@ mod tests {
             include_str!("prompts_ui.rs"),
             include_str!("online_ui.rs"),
             include_str!("studio_ui.rs"),
+            include_str!("duel_ui.rs"),
             include_str!("access_ui.rs"),
             include_str!("flows_ui.rs"),
             include_str!("memory_ui.rs"),

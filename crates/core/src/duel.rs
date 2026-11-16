@@ -169,6 +169,27 @@ impl Book {
             + "\n"
     }
 
+    /// The leaderboard as a Markdown table, for pasting into a note or a report.
+    pub fn leaderboard_markdown(&self, category: &str) -> String {
+        let mut out = String::from(
+            "| # | model | rating | duels | wins | draws | losses |\n|---|---|---|---|---|---|---|\n",
+        );
+        for (i, r) in self.leaderboard(category).iter().enumerate() {
+            let name = r.name.replace('|', "\\|").replace('\n', " ");
+            out.push_str(&format!(
+                "| {} | {} | {:.0} | {} | {} | {} | {} |\n",
+                i + 1,
+                name,
+                r.rating,
+                r.duels,
+                r.wins,
+                r.draws,
+                r.losses
+            ));
+        }
+        out
+    }
+
     pub fn leaderboard_csv(&self, category: &str) -> String {
         let mut out = String::from("model,rating,duels,wins,draws,losses\n");
         for r in self.leaderboard(category) {
@@ -210,6 +231,29 @@ pub fn coin(counter: u64) -> bool {
     x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
     x ^= x >> 33;
     x & 1 == 1
+}
+
+/// Two different models out of `n` (at least 2), chosen by fair coins; the first is shown as A.
+pub fn pick_two(n: usize, counter: u64) -> (usize, usize) {
+    debug_assert!(n >= 2);
+    let bits = usize::BITS - (n.max(2) - 1).leading_zeros();
+    let mut k = 0u64;
+    let mut draw = || loop {
+        let mut v = 0usize;
+        for _ in 0..bits {
+            k += 1;
+            v = (v << 1) | usize::from(coin(counter.wrapping_mul(31).wrapping_add(k)));
+        }
+        if v < n {
+            return v;
+        }
+    };
+    let a = draw();
+    let mut b = draw();
+    while b == a {
+        b = draw();
+    }
+    (a, b)
 }
 
 /// Lines of `category | prompt` or plain `prompt`; empty lines and `#` comments are skipped.
@@ -287,6 +331,33 @@ Fordítás | Fordítsd románra: «Semmi gond, megoldjuk.»
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pairs_are_two_different_models_and_both_sides_occur() {
+        let mut firsts = [0u32; 3];
+        for c in 0..300u64 {
+            let (a, b) = super::pick_two(3, c);
+            assert!(a < 3 && b < 3 && a != b);
+            firsts[a] += 1;
+        }
+        assert!(firsts.iter().all(|&n| n > 40), "{firsts:?}");
+    }
+
+    #[test]
+    fn markdown_table_has_a_row_per_model() {
+        let mut b = super::Book::default();
+        b.record(super::Record {
+            at: 1,
+            category: String::new(),
+            a: "x|y".into(),
+            b: "z".into(),
+            vote: super::Vote::A,
+            prompt: String::new(),
+        });
+        let md = b.leaderboard_markdown("");
+        assert_eq!(md.lines().count(), 4);
+        assert!(md.contains("x\\|y"));
+    }
+
     use super::*;
 
     fn rec(a: &str, b: &str, v: Vote, cat: &str) -> Record {
