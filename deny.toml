@@ -17,3 +17,16 @@ multiple-versions = "allow"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+
+# Known advisories, all in the Linux screen-reader stack (eframe -> accesskit_unix -> zbus), which
+# reads XML only from the local D-Bus session and is pinned there to quick-xml 0.38 until
+# accesskit moves on. The program does not use quick-xml itself: Office files are unpacked by a
+# short Python script, never by this crate. Review again at every accesskit update.
+[advisories]
+ignore = [
+  { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.38 only parses local D-Bus introspection XML (screen reader)" },
+  { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.38 only parses local D-Bus introspection XML (screen reader)" },
+  { id = "RUSTSEC-2026-0370", reason = "zbus stack is unmaintained; used only by the Linux screen-reader bridge" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus stack is unmaintained; used only by the Linux screen-reader bridge" },
+  { id = "RUSTSEC-2026-0372", reason = "zbus stack is unmaintained; used only by the Linux screen-reader bridge" },
+]

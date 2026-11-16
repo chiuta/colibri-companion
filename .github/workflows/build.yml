@@ -17,6 +17,15 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with: { command: check licenses }
 
+  advisories:
+    # Informational: a new advisory shows up here without stopping a release.
+    runs-on: ubuntu-26.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with: { command: check advisories }
+
   build:
     needs: licenses
     strategy:
