@@ -170,6 +170,8 @@ pub struct Settings {
     pub font_scale: f32,
     /// Options for people with disabilities.
     pub access: crate::access::Access,
+    /// Give the model pinned notes and fragments of earlier conversations.
+    pub memory_on: bool,
     pub colibri_root: Option<PathBuf>,
     pub models_dir: Option<PathBuf>,
     /// Where the OpenAI-compatible server is. Default: colibri's own.
@@ -200,6 +202,7 @@ impl Default for Settings {
             theme: Theme::Light,
             font_scale: 1.1,
             access: Default::default(),
+            memory_on: true,
             colibri_root: None,
             models_dir: None,
             server_url: "http://127.0.0.1:8000".into(),
@@ -266,6 +269,12 @@ pub struct Conversation {
     pub messages: Vec<StoredMessage>,
     /// Set when the person renamed it: the title is then never rewritten from the first message.
     pub title_custom: bool,
+    /// Running summary of the oldest messages, for conversations too long for the model's window.
+    #[serde(default)]
+    pub summary: String,
+    /// How many messages the summary covers.
+    #[serde(default)]
+    pub summary_upto: usize,
 }
 
 impl Conversation {
@@ -282,6 +291,8 @@ impl Conversation {
             updated: now,
             messages: Vec::new(),
             title_custom: false,
+            summary: String::new(),
+            summary_upto: 0,
         }
     }
 
@@ -488,6 +499,8 @@ impl ConversationStore {
                 updated: m.updated,
                 messages: Vec::new(),
                 title_custom: m.title_custom,
+                summary: String::new(),
+                summary_upto: 0,
             })
             .collect();
         all.sort_by_key(|c| std::cmp::Reverse(c.updated));

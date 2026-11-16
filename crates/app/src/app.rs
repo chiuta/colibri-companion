@@ -51,6 +51,12 @@ pub enum Event {
         result: Result<Vec<u8>, companion_core::connect::ConnectError>,
     },
     Picture(Result<PathBuf, String>),
+    Memory(Box<(companion_core::memory::Index, companion_core::memory::Graph)>),
+    Summary {
+        conv: String,
+        upto: usize,
+        result: Result<String, String>,
+    },
     FlowLog(String),
     FlowNotify(String),
     FlowApprove(String, std::sync::mpsc::Sender<bool>),
@@ -282,6 +288,7 @@ pub struct CompanionApp {
     pub studio: crate::studio_ui::StudioState,
     pub access: crate::access_ui::AccessState,
     pub flows: crate::flows_ui::FlowState,
+    pub memory: crate::memory_ui::MemoryState,
     pub sheets: crate::sheets_ui::SheetState,
     pub existing_path: String,
     pub show_models: bool,
@@ -378,6 +385,7 @@ impl CompanionApp {
             studio: Default::default(),
             access: Default::default(),
             flows: Default::default(),
+            memory: Default::default(),
             sheets: Default::default(),
             existing_path: String::new(),
             show_models: false,
@@ -1300,11 +1308,7 @@ impl CompanionApp {
             .map(|(_, url, _)| url)
             .collect();
         let docs = std::mem::take(&mut self.chat.pending_docs);
-        let budget = self
-            .facts()
-            .and_then(|f| f.context_tokens)
-            .map_or(24_000, |c| (c as usize).saturating_mul(3) / 2)
-            .clamp(6_000, 3_000_000);
+        let budget = self.context_budget();
         let mut parts = companion_core::attach::plan_parts(&text, &docs, budget);
         if parts.len() > 1 {
             self.toast(
@@ -1637,15 +1641,17 @@ impl CompanionApp {
         let cancel = CancelToken::new();
         let mut messages = Vec::new();
         let system = companion_core::prompts::with_style(&self.s.system_prompt, self.prompts.style);
+        let system_chars = system.chars().count();
+        let (extra, rest, _dropped) = self.memory_messages(system_chars);
+        let system = match (system.is_empty(), extra.is_empty()) {
+            (_, true) => system,
+            (true, false) => extra,
+            (false, false) => format!("{system}\n\n{extra}"),
+        };
         if !system.is_empty() {
             messages.push(ChatMessage::new("system", system));
         }
-        let n = self.chat.conv.messages.len().saturating_sub(1); // all but the empty placeholder
-        messages.extend(self.chat.conv.messages[..n].iter().map(|m| {
-            let mut c = ChatMessage::new(&m.role, m.content.clone());
-            c.images = m.images.clone();
-            c
-        }));
+        messages.extend(rest);
         let req = ChatRequest {
             model: self.model_id.clone().unwrap_or_else(|| "colibri".into()),
             messages,
@@ -1811,6 +1817,8 @@ impl CompanionApp {
             Event::Npu(n) => self.npu = n,
             Event::Attached { name, result } => self.attached(name, result),
             Event::Picture(r) => self.picture_done(r),
+            Event::Memory(b) => self.memory_built(*b),
+            Event::Summary { conv, upto, result } => self.summary_done(conv, upto, result),
             Event::FlowLog(l) => {
                 self.flows.log.push(l);
                 let n = self.flows.log.len();
@@ -1932,6 +1940,10 @@ impl CompanionApp {
                         }
                     }
                     self.finish_assistant_message();
+                    self.memory.dirty = true;
+                    if self.chat.error.is_none() {
+                        self.maybe_summarise();
+                    }
                     if self.chat.error.is_none() {
                         if let Some(m) = self.chat.conv.messages.last() {
                             if m.role == "assistant" && !m.stopped && !m.content.is_empty() {
@@ -1976,6 +1988,7 @@ impl CompanionApp {
             self.applied_look = Some(look);
         }
         self.flows_tick();
+        self.memory_tick();
         self.sync_poller();
         if self.show_resources {
             self.sync_resource_targets();

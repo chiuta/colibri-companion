@@ -16,6 +16,7 @@ pub mod fetch;
 pub mod flows;
 pub mod http;
 pub mod locate;
+pub mod memory;
 pub mod models;
 pub mod net;
 pub mod npu;

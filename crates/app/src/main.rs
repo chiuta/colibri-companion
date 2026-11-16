@@ -8,6 +8,7 @@ mod demo;
 mod flows_ui;
 mod guide_ui;
 mod i18n;
+mod memory_ui;
 mod models_ui;
 mod online_ui;
 mod prompts_ui;
@@ -167,6 +168,12 @@ impl CompanionApp {
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::P)) {
             self.open_prompts();
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::M)) {
+            self.memory.open = !self.memory.open;
+            if self.memory.open {
+                self.open_memory();
+            }
         }
         let cs = Modifiers::COMMAND | Modifiers::SHIFT;
         if ctx.input_mut(|i| i.consume_key(cs, Key::A)) {

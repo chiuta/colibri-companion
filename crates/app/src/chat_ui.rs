@@ -13,6 +13,7 @@ use egui::{
 
 enum MsgAction {
     Copy(String),
+    Pin(String),
     Speak(String),
     StopSpeaking,
     Regenerate,
@@ -329,6 +330,7 @@ impl CompanionApp {
         );
         let w_edit = self.t("Editează", "Edit");
         let w_speak = self.t("Citește cu voce", "Read aloud");
+        let w_pin = self.t("Ține minte", "Remember");
         let w_unspeak = self.t("Oprește citirea", "Stop reading");
         let speaking = self.is_speaking();
         let last_user = self
@@ -484,6 +486,9 @@ impl CompanionApp {
                                 if ui.small_button(w_copy).clicked() {
                                     action = Some(MsgAction::Copy(m.content.clone()));
                                 }
+                                if ui.small_button(w_pin).clicked() {
+                                    action = Some(MsgAction::Pin(m.content.clone()));
+                                }
                                 if speaking && last {
                                     if ui.small_button(w_unspeak).clicked() {
                                         action = Some(MsgAction::StopSpeaking);
@@ -512,6 +517,7 @@ impl CompanionApp {
                 ui.ctx().copy_text(text);
                 self.toast(self.t("Copiat în clipboard", "Copied to the clipboard"));
             }
+            Some(MsgAction::Pin(text)) => self.pin_text(&text),
             Some(MsgAction::Speak(text)) => self.speak(&text),
             Some(MsgAction::StopSpeaking) => self.stop_speaking(),
             Some(MsgAction::Regenerate) => self.regenerate(),

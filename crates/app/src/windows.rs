@@ -45,6 +45,10 @@ impl CompanionApp {
                                 (self.t("Catalog de platforme", "Platform catalogue"), 7),
                                 (self.t("Modele creative", "Creative models"), 8),
                                 (self.t("Automatizări", "Automations"), 9),
+                                (
+                                    self.t("Memorie și constelație", "Memory and constellation"),
+                                    10,
+                                ),
                             ] {
                                 if self.s.access.simple_menus
                                     && matches!(which, 0 | 1 | 6 | 7 | 8 | 9)
@@ -62,6 +66,7 @@ impl CompanionApp {
                                         7 => self.open_catalog(),
                                         8 => self.open_studio(),
                                         9 => self.open_flows(),
+                                        10 => self.open_memory(),
                                         _ => self.guide.legal = true,
                                     }
                                     ui.close();
@@ -221,6 +226,7 @@ impl CompanionApp {
         self.studio_window(ctx);
         self.access_window(ctx);
         self.flows_window(ctx);
+        self.memory_window(ctx);
         self.sheet_windows(ctx);
         self.about_window(ctx);
         self.logs_window(ctx);
