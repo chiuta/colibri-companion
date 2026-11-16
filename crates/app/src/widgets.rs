@@ -70,7 +70,10 @@ pub fn pill(ui: &mut Ui, text: &str, fg: Color32, bg: Color32) {
         .corner_radius(CornerRadius::same(20))
         .inner_margin(Margin::symmetric(10, 3))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).color(fg).size(13.0).semibold());
+            // cut with "…" when there is not enough room, never drawn over a neighbour
+            ui.add(
+                egui::Label::new(RichText::new(text).color(fg).size(13.0).semibold()).truncate(),
+            );
         });
 }
 
@@ -189,37 +192,109 @@ pub fn set_number_lang(l: companion_core::Lang) {
 }
 
 /// A number with units as English writes it ("19.4 GB") in the reader's way: a decimal comma in
-/// every language except English, and the French octet units (Go, Mo, To, ko). Only a dot
-/// between two digits is touched, so text around the number is left alone.
+/// every language except English, and the French octet units (Go, Mo, To, ko).
+///
+/// Only a dot that is clearly a decimal point is changed. These are left exactly as they are:
+/// versions and addresses (`v0.1.0`, `192.168.0.1`), file names and paths (`model-1.5.gguf`,
+/// `2.5.pdf`, `dir/1.5/x`), names with a number glued to letters (`qwen3.5-4b`, `LFM2.5`), and
+/// the dots of a sentence. This still cannot tell a decimal from a version written with a space
+/// ("Apache 2.0"), so callers pass only the numbers they format themselves, never a name or a
+/// translated sentence.
 pub fn localise_number(s: &str, lang_index: u8) -> String {
     if lang_index == 1 || lang_index > 7 {
         return s.to_string();
     }
-    let chars: Vec<char> = s.chars().collect();
+    let c: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
-    for (i, c) in chars.iter().enumerate() {
-        let between_digits = *c == '.'
-            && i > 0
-            && chars[i - 1].is_ascii_digit()
-            && chars.get(i + 1).is_some_and(char::is_ascii_digit);
-        out.push(if between_digits { ',' } else { *c });
-    }
-    if lang_index == 2 {
-        for (from, to) in [
-            (" GB", " Go"),
-            (" MB", " Mo"),
-            (" TB", " To"),
-            (" kB", " ko"),
-        ] {
-            out = out.replace(from, to);
+    let mut i = 0;
+    while i < c.len() {
+        if !c[i].is_ascii_digit() {
+            out.push(c[i]);
+            i += 1;
+            continue;
+        }
+        // a whole run of digits, and a fraction if one follows
+        let start = i;
+        while i < c.len() && c[i].is_ascii_digit() {
+            i += 1;
+        }
+        out.extend(&c[start..i]);
+        if i + 1 < c.len() && c[i] == '.' && c[i + 1].is_ascii_digit() {
+            let mut k = i + 1;
+            while k < c.len() && c[k].is_ascii_digit() {
+                k += 1;
+            }
+            if decimal_context(&c, start, k) {
+                out.push(',');
+                out.extend(&c[i + 1..k]);
+                i = k;
+            }
+        }
+        if lang_index == 2 {
+            i = french_unit(&c, i, &mut out);
         }
     }
     out
 }
 
+/// Is the number `c[start..end]` (with a dot inside) a plain decimal, judged by what surrounds it?
+fn decimal_context(c: &[char], start: usize, end: usize) -> bool {
+    if start > 0 {
+        let prev = c[start - 1];
+        if prev.is_alphanumeric() || matches!(prev, '.' | '_' | '/' | '\\' | '#' | '@' | ':') {
+            return false;
+        }
+        // "qwen-3.5" is a name, "x -3.5" and "1.5-2.5" are numbers
+        if prev == '-' && start >= 2 && c[start - 2].is_alphabetic() {
+            return false;
+        }
+    }
+    match c.get(end) {
+        None => true,
+        // "1.2.3", "192.168.0.1", "report2.5.pdf": more dotted parts or an extension follow
+        Some('.') => !c.get(end + 1).is_some_and(|n| n.is_alphanumeric()),
+        Some('_') => false,
+        // "3.5-turbo" is a name; "1.5-2.5" is a range
+        Some('-') => !c.get(end + 1).is_some_and(|n| n.is_alphabetic()),
+        // a unit glued to the number ("5.1B", "25.0MB/s"), not a word or a hash
+        Some(ch) if ch.is_alphabetic() => {
+            let n = c[end..].iter().take_while(|x| x.is_alphabetic()).count();
+            // "2.6B-GGUF" and "1.5beta" are names, not figures
+            n <= 3 && !matches!(c.get(end + n), Some('-' | '_' | '0'..='9'))
+        }
+        Some(_) => true,
+    }
+}
+
+/// French octet units after a number: " GB" -> " Go" (only as a whole word). Returns the new index.
+fn french_unit(c: &[char], at: usize, out: &mut String) -> usize {
+    if c.get(at) != Some(&' ') {
+        return at;
+    }
+    let unit: String = c.iter().skip(at + 1).take(2).collect();
+    let to = match unit.as_str() {
+        "GB" => "Go",
+        "MB" => "Mo",
+        "TB" => "To",
+        "kB" => "ko",
+        _ => return at,
+    };
+    if c.get(at + 3).is_some_and(|n| n.is_alphanumeric()) {
+        return at;
+    }
+    out.push(' ');
+    out.push_str(to);
+    at + 3
+}
+
 /// [`localise_number`] for the language set with [`set_number_lang`].
 pub fn loc(s: String) -> String {
     localise_number(&s, NUMBER_LANG.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// "3.3 GB" with one decimal, written the reader's way. For a number only, never a name.
+pub fn gb1(gb: f64) -> String {
+    loc(format!("{gb:.1} GB"))
 }
 
 pub fn fmt_gb(gb: f64) -> String {
@@ -260,6 +335,96 @@ pub fn fit(ctx: &egui::Context, w: f32, h: f32) -> egui::Vec2 {
     egui::vec2(w.min(r.width() - 24.0), h.min(r.height() - 56.0))
 }
 
+/// Helpers for tests that draw a window headless and look at what was drawn.
+#[cfg(test)]
+pub(crate) mod testkit {
+    use egui::epaint::{ClippedShape, Shape};
+    use egui::{Pos2, Rect, vec2};
+
+    /// One piece of text as drawn: where it is, and the clip rectangle it was drawn into.
+    #[derive(Clone, Debug)]
+    pub struct Drawn {
+        pub rect: Rect,
+        pub clip: Rect,
+        pub text: String,
+    }
+
+    fn collect(shape: &Shape, clip: Rect, out: &mut Vec<Drawn>) {
+        match shape {
+            Shape::Vec(v) => v.iter().for_each(|s| collect(s, clip, out)),
+            Shape::Text(t) => {
+                // One entry per line of the text, and the box of the letters themselves: a galley's
+                // own rectangle also covers the indent a wrapped line starts with, which is empty
+                // space, not text. A title that wraps beside a button is judged line by line.
+                for placed in &t.galley.rows {
+                    let (Some(first), Some(last)) =
+                        (placed.row.glyphs.first(), placed.row.glyphs.last())
+                    else {
+                        continue;
+                    };
+                    let origin = t.pos + placed.pos.to_vec2();
+                    let rect = Rect::from_min_max(
+                        origin + vec2(first.pos.x, 0.0),
+                        origin + vec2(last.pos.x + last.advance_width, placed.row.size.y),
+                    );
+                    let line: String = placed.row.glyphs.iter().map(|g| g.chr).collect();
+                    if !line.trim().is_empty() {
+                        out.push(Drawn {
+                            rect,
+                            clip,
+                            text: line,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn texts(shapes: &[ClippedShape]) -> Vec<Drawn> {
+        let mut out = Vec::new();
+        for c in shapes {
+            collect(&c.shape, c.clip_rect, &mut out);
+        }
+        out
+    }
+
+    /// Runs one frame of `add` on a screen of `w` x `h` and returns the text that was drawn.
+    pub fn draw(ctx: &egui::Context, w: f32, h: f32, add: impl FnMut(&mut egui::Ui)) -> Vec<Drawn> {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(w, h))),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, add);
+        out.textures_delta.clear();
+        texts(&out.shapes)
+    }
+
+    /// Text cut off by its clip rectangle (more than a pixel of it is hidden).
+    pub fn clipped(all: &[Drawn]) -> Vec<&Drawn> {
+        all.iter()
+            .filter(|d| {
+                d.rect.right() > d.clip.right() + 1.0 || d.rect.left() < d.clip.left() - 1.0
+            })
+            .collect()
+    }
+
+    /// Pairs of texts that cover each other by more than a pixel in both directions.
+    pub fn overlapping(all: &[Drawn]) -> Vec<(&Drawn, &Drawn)> {
+        let mut v = Vec::new();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                let x = a.rect.right().min(b.rect.right()) - a.rect.left().max(b.rect.left());
+                let y = a.rect.bottom().min(b.rect.bottom()) - a.rect.top().max(b.rect.top());
+                if x > 1.0 && y > 1.0 {
+                    v.push((a, b));
+                }
+            }
+        }
+        v
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +442,58 @@ mod tests {
     }
 
     #[test]
+    fn only_real_decimals_change_and_nothing_else_is_corrupted() {
+        let untouched = [
+            "v0.1.0",
+            "version 0.2.0-pre.65",
+            "legatorocr 0.2.0-pre.65",
+            "192.168.0.1",
+            "http://127.0.0.1:8000/v1",
+            "qwen3.5-4b",
+            "ollama run qwen3.5:4b",
+            "Qwen3.5 4B",
+            "LFM2.5 2.6B-GGUF",
+            "gpt-3.5-turbo",
+            "model-1.5.gguf",
+            "2.5.pdf",
+            "report2.5.pdf",
+            "/home/ana/1.5/notes.txt",
+            "C:\\Users\\Ana\\1.5\\notes.txt",
+            "sha 3f2.5ab9",
+            "256K (262,144)",
+            "Done. 3 files",
+            "See section 2.1.3 for details",
+        ];
+        for lang in [0u8, 2, 3, 4, 5, 6, 7] {
+            for s in untouched {
+                assert_eq!(localise_number(s, lang), s, "lang {lang}: {s}");
+            }
+        }
+        for (from, to) in [
+            ("19.4 GB", "19,4 GB"),
+            ("12.5 / 16.0 GB", "12,5 / 16,0 GB"),
+            ("(3.3 GB)", "(3,3 GB)"),
+            ("5.1B (2.3B effective)", "5,1B (2,3B effective)"),
+            ("1.5-2.5 GB", "1,5-2,5 GB"),
+            ("about 3.5.", "about 3,5."),
+            ("x -0.5 y", "x -0,5 y"),
+            ("12.5%", "12,5%"),
+            ("30.5 tok/s", "30,5 tok/s"),
+        ] {
+            assert_eq!(localise_number(from, 0), to);
+        }
+        // French units only after a number and only as a whole word
+        assert_eq!(localise_number("3.3 GB (Qwen3.5)", 2), "3,3 Go (Qwen3.5)");
+        assert_eq!(localise_number("429 GB / 1.5 TB", 2), "429 Go / 1,5 To");
+        assert_eq!(
+            localise_number("GB are units; 5 GBP", 2),
+            "GB are units; 5 GBP"
+        );
+        assert_eq!(localise_number("8 MBR", 2), "8 MBR");
+        assert_eq!(localise_number("25.0 MB/s", 2), "25,0 Mo/s");
+    }
+
+    #[test]
     fn numbers_are_written_the_readers_way() {
         // 0 = Romanian, 1 = English, 2 = French, 6 = German
         assert_eq!(localise_number("19.4 GB", 1), "19.4 GB");
@@ -290,7 +507,7 @@ mod tests {
         // text around a number, versions and sentence dots stay as they are
         assert_eq!(
             localise_number("v0.1.0 ready. Next", 6),
-            "v0,1,0 ready. Next"
+            "v0.1.0 ready. Next"
         );
         assert_eq!(localise_number("Done. 3 files", 6), "Done. 3 files");
         assert_eq!(localise_number("19.4 GB", 200), "19.4 GB");

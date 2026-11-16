@@ -369,6 +369,10 @@ impl CompanionApp {
         let w_edit = self.t("Editează", "Edit");
         let w_branch = self.t("Ramifică de aici", "Branch from here");
         let w_usage = self.t("Consum", "Usage");
+        let w_usage_help = self.t(
+            "Arată tokenii, viteza și încărcarea calculatorului pentru acest răspuns",
+            "Show the tokens, speed and machine load of this answer",
+        );
         let w_speak = self.t("Citește cu voce tare", "Read aloud");
         let w_pin = self.t("Reține", "Remember");
         let w_unspeak = self.t("Oprește citirea", "Stop reading");
@@ -561,7 +565,10 @@ impl CompanionApp {
                                     ui.label(RichText::new(stats).small().color(p.muted));
                                 }
                                 if let Some(st) = &m.stats
-                                    && ui.small_button(w_usage).clicked()
+                                    && ui
+                                        .small_button(w_usage)
+                                        .on_hover_text(w_usage_help)
+                                        .clicked()
                                 {
                                     action = Some(MsgAction::Usage(Box::new(st.clone())));
                                 }
@@ -584,6 +591,7 @@ impl CompanionApp {
                 self.meter.shown = Some(*st);
                 self.meter.shown_history.clear();
                 self.meter.open = true;
+                self.meter.dismissed = false;
             }
             Some(MsgAction::Pin(text)) => self.pin_text(&text),
             Some(MsgAction::Speak(text)) => self.speak(&text),

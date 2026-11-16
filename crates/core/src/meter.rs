@@ -45,6 +45,36 @@ pub struct Sample {
 }
 
 impl Sample {
+    /// The same reading with every figure made usable: a NaN, an infinity or a negative number
+    /// (a driver or a hand-built value can give one) becomes "unknown" or zero, and percentages
+    /// stay within 0..100, so one bad reading can never poison a peak for the rest of the answer.
+    pub fn sanitized(self) -> Sample {
+        fn pct(x: f32) -> f32 {
+            if x.is_finite() {
+                x.clamp(0.0, 100.0)
+            } else {
+                0.0
+            }
+        }
+        fn opt32(x: Option<f32>) -> Option<f32> {
+            x.filter(|v| v.is_finite() && *v >= 0.0)
+        }
+        fn opt64(x: Option<f64>) -> Option<f64> {
+            x.filter(|v| v.is_finite() && *v >= 0.0)
+        }
+        Sample {
+            cpu_percent: pct(self.cpu_percent),
+            engine_cores: opt32(self.engine_cores),
+            engine_rss_gb: opt64(self.engine_rss_gb),
+            ram_used_gb: finite(self.ram_used_gb),
+            ram_total_gb: finite(self.ram_total_gb),
+            swap_used_gb: finite(self.swap_used_gb),
+            gpu_util_percent: opt32(self.gpu_util_percent).map(|g| g.min(100.0)),
+            vram_used_gb: opt64(self.vram_used_gb),
+            vram_total_gb: opt64(self.vram_total_gb),
+        }
+    }
+
     /// `engine_pid` is the process of the local engine, if there is one.
     pub fn from_snapshot(s: &Snapshot, engine_pid: Option<u32>) -> Sample {
         let engine = engine_pid.and_then(|pid| s.procs.iter().find(|p| p.pid == pid));
@@ -94,14 +124,17 @@ pub struct AnswerStats {
 impl AnswerStats {
     /// How much of the engine's context window this answer used (prompt plus answer), 0..1+.
     pub fn context_fill(&self) -> Option<f32> {
-        let used = self.prompt_tokens? + self.completion_tokens.unwrap_or(0);
+        // a hand-edited file can hold any number; adding must never overflow
+        let used = self
+            .prompt_tokens?
+            .saturating_add(self.completion_tokens.unwrap_or(0));
         let ctx = self.context_tokens.filter(|c| *c > 0)?;
         Some(used as f32 / ctx as f32)
     }
 
     /// Share of the written text that was "thinking", 0..1.
     pub fn reasoning_share(&self) -> Option<f32> {
-        let all = self.answer_chars + self.reasoning_chars;
+        let all = self.answer_chars.saturating_add(self.reasoning_chars);
         (all > 0).then(|| self.reasoning_chars as f32 / all as f32)
     }
 }
@@ -194,7 +227,6 @@ impl Meter {
             self.bin_start_ms = now_ms;
         }
         self.pieces += 1;
-        self.bin_pieces += 1;
         self.recent.push_back((now_ms, self.pieces));
         while self.recent.len() > MAX_RECENT
             || self
@@ -218,6 +250,8 @@ impl Meter {
             self.bin_pieces = 0;
             self.bin_start_ms = self.bin_start_ms.saturating_add(n.saturating_mul(BIN_MS));
         }
+        // this piece belongs to the bin that is open now, not to the one it just closed
+        self.bin_pieces += 1;
     }
 
     fn push_bin(&mut self, v: f32) {
@@ -229,17 +263,18 @@ impl Meter {
 
     /// A machine reading.
     pub fn sample(&mut self, s: Sample) {
+        let s = s.sanitized();
         self.samples = self.samples.saturating_add(1);
-        self.cpu_sum += f64::from(finite(f64::from(s.cpu_percent)) as f32);
+        self.cpu_sum += f64::from(s.cpu_percent);
         let p = &mut self.peaks;
-        p.cpu = p.cpu.max(s.cpu_percent.max(0.0));
+        p.cpu = p.cpu.max(s.cpu_percent);
         p.cores = max_opt(p.cores, s.engine_cores);
         p.rss = max_opt(p.rss, s.engine_rss_gb);
-        p.ram = p.ram.max(finite(s.ram_used_gb));
-        p.swap = p.swap.max(finite(s.swap_used_gb));
+        p.ram = p.ram.max(s.ram_used_gb);
+        p.swap = p.swap.max(s.swap_used_gb);
         if let Some(g) = s.gpu_util_percent {
-            self.gpu_sum += f64::from(g.max(0.0));
-            self.gpu_n += 1;
+            self.gpu_sum += f64::from(g);
+            self.gpu_n = self.gpu_n.saturating_add(1);
             p.gpu = max_opt(p.gpu, Some(g));
         }
         p.vram = max_opt(p.vram, s.vram_used_gb);
@@ -319,8 +354,8 @@ impl Meter {
                 s.prompt_tokens = sum.prompt_tokens;
             }
             if let Some(c) = sum.completion_tokens {
-                // a server that sends no usage gets the piece count from the stream code itself
-                s.tokens_estimated = c == self.pieces;
+                // the stream code says whether it counted pieces itself (a server without usage)
+                s.tokens_estimated = sum.completion_estimated;
                 s.completion_tokens = Some(c);
             }
             if sum.first_token_ms.is_some() {
@@ -480,6 +515,85 @@ mod tests {
         // a huge gap between two pieces does not loop for ever
         m.delta(u64::MAX / 2, Kind::Answer, "z");
         assert!(m.bins.len() <= MAX_BINS);
+    }
+
+    #[test]
+    fn a_steady_ten_a_second_stream_peaks_at_ten_not_more() {
+        // the piece that closes a half-second bin belongs to the next bin: peak must not read 12
+        let mut m = Meter::new(None);
+        feed(&mut m, 0, 101, 100);
+        let s = m.finish(10_000, None);
+        let peak = s.peak_tps.expect("peak");
+        assert!((peak - 10.0).abs() < 0.01, "{peak}");
+        assert!(m.live(10_000).tps_history.iter().all(|v| *v <= 10.01));
+    }
+
+    #[test]
+    fn one_bad_reading_cannot_poison_the_peaks() {
+        let mut m = Meter::new(None);
+        m.sample(Sample {
+            cpu_percent: f32::INFINITY,
+            engine_cores: Some(f32::NAN),
+            engine_rss_gb: Some(f64::NAN),
+            gpu_util_percent: Some(f32::NAN),
+            vram_used_gb: Some(f64::INFINITY),
+            vram_total_gb: Some(-4.0),
+            ..Sample::default()
+        });
+        m.sample(Sample {
+            cpu_percent: 40.0,
+            engine_cores: Some(2.0),
+            engine_rss_gb: Some(3.0),
+            gpu_util_percent: Some(50.0),
+            vram_used_gb: Some(1.5),
+            vram_total_gb: Some(8.0),
+            ..Sample::default()
+        });
+        let s = m.finish(1000, None);
+        assert_eq!(s.cpu_peak, Some(40.0));
+        assert_eq!(s.engine_cores_peak, Some(2.0));
+        assert_eq!(s.engine_rss_peak_gb, Some(3.0));
+        assert_eq!(s.gpu_peak, Some(50.0));
+        assert_eq!(s.vram_peak_gb, Some(1.5));
+        assert_eq!(s.vram_total_gb, Some(8.0));
+        // a percentage over 100 is clamped, never shown as 250 %
+        let over = Sample {
+            cpu_percent: 250.0,
+            ..Sample::default()
+        }
+        .sanitized();
+        assert_eq!(over.cpu_percent, 100.0);
+    }
+
+    #[test]
+    fn numbers_from_a_hand_edited_file_never_overflow() {
+        let s = AnswerStats {
+            prompt_tokens: Some(u64::MAX),
+            completion_tokens: Some(u64::MAX),
+            context_tokens: Some(10),
+            answer_chars: u64::MAX,
+            reasoning_chars: u64::MAX,
+            ..AnswerStats::default()
+        };
+        assert!(s.context_fill().is_some_and(f32::is_finite));
+        assert!(s.reasoning_share().is_some_and(f32::is_finite));
+    }
+
+    #[test]
+    fn server_count_that_equals_the_piece_count_is_still_the_servers() {
+        let mut m = Meter::new(None);
+        feed(&mut m, 0, 5, 10);
+        let reported = StreamSummary {
+            completion_tokens: Some(5),
+            total_ms: 100,
+            ..StreamSummary::default()
+        };
+        assert!(!m.finish(100, Some(&reported)).tokens_estimated);
+        let counted = StreamSummary {
+            completion_estimated: true,
+            ..reported
+        };
+        assert!(m.finish(100, Some(&counted)).tokens_estimated);
     }
 
     #[test]

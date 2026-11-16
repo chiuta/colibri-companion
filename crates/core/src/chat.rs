@@ -97,6 +97,9 @@ pub struct StreamSummary {
     pub finish_reason: Option<String>,
     pub prompt_tokens: Option<u64>,
     pub completion_tokens: Option<u64>,
+    /// `completion_tokens` was counted from the pieces received (the server sent no usage), so it
+    /// is an estimate, not a figure the server reported.
+    pub completion_estimated: bool,
     pub first_token_ms: Option<u64>,
     pub total_ms: u64,
     pub cancelled: bool,
@@ -502,6 +505,7 @@ impl ChatClient {
         summary.total_ms = started.elapsed().as_millis() as u64;
         if summary.completion_tokens.is_none() && chunks > 0 {
             summary.completion_tokens = Some(chunks); // one chunk is about one token
+            summary.completion_estimated = true;
         }
         Ok(summary)
     }
@@ -681,7 +685,34 @@ mod tests {
             (summary.prompt_tokens, summary.completion_tokens),
             (Some(5), Some(3))
         );
+        // the server reported the count: it is not an estimate, even if it equals the piece count
+        assert!(!summary.completion_estimated);
         assert!(!summary.cancelled);
+    }
+
+    #[test]
+    fn a_stream_without_usage_is_marked_as_estimated() {
+        let chunks = vec![
+            sse(json!({"choices":[{"delta":{"content":"a "}}]})),
+            sse(json!({"choices":[{"delta":{"content":"b"}}]})),
+            "data: [DONE]\n\n".to_string(),
+        ];
+        let (addr, h) = serve_once(chunks, 200);
+        let client = ChatClient::new(&addr, None);
+        let req = ChatRequest {
+            model: "m".into(),
+            messages: vec![ChatMessage::new("user", "x")],
+            temperature: 0.7,
+            top_p: 0.95,
+            max_tokens: None,
+            thinking: Thinking::Auto,
+        };
+        let summary = client
+            .stream_chat(&req, &CancelToken::new(), |_| {})
+            .unwrap();
+        h.join().unwrap();
+        assert_eq!(summary.completion_tokens, Some(2));
+        assert!(summary.completion_estimated);
     }
 
     #[test]

@@ -163,15 +163,16 @@ impl CompanionApp {
         ui.add_space(8.0);
         ui.label(RichText::new(self.t("Cine consumă", "Who is using it")).semibold());
         for pr in &s.procs {
-            ui.label(crate::widgets::loc(format!(
-                "{} — {}% {} · {:.2} GB RAM · {} {}",
+            // only the memory figure is localised: the label is a name, not a number
+            ui.label(format!(
+                "{} — {}% {} · {} RAM · {} {}",
                 pr.label,
                 pr.cpu_percent.round(),
                 self.t("din nucleu", "of a core"),
-                pr.rss_gb,
+                crate::widgets::loc(format!("{:.2} GB", pr.rss_gb)),
                 pr.processes,
                 self.t("procese", "processes")
-            )));
+            ));
         }
         if s.procs.len() < 2 {
             muted(

@@ -207,7 +207,20 @@ fn kill_group(child: &std::process::Child) {
             .status();
     }
 }
-#[cfg(not(unix))]
+/// Windows has no process groups to signal: `taskkill /T` ends the program and everything it
+/// started (an OCR program that runs its own helpers would otherwise outlive a Stop or a timeout).
+#[cfg(windows)]
+fn kill_group(child: &std::process::Child) {
+    let mut c = Command::new(system_exe(r"System32\taskkill.exe"));
+    c.args(["/PID", &child.id().to_string(), "/T", "/F"]);
+    hide_window(&mut c);
+    let _ = c
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+#[cfg(not(any(unix, windows)))]
 fn kill_group(_child: &std::process::Child) {}
 
 /// Ask a process to stop the polite way (SIGINT on Unix, which Python turns into

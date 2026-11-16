@@ -365,8 +365,19 @@ pub struct StoredMessage {
     pub display: String,
     /// Document passages this answer was written from, numbered like [1], [2] in the text.
     pub sources: Vec<String>,
-    /// What this answer cost (tokens, speed, machine load); absent on older conversations.
+    /// What this answer cost (tokens, speed, machine load); absent on older conversations. A
+    /// record that cannot be read (a hand-edited or damaged file) is dropped, never the whole
+    /// conversation with it.
+    #[serde(deserialize_with = "lenient_stats")]
     pub stats: Option<crate::meter::AnswerStats>,
+}
+
+fn lenient_stats<'de, D>(d: D) -> Result<Option<crate::meter::AnswerStats>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -819,6 +830,54 @@ mod tests {
         assert_eq!(date_label(0), "1970-01-01");
         assert_eq!(date_label(1_794_000_000), "2026-11-06");
         assert_eq!(date_label(951_782_400), "2000-02-29");
+    }
+
+    #[test]
+    fn old_files_and_damaged_usage_records_still_load() {
+        let dir = temp("stats-lenient");
+        fs::create_dir_all(&dir).unwrap();
+        let store = ConversationStore::at(dir.clone());
+        let good = serde_json::to_value(crate::meter::AnswerStats {
+            completion_tokens: Some(7),
+            ..Default::default()
+        })
+        .unwrap();
+        for (name, stats, expect) in [
+            ("old", None, None),
+            ("good", Some(good), Some(7)),
+            ("text", Some(serde_json::json!("x")), None),
+            (
+                "wrong-type",
+                Some(serde_json::json!({"samples": "many"})),
+                None,
+            ),
+            ("huge", Some(serde_json::json!({"total_ms": 1e300})), None),
+            (
+                "negative",
+                Some(serde_json::json!({"completion_tokens": -5})),
+                None,
+            ),
+        ] {
+            let mut m = serde_json::json!({"role": "assistant", "content": "kept"});
+            if let Some(st) = stats {
+                m["stats"] = st;
+            }
+            let c = serde_json::json!({"id": name, "title": "t", "messages": [m]});
+            fs::write(dir.join(format!("{name}.json")), c.to_string()).unwrap();
+            let loaded = store
+                .load(name)
+                .unwrap_or_else(|| panic!("{name} must load"));
+            assert_eq!(loaded.messages[0].content, "kept", "{name}");
+            assert_eq!(
+                loaded.messages[0]
+                    .stats
+                    .as_ref()
+                    .and_then(|s| s.completion_tokens),
+                expect,
+                "{name}"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -22,136 +22,168 @@ impl CompanionApp {
                 // Below this width the less used buttons move into the "More" menu, so the bar never
                 // overlaps itself (long words in German or Hungarian need more room than English).
                 let narrow = ui.available_width() < 1380.0;
+                // The buttons on the right keep their room; the title, the state and the status
+                // message share what is left and are cut with "…" when it is not enough, so the two
+                // sides can never be drawn over each other, whatever the language or the window size.
+                // The width the buttons took is known from the previous frame.
+                let right_id = ui.scope_id().with("topbar-right-width");
+                let right_w: f32 = ui.data(|d| d.get_temp(right_id)).unwrap_or(0.0);
+                let mut right_now = right_w;
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Colibri Companion")
-                            .size(19.0)
-                            .semibold()
-                            .color(p.accent),
+                    let left_w = (ui.available_width() - right_w - 16.0).max(100.0);
+                    ui.allocate_ui_with_layout(
+                        vec2(left_w, 0.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new("Colibri Companion")
+                                        .size(19.0)
+                                        .semibold()
+                                        .color(p.accent),
+                                )
+                                .truncate(),
+                            );
+                            ui.add_space(8.0);
+                            let (text, fg, bg) = self.state_pill();
+                            pill(ui, &text, fg, bg);
+                            if let Some(msg) = self.busy.clone() {
+                                // on a narrow bar the spinner alone says "working"
+                                if left_w >= 340.0 {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(msg).color(p.muted))
+                                            .truncate(),
+                                    );
+                                }
+                                crate::widgets::spinner(ui);
+                            }
+                        },
                     );
-                    ui.add_space(8.0);
-                    let (text, fg, bg) = self.state_pill();
-                    pill(ui, &text, fg, bg);
-                    right_to_left(ui, |ui| {
-                        // The language is always one click away, written in its own name.
-                        let before = self.s.lang;
-                        egui::ComboBox::from_id_salt("top-language")
-                            .selected_text(self.s.lang.native_name())
-                            .width(110.0)
-                            .height(420.0)
-                            .show_ui(ui, |ui| {
-                                for l in Lang::ALL {
-                                    ui.selectable_value(&mut self.s.lang, l, l.native_name());
+                    let right =
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // The language is always one click away, written in its own name.
+                            let before = self.s.lang;
+                            egui::ComboBox::from_id_salt("top-language")
+                                .selected_text(self.s.lang.native_name())
+                                .width(110.0)
+                                .height(420.0)
+                                .show_ui(ui, |ui| {
+                                    for l in Lang::ALL {
+                                        ui.selectable_value(&mut self.s.lang, l, l.native_name());
+                                    }
+                                })
+                                .response
+                                .on_hover_text(self.t("Limba", "Language"));
+                            if self.s.lang != before {
+                                let _ = self.s.save();
+                            }
+                            if !narrow && ui.button(self.t("Resurse", "Resources")).clicked() {
+                                self.set_resources_open(true);
+                            }
+                            ui.menu_button(self.t("Mai multe ▾", "More ▾"), |ui| {
+                                if narrow {
+                                    if ui.button(self.t("Resurse", "Resources")).clicked() {
+                                        self.set_resources_open(true);
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(self.t("Accesibilitate", "Accessibility"))
+                                        .clicked()
+                                    {
+                                        self.open_access();
+                                        ui.close();
+                                    }
+                                    if ui.button(self.t("Despre", "About")).clicked() {
+                                        self.show_about = true;
+                                        ui.close();
+                                    }
+                                    ui.separator();
                                 }
-                            })
-                            .response
-                            .on_hover_text(self.t("Limba", "Language"));
-                        if self.s.lang != before {
-                            let _ = self.s.save();
-                        }
-                        if !narrow && ui.button(self.t("Resurse", "Resources")).clicked() {
-                            self.set_resources_open(true);
-                        }
-                        ui.menu_button(self.t("Mai multe ▾", "More ▾"), |ui| {
-                            if narrow {
-                                if ui.button(self.t("Resurse", "Resources")).clicked() {
-                                    self.set_resources_open(true);
-                                    ui.close();
+                                for (label, which) in [
+                                    (self.t("Programe locale", "Local programs"), 0),
+                                    (self.t("Compară modele", "Compare models"), 1),
+                                    (self.t("Explorează", "Explore"), 2),
+                                    (self.t("Sfaturi", "Tips"), 3),
+                                    (self.t("Legal", "Legal"), 4),
+                                    (self.t("Prompturi", "Prompts"), 5),
+                                    (self.t("Conexiuni online", "Online connections"), 6),
+                                    (self.t("Catalog de platforme", "Platform catalogue"), 7),
+                                    (self.t("Modele creative", "Creative models"), 8),
+                                    (self.t("Automatizări", "Automations"), 9),
+                                    (
+                                        self.t(
+                                            "Memorie și constelație",
+                                            "Memory and constellation",
+                                        ),
+                                        10,
+                                    ),
+                                    (self.t("Dueluri între modele", "Model duels"), 11),
+                                    (self.t("Ghid de început", "Getting started"), 12),
+                                    (self.t("Documente", "Documents"), 13),
+                                    (self.t("Unelte MCP", "MCP tools"), 14),
+                                ] {
+                                    if self.s.access.simple_menus
+                                        && matches!(which, 0 | 1 | 6 | 7 | 8 | 9 | 11 | 14)
+                                    {
+                                        continue;
+                                    }
+                                    if ui.button(label).clicked() {
+                                        match which {
+                                            0 => self.sheets.local = true,
+                                            1 => self.sheets.compare = true,
+                                            2 => self.guide.explore = true,
+                                            3 => self.guide.tips = true,
+                                            5 => self.open_prompts(),
+                                            6 => self.open_online(),
+                                            7 => self.open_catalog(),
+                                            8 => self.open_studio(),
+                                            9 => self.open_flows(),
+                                            10 => self.open_memory(),
+                                            11 => self.open_duel(),
+                                            12 => self.guide.tour = Some(0),
+                                            13 => self.open_docs(),
+                                            14 => self.open_mcp(),
+                                            _ => self.guide.legal = true,
+                                        }
+                                        ui.close();
+                                    }
                                 }
-                                if ui
+                            });
+                            if !narrow && ui.button(self.t("Despre", "About")).clicked() {
+                                self.show_about = true;
+                            }
+                            if ui.button(self.t("Setări", "Settings")).clicked() {
+                                self.show_settings = true;
+                            }
+                            if !narrow
+                                && ui
                                     .button(self.t("Accesibilitate", "Accessibility"))
                                     .clicked()
-                                {
-                                    self.open_access();
-                                    ui.close();
-                                }
-                                if ui.button(self.t("Despre", "About")).clicked() {
-                                    self.show_about = true;
-                                    ui.close();
-                                }
-                                ui.separator();
+                            {
+                                self.open_access();
                             }
-                            for (label, which) in [
-                                (self.t("Programe locale", "Local programs"), 0),
-                                (self.t("Compară modele", "Compare models"), 1),
-                                (self.t("Explorează", "Explore"), 2),
-                                (self.t("Sfaturi", "Tips"), 3),
-                                (self.t("Legal", "Legal"), 4),
-                                (self.t("Prompturi", "Prompts"), 5),
-                                (self.t("Conexiuni online", "Online connections"), 6),
-                                (self.t("Catalog de platforme", "Platform catalogue"), 7),
-                                (self.t("Modele creative", "Creative models"), 8),
-                                (self.t("Automatizări", "Automations"), 9),
-                                (
-                                    self.t("Memorie și constelație", "Memory and constellation"),
-                                    10,
-                                ),
-                                (self.t("Dueluri între modele", "Model duels"), 11),
-                                (self.t("Ghid de început", "Getting started"), 12),
-                                (self.t("Documente", "Documents"), 13),
-                                (self.t("Unelte MCP", "MCP tools"), 14),
-                            ] {
-                                if self.s.access.simple_menus
-                                    && matches!(which, 0 | 1 | 6 | 7 | 8 | 9 | 11 | 14)
+                            if self.coli.is_some() && !self.demo {
+                                if self.server_ready()
+                                    && ui
+                                        .button(self.t("Oprește modelul", "Stop the model"))
+                                        .clicked()
+                                    && !self.tune_blocks_server()
                                 {
-                                    continue;
+                                    self.stop_server();
                                 }
-                                if ui.button(label).clicked() {
-                                    match which {
-                                        0 => self.sheets.local = true,
-                                        1 => self.sheets.compare = true,
-                                        2 => self.guide.explore = true,
-                                        3 => self.guide.tips = true,
-                                        5 => self.open_prompts(),
-                                        6 => self.open_online(),
-                                        7 => self.open_catalog(),
-                                        8 => self.open_studio(),
-                                        9 => self.open_flows(),
-                                        10 => self.open_memory(),
-                                        11 => self.open_duel(),
-                                        12 => self.guide.tour = Some(0),
-                                        13 => self.open_docs(),
-                                        14 => self.open_mcp(),
-                                        _ => self.guide.legal = true,
-                                    }
-                                    ui.close();
+                                if ui.button(self.t("Modele", "Models")).clicked() {
+                                    self.show_models = true;
+                                    self.refresh_installed();
+                                    self.refresh_engine_info();
                                 }
                             }
                         });
-                        if !narrow && ui.button(self.t("Despre", "About")).clicked() {
-                            self.show_about = true;
-                        }
-                        if ui.button(self.t("Setări", "Settings")).clicked() {
-                            self.show_settings = true;
-                        }
-                        if !narrow
-                            && ui
-                                .button(self.t("Accesibilitate", "Accessibility"))
-                                .clicked()
-                        {
-                            self.open_access();
-                        }
-                        if self.coli.is_some() && !self.demo {
-                            if self.server_ready()
-                                && ui
-                                    .button(self.t("Oprește modelul", "Stop the model"))
-                                    .clicked()
-                                && !self.tune_blocks_server()
-                            {
-                                self.stop_server();
-                            }
-                            if ui.button(self.t("Modele", "Models")).clicked() {
-                                self.show_models = true;
-                                self.refresh_installed();
-                                self.refresh_engine_info();
-                            }
-                        }
-                        if let Some(msg) = self.busy.clone() {
-                            ui.label(RichText::new(msg).color(p.muted));
-                            crate::widgets::spinner(ui);
-                        }
-                    });
+                    right_now = right.response.rect.width();
                 });
+                if (right_now - right_w).abs() > 1.0 {
+                    ui.data_mut(|d| d.insert_temp(right_id, right_now));
+                    ui.ctx().request_repaint();
+                }
             });
     }
 
@@ -498,5 +530,81 @@ impl CompanionApp {
         if !open {
             self.logs_view = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::widgets::testkit;
+    use companion_core::chat::ServerFacts;
+    use companion_core::locate::PythonCmd;
+    use companion_core::store::Settings;
+
+    /// The widest the bar gets: a model is running (Stop and Models buttons), its name is long,
+    /// and a status message with a spinner is showing.
+    fn busy_app(lang: Lang) -> CompanionApp {
+        let s = Settings {
+            lang,
+            ..Settings::default()
+        };
+        let mut a = CompanionApp::new(
+            egui::Context::default(),
+            s,
+            Some("http://127.0.0.1:1".into()),
+            false,
+        );
+        a.coli = Some(companion_core::coli::Coli::new(
+            std::env::temp_dir(),
+            PythonCmd {
+                program: "python3".into(),
+                pre_args: vec![],
+                version: (3, 12),
+            },
+        ));
+        a.demo = false;
+        a.health = Health::Ready(ServerFacts::default());
+        a.model_id = Some("qwen3.5-4b-instruct-q4_k_m".into());
+        a.busy = Some(a.t("Se descarcă modelul…", "Downloading the model…").into());
+        a
+    }
+
+    /// Text drawn by the top bar at `width`, after the layout has settled (second frame).
+    fn bar(a: &mut CompanionApp, width: f32) -> Vec<testkit::Drawn> {
+        let ctx = a.ctx.clone();
+        testkit::draw(&ctx, width, 200.0, |ui| a.top_bar(ui));
+        testkit::draw(&ctx, width, 200.0, |ui| a.top_bar(ui))
+    }
+
+    #[test]
+    fn the_top_bar_never_overlaps_or_clips_in_any_language_at_any_width() {
+        let mut problems = Vec::new();
+        for lang in Lang::ALL {
+            for width in [
+                760.0_f32, 900.0, 1100.0, 1280.0, 1379.0, 1380.0, 1400.0, 1920.0,
+            ] {
+                let mut a = busy_app(lang);
+                let drawn = bar(&mut a, width);
+                assert!(drawn.len() >= 4, "{lang:?} {width}: the bar drew {drawn:?}");
+                for (x, y) in testkit::overlapping(&drawn) {
+                    problems.push(format!(
+                        "{lang:?} @{width}: '{}' overlaps '{}'",
+                        x.text, y.text
+                    ));
+                }
+                for d in testkit::clipped(&drawn) {
+                    problems.push(format!("{lang:?} @{width}: '{}' is clipped", d.text));
+                }
+                for d in &drawn {
+                    if d.rect.right() > width + 1.0 || d.rect.left() < -1.0 {
+                        problems.push(format!(
+                            "{lang:?} @{width}: '{}' leaves the window ({:?})",
+                            d.text, d.rect
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 }
