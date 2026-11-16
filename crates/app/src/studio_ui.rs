@@ -156,7 +156,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Modele creative", "Creative models"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_size(vec2(780.0, 600.0))
+            .default_size(fit(ctx, 780.0, 600.0))
             .collapsible(false)
             .show(ctx, |ui| {
                 muted(ui, &p, self.t(

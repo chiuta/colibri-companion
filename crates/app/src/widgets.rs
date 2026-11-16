@@ -166,6 +166,12 @@ pub fn fmt_duration(secs: f64, ro: bool) -> String {
     }
 }
 
+/// A window size that never exceeds the screen: small laptops and large text sizes still fit.
+pub fn fit(ctx: &egui::Context, w: f32, h: f32) -> egui::Vec2 {
+    let r = ctx.content_rect();
+    egui::vec2(w.min(r.width() - 24.0), h.min(r.height() - 56.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

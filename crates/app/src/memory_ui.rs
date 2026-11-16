@@ -302,7 +302,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Memorie și constelație", "Memory and constellation"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_size(vec2(860.0, 700.0))
+            .default_size(fit(ctx, 860.0, 700.0))
             .collapsible(false)
             .vscroll(true)
             .show(ctx, |ui| {
@@ -398,7 +398,8 @@ impl CompanionApp {
             }
         });
         let w = ui.available_width();
-        let (resp, painter) = ui.allocate_painter(vec2(w, 420.0), Sense::click_and_drag());
+        let h = (ui.ctx().content_rect().height() - 400.0).clamp(240.0, 520.0);
+        let (resp, painter) = ui.allocate_painter(vec2(w, h), Sense::click_and_drag());
         let rect = resp.rect;
         painter.rect_filled(rect, 8.0, p.panel);
         if resp.dragged() {
@@ -445,7 +446,9 @@ impl CompanionApp {
             let (sx, sy) = members
                 .iter()
                 .fold((0.0, 0.0), |a, n| (a.0 + n.x, a.1 + n.y));
-            let pos = to_screen(sx / members.len() as f32, sy / members.len() as f32);
+            let pos = to_screen(sx / members.len() as f32, sy / members.len() as f32)
+                - egui::vec2(0.0, 30.0);
+            let pos = Pos2::new(pos.x, pos.y.max(rect.top() + 10.0));
             painter.text(
                 pos,
                 Align2::CENTER_CENTER,
@@ -480,6 +483,22 @@ impl CompanionApp {
             }
             if hover == Some(i) {
                 painter.circle_stroke(pos, r + 3.0, Stroke::new(1.5, p.text));
+            }
+            // A short name beside each star, so the map reads without hovering.
+            if !n.title.is_empty() && !dim {
+                let short: String = n.title.chars().take(24).collect();
+                let short = if n.title.chars().count() > 24 {
+                    format!("{short}…")
+                } else {
+                    short
+                };
+                painter.text(
+                    pos + egui::vec2(r + 5.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    short,
+                    egui::FontId::proportional(12.0),
+                    p.text,
+                );
             }
         }
         if let Some(h) = hover {

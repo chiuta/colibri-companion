@@ -435,7 +435,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Automatizări", "Automations"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_size(vec2(820.0, 640.0))
+            .default_size(fit(ctx, 820.0, 640.0))
             .collapsible(false)
             .show(ctx, |ui| {
                 muted(ui, &p, self.t(

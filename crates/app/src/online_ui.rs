@@ -264,7 +264,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Conexiuni online", "Online connections"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_size(vec2(680.0, 560.0))
+            .default_size(fit(ctx, 680.0, 560.0))
             .collapsible(false)
             .vscroll(true)
             .show(ctx, |ui| {
@@ -474,7 +474,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Catalog de platforme", "Platform catalogue"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_size(vec2(760.0, 560.0))
+            .default_size(fit(ctx, 760.0, 560.0))
             .collapsible(false)
             .show(ctx, |ui| {
                 muted(ui, &p, self.t(

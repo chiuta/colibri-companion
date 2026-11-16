@@ -30,6 +30,22 @@ impl CompanionApp {
                     let (text, fg, bg) = self.state_pill();
                     pill(ui, &text, fg, bg);
                     right_to_left(ui, |ui| {
+                        // The language is always one click away, written in its own name.
+                        let before = self.s.lang;
+                        egui::ComboBox::from_id_salt("top-language")
+                            .selected_text(self.s.lang.native_name())
+                            .width(110.0)
+                            .height(420.0)
+                            .show_ui(ui, |ui| {
+                                for l in Lang::ALL {
+                                    ui.selectable_value(&mut self.s.lang, l, l.native_name());
+                                }
+                            })
+                            .response
+                            .on_hover_text(self.t("Limba", "Language"));
+                        if self.s.lang != before {
+                            let _ = self.s.save();
+                        }
                         if ui.button(self.t("Resurse", "Resources")).clicked() {
                             self.set_resources_open(true);
                         }
@@ -106,6 +122,26 @@ impl CompanionApp {
                     });
                 });
             });
+    }
+
+    /// Escape closes the open tool windows, one at a time (when no text box has the keyboard).
+    pub fn close_one_window(&mut self) {
+        let flags: [&mut bool; 8] = [
+            &mut self.flows.open,
+            &mut self.memory.open,
+            &mut self.studio.open,
+            &mut self.access.open,
+            &mut self.prompts.open,
+            &mut self.online.open_catalog,
+            &mut self.online.open_conn,
+            &mut self.show_settings,
+        ];
+        for f in flags {
+            if *f {
+                *f = false;
+                return;
+            }
+        }
     }
 
     fn state_pill(&self) -> (String, egui::Color32, egui::Color32) {

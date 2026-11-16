@@ -185,7 +185,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Accesibilitate", "Accessibility"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_size(vec2(680.0, 640.0))
+            .default_size(fit(ctx, 680.0, 640.0))
             .collapsible(false)
             .vscroll(true)
             .show(ctx, |ui| {

@@ -127,7 +127,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Biblioteca de prompturi", "Prompt library"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_size(vec2(760.0, 520.0))
+            .default_size(fit(ctx, 760.0, 520.0))
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {

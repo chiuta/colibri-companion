@@ -563,7 +563,7 @@ pub fn templates(romanian: bool) -> Vec<Flow> {
                     ),
                 },
                 Step::Save {
-                    name: "revizuire.md".into(),
+                    name: t("revizuire.md", "review.md"),
                 },
             ],
             Trigger::Manual,
@@ -585,7 +585,7 @@ pub fn templates(romanian: bool) -> Vec<Flow> {
                     ),
                 },
                 Step::Save {
-                    name: "buletin.md".into(),
+                    name: t("buletin.md", "brief.md"),
                 },
                 Step::Notify {
                     text: String::new(),
@@ -612,7 +612,7 @@ pub fn templates(romanian: bool) -> Vec<Flow> {
                     ),
                 },
                 Step::Save {
-                    name: "sarcini.md".into(),
+                    name: t("sarcini.md", "tasks.md"),
                 },
             ],
             Trigger::Manual,
