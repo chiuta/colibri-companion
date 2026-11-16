@@ -366,6 +366,11 @@ impl CompanionApp {
             ),
         );
         if self.ctx_rows.is_none() {
+            let reads_disk = matches!(&self.plan, Some(Ok(pl)) if pl.reads_disk());
+            if reads_disk && !self.ctx_busy && !self.ctx_auto_done {
+                self.ctx_auto_done = true;
+                self.compare_contexts();
+            }
             ui.horizontal(|ui| {
                 let label = self.t("Calculează pentru 4k–64k", "Work it out for 4k–64k");
                 if ui
@@ -381,6 +386,7 @@ impl CompanionApp {
             return;
         }
         let rows = self.ctx_rows.clone().unwrap_or_default();
+        let best = recommended_context(&rows);
         let mut apply = None;
         egui::Grid::new("ctx_plan_rows")
             .num_columns(4)
@@ -399,15 +405,23 @@ impl CompanionApp {
                                 pl.hit_rate * 100.0,
                                 self.t("în memorie", "in memory")
                             ));
-                            if ui
-                                .add_enabled(
-                                    !self.ctx_busy,
-                                    egui::Button::new(self.t("Utilizați", "Use")),
-                                )
-                                .clicked()
-                            {
-                                apply = Some(*n);
-                            }
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        !self.ctx_busy,
+                                        egui::Button::new(self.t("Utilizați", "Use")),
+                                    )
+                                    .clicked()
+                                {
+                                    apply = Some(*n);
+                                }
+                                if best == Some(*n) {
+                                    ui.label(
+                                        RichText::new(self.t("Recomandat", "Recommended"))
+                                            .semibold(),
+                                    );
+                                }
+                            });
                         }
                         Err(_) => {
                             ui.label("—");
@@ -421,5 +435,59 @@ impl CompanionApp {
         if let Some(n) = apply {
             self.apply_context(n);
         }
+    }
+}
+
+/// The longest context that still keeps nearly all of the best in-memory share (within three
+/// points), never below 8 192 tokens: the most conversation memory for almost the full speed.
+pub fn recommended_context(
+    rows: &[(u32, Result<companion_core::coli::PlanSummary, String>)],
+) -> Option<u32> {
+    let ok: Vec<(u32, f64)> = rows
+        .iter()
+        .filter_map(|(n, p)| p.as_ref().ok().map(|p| (*n, p.hit_rate)))
+        .collect();
+    let top = ok.iter().map(|(_, h)| *h).fold(f64::MIN, f64::max);
+    if ok.is_empty() || top < 0.0 {
+        return None;
+    }
+    ok.iter()
+        .filter(|(n, h)| *n >= 8192 && *h >= top - 0.03)
+        .map(|(n, _)| *n)
+        .max()
+        .or_else(|| {
+            ok.iter()
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(n, _)| *n)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use companion_core::coli::PlanSummary;
+
+    fn row(n: u32, hit: f64) -> (u32, Result<PlanSummary, String>) {
+        (
+            n,
+            Ok(PlanSummary {
+                hit_rate: hit,
+                ..Default::default()
+            }),
+        )
+    }
+
+    #[test]
+    fn picks_the_longest_context_that_keeps_the_speed() {
+        let rows = [
+            row(4096, 0.80),
+            row(8192, 0.79),
+            row(16384, 0.70),
+            row(32768, 0.50),
+        ];
+        assert_eq!(recommended_context(&rows), Some(8192));
+        let flat = [row(8192, 1.0), row(16384, 1.0), row(32768, 1.0)];
+        assert_eq!(recommended_context(&flat), Some(32768));
+        assert_eq!(recommended_context(&[]), None);
     }
 }

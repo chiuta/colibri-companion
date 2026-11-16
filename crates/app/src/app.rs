@@ -352,6 +352,7 @@ pub struct CompanionApp {
     /// What colibri's planner gives at several context lengths: (tokens, plan).
     pub ctx_rows: Option<Vec<(u32, Result<companion_core::coli::PlanSummary, String>)>>,
     pub ctx_busy: bool,
+    pub ctx_auto_done: bool,
     pub upd: UpdateState,
     update_after_stop: bool,
     pub res: Option<ResView>,
@@ -470,6 +471,7 @@ impl CompanionApp {
             tune_note: None,
             ctx_rows: None,
             ctx_busy: false,
+            ctx_auto_done: false,
             upd: UpdateState::default(),
             update_after_stop: false,
             res: None,
@@ -1994,6 +1996,8 @@ impl CompanionApp {
             }
             Event::CtxApplied(r) => {
                 self.ctx_busy = false;
+                self.ctx_rows = None;
+                self.ctx_auto_done = true;
                 self.plan = None;
                 self.plan_asked = None;
                 self.tune_note = Some(match r {
