@@ -1,0 +1,741 @@
+//! Derived from TEZAUR (MIT, (c) Alexio, https://trom.tf).
+//! Minimal BibTeX reader (Zotero / Better BibTeX exports). Used only to make citations read
+//! "Author (Year)" and to build a proper reference list. It never touches the index format:
+//! the `.bib` files are read at run time, so editing metadata needs no re-indexing.
+
+use crate::kinds::{self, Format, Genre};
+use crate::names::{self, NameList};
+use std::path::{Path, PathBuf};
+
+#[derive(Clone, Debug, Default)]
+pub struct Entry {
+    pub key: String,
+    pub author: String,
+    /// Author (or editor) field as written, braces and LaTeX intact, for name parsing.
+    pub raw_author: String,
+    pub year: String,
+    pub title: String,
+    pub container: String,
+    pub doi: String,
+    pub file: String,
+    pub note: String,
+    pub url: String,
+    /// File the entry was read from (for reports).
+    pub source: String,
+    /// Other keys of the same work after unification (spec 07).
+    pub aliases: Vec<String>,
+    pub editor: String,
+    pub publisher: String,
+    pub volume: String,
+    pub number: String,
+    pub pages: String,
+    pub address: String,
+    pub edition: String,
+    pub month: String,
+    pub isbn: String,
+    pub issn: String,
+    pub howpublished: String,
+    /// Entry type as read, with the format it came from (kept so exports can reproduce it).
+    pub origin: Option<(Format, String)>,
+    pub genre: Option<Genre>,
+}
+
+/// LaTeX accent command -> combining mark.
+fn accent_mark(cmd: char) -> Option<char> {
+    Some(match cmd {
+        '\'' => '\u{301}',
+        '`' => '\u{300}',
+        '^' => '\u{302}',
+        '"' => '\u{308}',
+        '~' => '\u{303}',
+        '=' => '\u{304}',
+        '.' => '\u{307}',
+        'u' => '\u{306}',
+        'v' => '\u{30c}',
+        'H' => '\u{30b}',
+        'c' => '\u{327}',
+        'k' => '\u{328}',
+        'r' => '\u{30a}',
+        _ => return None,
+    })
+}
+
+/// Letters LaTeX writes as a command: `\ss`, `\o`, `\ae` ...
+fn special_letter(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "ss" => "ß",
+        "o" => "ø",
+        "O" => "Ø",
+        "ae" => "æ",
+        "AE" => "Æ",
+        "oe" => "œ",
+        "OE" => "Œ",
+        "aa" => "å",
+        "AA" => "Å",
+        "l" => "ł",
+        "L" => "Ł",
+        "i" => "i",
+        "j" => "j",
+        "dh" => "ð",
+        "DH" => "Ð",
+        "th" => "þ",
+        "TH" => "Þ",
+        "ng" => "ŋ",
+        "NG" => "Ŋ",
+        _ => return None,
+    })
+}
+
+/// Reads the letter an accent applies to: `o`, `{o}`, `\i`, `{\i}` (and a space after a letter
+/// command). Returns the letter and the index after it.
+fn accent_target(ch: &[char], mut i: usize) -> Option<(char, usize)> {
+    while i < ch.len() && ch[i] == ' ' {
+        i += 1;
+    }
+    let braced = i < ch.len() && ch[i] == '{';
+    if braced {
+        i += 1;
+    }
+    let letter = if i < ch.len() && ch[i] == '\\' && matches!(ch.get(i + 1), Some('i' | 'j')) {
+        i += 2;
+        ch[i - 1] // dotless i and j take the accent as plain i and j
+    } else if i < ch.len() && ch[i].is_alphabetic() {
+        i += 1;
+        ch[i - 1]
+    } else {
+        return None;
+    };
+    if braced {
+        if i < ch.len() && ch[i] == '}' {
+            i += 1;
+        } else {
+            return None;
+        }
+    }
+    Some((letter, i))
+}
+
+/// Metadata text without LaTeX: braces dropped, `{\"o}` -> `ö`, `\c{c}` -> `ç`, `\ss` -> `ß`,
+/// `\&` -> `&`; any other command loses its name and keeps its braced argument. Linear time.
+pub(crate) fn clean(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let ch: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < ch.len() {
+        match ch[i] {
+            '{' | '}' => i += 1,
+            '\\' if i + 1 >= ch.len() => i += 1, // a lone trailing backslash
+            '\\' => {
+                let n = ch[i + 1];
+                if let Some(mark) = accent_mark(n)
+                    && !n.is_alphabetic()
+                    && let Some((l, next)) = accent_target(&ch, i + 2)
+                {
+                    out.extend([l, mark].into_iter().nfc());
+                    i = next;
+                } else if "'`\"^~=.".contains(n) {
+                    i += 2; // accent on nothing readable: drop the mark
+                } else if "&%_#$".contains(n) {
+                    out.push(n);
+                    i += 2;
+                } else {
+                    let st = i + 1;
+                    let mut e = st;
+                    while e < ch.len() && ch[e].is_ascii_alphabetic() {
+                        e += 1;
+                    }
+                    let name: String = ch[st..e].iter().collect();
+                    if name.len() == 1
+                        && let Some(mark) = accent_mark(ch[st])
+                        && let Some((l, next)) = accent_target(&ch, e)
+                    {
+                        out.extend([l, mark].into_iter().nfc()); // \c c, \v{s}, \u g
+                        i = next;
+                    } else if let Some(sp) = special_letter(&name) {
+                        out.push_str(sp);
+                        i = e;
+                        if i < ch.len() && ch[i] == ' ' {
+                            i += 1; // the space only ends the command
+                        }
+                    } else {
+                        i = e.max(i + 1); // \command: skip its name, keep its braced argument
+                    }
+                }
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn to_entry(r: &crate::bibtex::RawEntry) -> Entry {
+    let mut e = Entry {
+        key: r.key.clone(),
+        origin: Some((Format::Bibtex, r.typ.clone())),
+        genre: kinds::to_csl(Format::Bibtex, &r.typ).1,
+        ..Default::default()
+    };
+    let g = |n: &str| r.get(n).map(|v| v.trim()).filter(|v| !v.is_empty());
+    let c = |n: &str| g(n).map(clean).unwrap_or_default();
+    if let Some(a) = g("author") {
+        e.author = clean(a);
+        e.raw_author = a.to_string();
+    }
+    if let Some(ed) = g("editor") {
+        e.editor = clean(ed);
+        if e.author.is_empty() {
+            e.author = e.editor.clone();
+            e.raw_author = ed.to_string();
+        }
+    }
+    e.year = if let Some(y) = g("year") {
+        clean(y)
+    } else {
+        c("date").chars().take(4).collect()
+    };
+    e.title = c("title");
+    e.container = ["journal", "journaltitle", "booktitle"]
+        .iter()
+        .find_map(|n| g(n).map(clean))
+        .or_else(|| {
+            ["publisher", "school", "institution", "howpublished"]
+                .iter()
+                .find_map(|n| g(n).map(clean))
+        })
+        .unwrap_or_default();
+    e.publisher = ["publisher", "school", "institution", "organization"]
+        .iter()
+        .find_map(|n| g(n).map(clean))
+        .unwrap_or_default();
+    e.doi = c("doi");
+    e.note = c("note");
+    e.url = c("url");
+    e.file = g("file").unwrap_or("").to_string(); // raw: Windows paths must not be LaTeX-cleaned
+    (e.volume, e.number, e.pages) = (c("volume"), c("number"), c("pages"));
+    (e.address, e.edition, e.month) = (c("address"), c("edition"), c("month"));
+    (e.isbn, e.issn, e.howpublished) = (c("isbn"), c("issn"), c("howpublished"));
+    if let Some(t) = g("type")
+        && let Some(gn) = kinds::genre_from_text(t)
+    {
+        e.genre = Some(gn);
+    }
+    e
+}
+
+/// Parses a `.bib` text; also returns reader warnings (undefined abbreviation, dangling
+/// crossref, duplicate key, ...).
+pub fn parse_with_warnings(text: &str) -> (Vec<Entry>, Vec<String>) {
+    let f = crate::bibtex::read(text);
+    (f.entries.iter().map(to_entry).collect(), f.warnings)
+}
+
+pub fn parse(text: &str) -> Vec<Entry> {
+    parse_with_warnings(text).0
+}
+
+/// Words that mark an unbraced, comma-less name as an institution ("Council of Europe").
+const ORG: [&str; 12] = [
+    "of",
+    "for",
+    "the",
+    "council",
+    "university",
+    "institute",
+    "commission",
+    "union",
+    "association",
+    "ministry",
+    "organization",
+    "organisation",
+];
+
+impl Entry {
+    /// Citation surname of the first author (used to build generated keys).
+    pub(crate) fn people_for_key(&self) -> Option<String> {
+        self.people().people.first().map(|p| p.family())
+    }
+
+    /// Parsed authors (spec 04). A name without comma containing an institution word is kept
+    /// whole as one literal name.
+    pub(crate) fn people(&self) -> NameList {
+        let src = if self.raw_author.is_empty() {
+            &self.author
+        } else {
+            &self.raw_author
+        };
+        let mut l = names::parse_names(src);
+        for p in &mut l.people {
+            if p.inverted_form {
+                continue;
+            }
+            let toks: Vec<&String> = p.first.iter().chain(&p.von).chain(&p.last).collect();
+            let org = toks
+                .iter()
+                .any(|t| ORG.contains(&t.to_lowercase().as_str()));
+            if org && toks.len() > 1 {
+                let whole = toks
+                    .iter()
+                    .map(|t| t.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                *p = names::Person {
+                    last: vec![format!("{{{whole}}}")],
+                    ..Default::default()
+                };
+            }
+        }
+        l
+    }
+
+    /// "Smith (2019)", "Smith & Jones (2019)", "Smith et al. (2019)".
+    pub fn cite(&self) -> String {
+        let l = self.people();
+        let a = &l.people;
+        let who = match a.len() {
+            0 => String::new(),
+            _ if l.et_al => format!("{} et al.", a[0].short()),
+            1 => a[0].short(),
+            2 => format!("{} & {}", a[0].short(), a[1].short()),
+            _ => format!("{} et al.", a[0].short()),
+        };
+        match (who.is_empty(), self.year.is_empty()) {
+            (true, _) if !self.title.is_empty() => self.title.clone(),
+            (true, _) => self.key.clone(),
+            (false, true) => who,
+            (false, false) => format!("{who} ({})", self.year),
+        }
+    }
+
+    /// Full reference line for the bibliography.
+    pub fn reference(&self) -> String {
+        let mut s = String::new();
+        let l = self.people();
+        if !l.people.is_empty() {
+            let mut v: Vec<String> = l.people.iter().map(|p| p.inverted()).collect();
+            if l.et_al {
+                v.push("et al.".into());
+            }
+            s.push_str(&v.join("; "));
+            s.push_str(". ");
+        }
+        if !self.year.is_empty() {
+            s.push_str(&format!("({}). ", self.year));
+        }
+        if !self.title.is_empty() {
+            s.push_str(&self.title);
+            s.push_str(". ");
+        }
+        if !self.container.is_empty() {
+            s.push_str(&self.container);
+            s.push_str(". ");
+        }
+        if !self.doi.is_empty() {
+            s.push_str(&format!("https://doi.org/{}", self.doi));
+        }
+        s.trim().to_string()
+    }
+}
+
+impl Entry {
+    /// CSL type of this entry: from the kept origin, else a container means a journal article.
+    fn csl_type(&self) -> &'static str {
+        match &self.origin {
+            Some((f, t)) => kinds::to_csl(*f, t).0,
+            None if self.container.is_empty() => "document",
+            None => "article-journal",
+        }
+    }
+
+    fn out_type(&self, target: Format) -> String {
+        let origin = self.origin.as_ref().map(|(f, t)| (*f, t.as_str()));
+        kinds::emit(target, self.csl_type(), self.genre, origin)
+    }
+
+    /// RIS record (Zotero, Mendeley, EndNote import it). Type from the crosswalk (spec 01).
+    pub fn to_ris(&self) -> String {
+        let mut s = String::new();
+        s.push_str(&format!("TY  - {}\n", self.out_type(Format::Ris)));
+        s.push_str(&format!("ID  - {}\n", crate::bibtext::key(&self.key)));
+        for p in &self.people().people {
+            s.push_str(&format!("AU  - {}\n", crate::bibtext::line(&p.inverted())));
+        }
+        if !self.title.is_empty() {
+            s.push_str(&format!("TI  - {}\n", crate::bibtext::line(&self.title)));
+        }
+        if !self.container.is_empty() {
+            s.push_str(&format!(
+                "T2  - {}\n",
+                crate::bibtext::line(&self.container)
+            ));
+        }
+        if !self.year.is_empty() {
+            s.push_str(&format!("PY  - {}\n", crate::bibtext::line(&self.year)));
+        }
+        if !self.doi.is_empty() {
+            s.push_str(&format!("DO  - {}\n", crate::bibtext::line(&self.doi)));
+        }
+        s.push_str("ER  - \n");
+        s
+    }
+
+    /// CSL JSON item (pandoc --citeproc, Zotero, Word/LibreOffice plugins).
+    pub fn to_csl(&self) -> serde_json::Value {
+        let authors: Vec<serde_json::Value> =
+            self.people().people.iter().map(|p| p.to_csl()).collect();
+        let mut v = serde_json::json!({
+            "id": self.key,
+            "type": self.out_type(Format::Csl),
+            "title": self.title,
+            "author": authors,
+        });
+        if !self.container.is_empty() {
+            v["container-title"] = self.container.clone().into();
+        }
+        if let Ok(y) = self.year.parse::<i64>() {
+            v["issued"] = serde_json::json!({"date-parts": [[y]]});
+        }
+        if !self.doi.is_empty() {
+            v["DOI"] = self.doi.clone().into();
+        }
+        for (k, x) in [
+            ("volume", &self.volume),
+            ("issue", &self.number),
+            ("page", &self.pages),
+            ("publisher", &self.publisher),
+            ("publisher-place", &self.address),
+            ("edition", &self.edition),
+            ("ISBN", &self.isbn),
+            ("ISSN", &self.issn),
+        ] {
+            if !x.is_empty() {
+                v[k] = x.clone().into();
+            }
+        }
+        if !self.url.is_empty() {
+            v["URL"] = self.url.clone().into();
+        }
+        if !self.note.is_empty() {
+            v["note"] = self.note.clone().into();
+        }
+        v
+    }
+
+    /// BibTeX entry with the fields the reader keeps. The container goes to the field its type
+    /// uses: journal, booktitle, school, institution or publisher.
+    pub fn to_bibtex(&self) -> String {
+        let kind = self.out_type(Format::Bibtex);
+        let mut s = format!("@{kind}{{{},\n", crate::bibtext::key(&self.key));
+        let mut f = |k: &str, v: &str| {
+            let v = crate::bibtext::bib_value(v);
+            if !v.is_empty() {
+                s.push_str(&format!("  {k} = {{{v}}},\n"));
+            }
+        };
+        f("author", &self.author);
+        f("editor", &self.editor);
+        f("title", &self.title);
+        let cont_key = match kind.as_str() {
+            "article" => "journal",
+            "inproceedings" | "conference" | "incollection" | "inbook" => "booktitle",
+            "mastersthesis" | "phdthesis" => "school",
+            "techreport" | "manual" => "institution",
+            "book" | "proceedings" | "booklet" => "publisher",
+            _ => "howpublished",
+        };
+        f(cont_key, &self.container);
+        if cont_key != "publisher" && self.publisher != self.container {
+            f("publisher", &self.publisher);
+        }
+        f("year", &self.year);
+        f("volume", &self.volume);
+        f("number", &self.number);
+        f("pages", &self.pages);
+        f("address", &self.address);
+        f("edition", &self.edition);
+        f("doi", &self.doi);
+        f("isbn", &self.isbn);
+        f("issn", &self.issn);
+        f("url", &self.url);
+        f("note", &self.note);
+        s.push_str("}\n");
+        s
+    }
+}
+
+#[derive(Default)]
+pub struct BibMap {
+    pub entries: Vec<Entry>,
+    /// Reader warnings, `file: message`.
+    pub warnings: Vec<String>,
+}
+
+impl BibMap {
+    /// Key of the entry that `k` names, following aliases left by unification.
+    pub fn canonical_key(&self, k: &str) -> String {
+        self.entries
+            .iter()
+            .find(|e| e.aliases.iter().any(|a| a.eq_ignore_ascii_case(k)))
+            .map(|e| e.key.clone())
+            .unwrap_or_else(|| k.to_string())
+    }
+
+    /// Merges duplicates by identifier (no hard conflicts only); see `dedup`.
+    pub fn unified(mut self) -> BibMap {
+        self.entries = crate::dedup::unify(&self.entries).0;
+        self
+    }
+}
+
+/// Largest bibliography file read (bytes); a larger file is reported and skipped.
+pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// Most entries kept from all files together; the rest is reported, never silently dropped.
+pub const MAX_ENTRIES: usize = 200_000;
+
+/// Which reader a text needs: decided by the file name first, then by what the text looks like.
+pub fn parse_any(name: &str, text: &str) -> Result<(Vec<Entry>, Vec<String>), String> {
+    let lower = name.to_lowercase();
+    let t = text.trim_start_matches('\u{feff}').trim_start();
+    if lower.ends_with(".json") || t.starts_with('[') || t.starts_with('{') && !t.starts_with("@") {
+        return crate::csljson::parse(text);
+    }
+    if lower.ends_with(".ris") || t.starts_with("TY  -") {
+        return Ok(crate::ris::parse(text));
+    }
+    Ok(parse_with_warnings(text))
+}
+
+impl BibMap {
+    /// Reads the named `.bib`, `.ris` and `.json` (CSL JSON) files. Invalid UTF-8 is replaced, an
+    /// unreadable or oversized file becomes a warning, never an error or a panic.
+    pub fn load_files(files: &[PathBuf]) -> BibMap {
+        let mut paths: Vec<PathBuf> = files
+            .iter()
+            .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
+            .collect();
+        paths.sort();
+        paths.dedup();
+        let mut map = BibMap::default();
+        for p in paths {
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let tag = |w: &str| crate::bibtext::term(&format!("{name}: {w}"));
+            match std::fs::metadata(&p) {
+                Ok(m) if !m.is_file() => {
+                    map.warnings.push(tag("not a regular file, skipped"));
+                    continue;
+                }
+                Ok(m) if m.len() > MAX_FILE_BYTES => {
+                    map.warnings.push(tag("file too large, skipped"));
+                    continue;
+                }
+                Err(e) => {
+                    map.warnings.push(tag(&format!("cannot read: {e}")));
+                    continue;
+                }
+                Ok(_) => {}
+            }
+            match std::fs::read(&p) {
+                Ok(b) => {
+                    let text = String::from_utf8_lossy(&b);
+                    let (es, ws) =
+                        parse_any(&name, &text).unwrap_or_else(|err| (vec![], vec![err]));
+                    let room = MAX_ENTRIES.saturating_sub(map.entries.len());
+                    if es.len() > room {
+                        map.warnings.push(tag(&format!(
+                            "more than {MAX_ENTRIES} entries, the rest is ignored"
+                        )));
+                    }
+                    map.entries.extend(es.into_iter().take(room).map(|mut e| {
+                        e.source = name.clone();
+                        e
+                    }));
+                    map.warnings.extend(ws.into_iter().map(|w| tag(&w)));
+                }
+                Err(e) => map.warnings.push(tag(&format!("cannot read: {e}"))),
+            }
+        }
+        map
+    }
+
+    /// Match by citation key == file name (without extension), or by the BibTeX `file` field.
+    pub fn find(&self, doc_path: &str) -> Option<&Entry> {
+        let p = Path::new(doc_path);
+        let stem = p.file_stem()?.to_string_lossy().to_lowercase();
+        let fname = p.file_name()?.to_string_lossy().to_lowercase();
+        self.entries
+            .iter()
+            .find(|e| e.key.to_lowercase() == stem)
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .find(|e| !e.file.is_empty() && e.file.to_lowercase().contains(&fname))
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = r#"
+@comment{ignored}
+@article{smith2019,
+  author = {Smith, John and Doe, Jane and Roe, Rick},
+  title = {Recognition of {Foreign} Qualifications: a {\"u}ber-review},
+  journal = "Journal of Education",
+  year = 2019,
+  doi = {10.1000/xyz},
+  file = {Full Text:C\:\\Users\\a\\Zotero\\storage\\AB12\\smith_review.pdf:application/pdf}
+}
+@book{lisbon97,
+  author = {Council of Europe},
+  title = {Lisbon Recognition Convention},
+  publisher = {Council of Europe},
+  date = {1997-04-11}
+}
+"#;
+
+    #[test]
+    fn parses_entries_and_cleans_latex() {
+        let e = parse(SAMPLE);
+        assert_eq!(e.len(), 2);
+        assert_eq!(e[0].key, "smith2019");
+        assert_eq!(e[0].year, "2019");
+        assert_eq!(e[0].container, "Journal of Education");
+        assert!(
+            e[0].title
+                .starts_with("Recognition of Foreign Qualifications")
+        );
+        assert!(e[0].title.contains("über-review"));
+        assert_eq!(e[1].year, "1997");
+        assert_eq!(e[1].container, "Council of Europe");
+    }
+
+    #[test]
+    fn latex_accents_become_unicode() {
+        for (src, want) in [
+            (r##"M{\"u}ller"##, "Müller"),
+            (r##"{\'E}cole"##, "École"),
+            (r##"Fran\c{c}ois"##, "François"),
+            (r##"Stra{\ss}e"##, "Straße"),
+            (r##"\v{S}tef\u{a}nescu"##, "Štefănescu"),
+            (r##"Bj{\o}rn \AA ngstr{\"o}m"##, "Bjørn Ångström"),
+            (r##"na\"{\i}ve"##, "naïve"),
+            (r##"\`a la \^{\i}le"##, "à la île"),
+            (r##"50\% of \& more"##, "50% of & more"),
+            (r##"\textbf{bold} text"##, "bold text"),
+            (r##"\"##, ""),
+            (r##"a\"##, "a"),
+            (r##"{\"}"##, ""),
+        ] {
+            assert_eq!(clean(src), want, "{src}");
+        }
+    }
+
+    #[test]
+    fn formats_citations() {
+        let e = parse(SAMPLE);
+        assert_eq!(e[0].cite(), "Smith et al. (2019)");
+        assert_eq!(e[1].cite(), "Council of Europe (1997)");
+        let person = Entry {
+            author: "Jane Roe".into(),
+            year: "2001".into(),
+            ..Default::default()
+        };
+        assert_eq!(person.cite(), "Roe (2001)");
+        let two = Entry {
+            author: "A, X and B, Y".into(),
+            year: "2020".into(),
+            ..Default::default()
+        };
+        assert_eq!(two.cite(), "A & B (2020)");
+        assert!(
+            e[0].reference().contains("(2019)") && e[0].reference().contains("doi.org/10.1000/xyz")
+        );
+    }
+
+    #[test]
+    fn matches_by_key_or_file_field() {
+        let m = BibMap {
+            entries: parse(SAMPLE),
+            ..Default::default()
+        };
+        assert_eq!(m.find("Library/sub/Lisbon97.pdf").unwrap().key, "lisbon97");
+        assert_eq!(m.find("Library/smith_review.pdf").unwrap().key, "smith2019");
+        assert!(m.find("Library/unknown.pdf").is_none());
+    }
+
+    #[test]
+    fn ris_and_csl_roundtrip() {
+        let e = &parse(
+            "@article{smith2019, author={Smith, Jane and Doe, John}, title={On proof}, journal={Law Rev}, year={2019}, doi={10.1/x}}",
+        )[0];
+        let ris = e.to_ris();
+        assert!(
+            ris.starts_with("TY  - JOUR\n")
+                && ris.contains("AU  - Smith, Jane\n")
+                && ris.contains("PY  - 2019")
+                && ris.ends_with("ER  - \n")
+        );
+        let c = e.to_csl();
+        assert_eq!(c["id"], "smith2019");
+        assert_eq!(c["author"][0]["family"], "Smith");
+        assert_eq!(c["issued"]["date-parts"][0][0], 2019);
+        assert_eq!(parse(&e.to_bibtex())[0].title, "On proof");
+    }
+
+    #[test]
+    fn entry_type_survives_exports() {
+        let e = &parse("@phdthesis{t1, author={A, B}, title={T}, school={U}, year={2020}}")[0];
+        assert!(e.to_ris().starts_with("TY  - THES\n"));
+        assert_eq!(e.to_csl()["type"], "thesis");
+        assert!(e.to_bibtex().starts_with("@phdthesis{t1"));
+        let m = &parse("@thesis{t2, title={T}, type={Master's thesis}}")[0];
+        assert_eq!(m.genre, Some(Genre::Master));
+        let u = &parse("@software{s1, title={X}}")[0];
+        assert!(u.to_bibtex().starts_with("@misc{") && u.to_ris().starts_with("TY  - GEN"));
+        assert_eq!(u.to_csl()["type"], "document");
+        let man = &parse("@manual{m1, title={X}}")[0];
+        assert_eq!(man.to_csl()["type"], "report");
+        assert!(man.to_bibtex().starts_with("@manual{"));
+    }
+
+    #[test]
+    fn names_flow_into_citations_and_csl() {
+        let e = &parse(
+            "@book{b, author={von Beethoven, Ludwig and Doe, Jr., John}, title={T}, year={1800}}",
+        )[0];
+        assert_eq!(e.cite(), "von Beethoven & Doe (1800)");
+        let c = e.to_csl();
+        assert_eq!(c["author"][0]["family"], "Beethoven");
+        assert_eq!(c["author"][0]["non-dropping-particle"], "von");
+        assert_eq!(c["author"][1]["suffix"], "Jr.");
+        let o = &parse("@misc{o, author={Doe, John and others}, year={2001}}")[0];
+        assert_eq!(o.cite(), "Doe et al. (2001)");
+        assert!(!o.to_ris().contains("others"));
+        let b = &parse("@misc{q, author={{Barnes and Noble, Inc}}, year={2001}}")[0];
+        assert_eq!(b.cite(), "Barnes and Noble, Inc (2001)");
+        assert_eq!(b.to_csl()["author"][0]["literal"], "Barnes and Noble, Inc");
+    }
+
+    #[test]
+    fn full_reader_feeds_entries() {
+        let (e, w) = parse_with_warnings(
+            "@string{tl = \"Law Review\"}\n@inproceedings{c, crossref = {p1}, title = {T}, author={A, B}}\n@proceedings{p1, booktitle = {Proc. X}, year = 2005}\n@article{a, journal = tl # \" II\", pages={1--5}, month = jul, editor={E, F}}\n@misc{z, journal = zzz}",
+        );
+        assert_eq!(e[0].container, "Proc. X");
+        assert_eq!(e[0].year, "2005");
+        assert_eq!(e[0].origin.as_ref().unwrap().1, "inproceedings");
+        assert_eq!(e[2].container, "Law Review II");
+        assert_eq!((e[2].pages.as_str(), e[2].month.as_str()), ("1--5", "July"));
+        assert_eq!(e[2].editor, "E, F");
+        assert_eq!(e[3].container, "zzz");
+        assert!(w.iter().any(|x| x.contains("zzz")));
+    }
+}

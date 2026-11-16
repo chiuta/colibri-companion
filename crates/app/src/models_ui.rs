@@ -184,7 +184,7 @@ impl CompanionApp {
             }
             _ => {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Spinner::new());
+                    crate::widgets::spinner(ui);
                     ui.label(self.t("Citesc lista de modele…", "Reading the model list…"));
                 });
             }

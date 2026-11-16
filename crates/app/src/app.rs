@@ -257,6 +257,19 @@ pub struct ChatState {
     pub search: String,
     pub focus_search: bool,
     pub renaming: Option<(String, String)>,
+    /// What the sidebar search found for the text last searched, so the files are not read again
+    /// on every redraw while the text stays the same.
+    pub search_cache: Option<SearchCache>,
+}
+
+/// The result of one sidebar search, and what it is valid for.
+pub struct SearchCache {
+    pub query: String,
+    /// Fingerprint of the conversation list it was made from: a saved or deleted conversation
+    /// changes it, so the result is searched again.
+    pub stamp: (usize, u64),
+    pub at: Instant,
+    pub hits: std::collections::HashSet<String>,
 }
 
 /// What a message's height depends on; when it changes the message is drawn (and measured) again.
@@ -529,6 +542,7 @@ impl CompanionApp {
                 search: String::new(),
                 focus_search: false,
                 renaming: None,
+                search_cache: None,
             },
             store,
             toasts: Vec::new(),
@@ -1514,7 +1528,9 @@ impl CompanionApp {
             return;
         }
         self.install_log_read = Some(Instant::now());
-        if let Ok(text) = std::fs::read_to_string(paths::logs_dir().join("install.log")) {
+        // only the end of the file: an install log can grow to many megabytes, and this runs
+        // on the interface thread about once a second while an install is going
+        if let Ok(text) = read_tail(&paths::logs_dir().join("install.log"), INSTALL_LOG_TAIL) {
             let tail: Vec<&str> = text.lines().rev().take(40).collect();
             self.install_log = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
         }
@@ -2603,7 +2619,108 @@ pub fn explain_in(lang: Lang, e: &companion_core::connect::ConnectError) -> Stri
     }
 }
 
+/// How much of the end of the install log is looked at: far more than 40 lines of any real log.
+const INSTALL_LOG_TAIL: u64 = 64 * 1024;
+
+/// The last `max` bytes of a text file (all of it when it is smaller), as text. When the file is
+/// cut, the first, probably partial, line is dropped, so only whole lines come back.
+fn read_tail(path: &std::path::Path, max: u64) -> std::io::Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let len = f.metadata()?.len();
+    let cut = len > max;
+    if cut {
+        f.seek(SeekFrom::Start(len - max))?;
+    }
+    let mut bytes = Vec::with_capacity(len.min(max) as usize);
+    f.take(max).read_to_end(&mut bytes)?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if cut {
+        return Ok(text
+            .split_once('\n')
+            .map_or(String::new(), |(_, rest)| rest.to_string()));
+    }
+    Ok(text)
+}
+
 fn coli_last_log(log: &std::path::Path) -> String {
     let t = std::fs::read_to_string(log).unwrap_or_default();
     companion_core::coli::last_lines(&t, 4)
+}
+
+#[cfg(test)]
+mod tail_tests {
+    use super::read_tail;
+    use std::io::Write;
+
+    fn file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("cc-tail-{}-{name}", std::process::id()));
+        std::fs::File::create(&p).unwrap().write_all(bytes).unwrap();
+        p
+    }
+
+    fn last40(text: &str) -> Vec<&str> {
+        let mut v: Vec<&str> = text.lines().rev().take(40).collect();
+        v.reverse();
+        v
+    }
+
+    #[test]
+    fn a_small_file_is_read_whole_and_a_big_one_by_its_end() {
+        let small = file("small", b"one\ntwo\nthree");
+        assert_eq!(read_tail(&small, 1024).unwrap(), "one\ntwo\nthree");
+        let _ = std::fs::remove_file(small);
+
+        let lines: Vec<String> = (0..5000).map(|i| format!("line {i} ünïcode ✓")).collect();
+        let text = lines.join("\n") + "\n";
+        let big = file("big", text.as_bytes());
+        // a limit that lands inside a multi-byte character must still give whole, valid lines
+        for max in [100u64, 1000, 4097, 65536] {
+            let tail = read_tail(&big, max).unwrap();
+            assert!(!tail.contains('\u{FFFD}'), "max {max}: broken character");
+            let (a, b) = (last40(&tail), last40(&text));
+            // a short tail holds fewer than 40 lines: they must be the file's last whole lines
+            assert!(b.ends_with(&a), "max {max}");
+            if max >= 4097 {
+                assert_eq!(a, b, "max {max}");
+            }
+        }
+        let _ = std::fs::remove_file(big);
+    }
+
+    #[test]
+    fn empty_missing_and_line_less_files() {
+        let empty = file("empty", b"");
+        assert_eq!(read_tail(&empty, 10).unwrap(), "");
+        let _ = std::fs::remove_file(empty);
+        assert!(read_tail(std::path::Path::new("/definitely/not/here.log"), 10).is_err());
+        let one_long = file("long", "x".repeat(5000).as_bytes());
+        assert_eq!(read_tail(&one_long, 100).unwrap(), ""); // only a partial line: nothing whole
+        let _ = std::fs::remove_file(one_long);
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_install_log_tail() {
+        let line = "Collecting some-package==1.2.3 (from requirements) Downloading 12.3 MB\n";
+        let p = file("perf", line.repeat(400_000).as_bytes()); // about 28 MB
+        let time = |f: &dyn Fn() -> usize| {
+            let t = std::time::Instant::now();
+            let n = (0..5).map(|_| f()).sum::<usize>();
+            (t.elapsed().as_secs_f64() * 1000.0 / 5.0, n)
+        };
+        let old = time(&|| {
+            let text = std::fs::read_to_string(&p).unwrap();
+            text.lines().rev().take(40).count()
+        });
+        let new = time(&|| {
+            let text = read_tail(&p, super::INSTALL_LOG_TAIL).unwrap();
+            text.lines().rev().take(40).count()
+        });
+        println!(
+            "perf_install_log 28 MB: OLD {:.2} ms, NEW {:.3} ms",
+            old.0, new.0
+        );
+        let _ = std::fs::remove_file(p);
+    }
 }

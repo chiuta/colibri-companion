@@ -7,7 +7,7 @@ use crate::widgets::*;
 use companion_core::coli::{self, ModelInfo};
 use companion_core::locate;
 use companion_core::proc;
-use egui::{RichText, Spinner, Ui};
+use egui::{RichText, Ui};
 use std::time::Duration;
 
 impl CompanionApp {
@@ -54,7 +54,7 @@ impl CompanionApp {
     fn screen_detecting(&mut self, ui: &mut Ui) {
         ui.add_space(80.0);
         ui.vertical_centered(|ui| {
-            ui.add(Spinner::new().size(36.0));
+            crate::widgets::spinner_sized(ui, 36.0);
             ui.add_space(12.0);
             ui.label(
                 RichText::new(self.t(
@@ -177,7 +177,7 @@ impl CompanionApp {
                     }
                 });
                 if self.cloning && self.fetch_progress.is_none() && !self.fetch_unpacking {
-                    ui.add(Spinner::new());
+                    crate::widgets::spinner(ui);
                 }
             });
             if self.cloning {
@@ -303,7 +303,7 @@ impl CompanionApp {
             ui.add_space(6.0);
         } else if matches!(self.hardware, Loadable::Loading) {
             ui.horizontal(|ui| {
-                ui.add(Spinner::new());
+                crate::widgets::spinner(ui);
                 ui.label(self.t("Măsor calculatorul…", "Measuring your computer…"));
             });
         }
@@ -313,7 +313,7 @@ impl CompanionApp {
         match self.catalog.clone() {
             Loadable::Idle | Loadable::Loading => {
                 ui.horizontal(|ui| {
-                    ui.add(Spinner::new());
+                    crate::widgets::spinner(ui);
                     ui.label(self.t("Citesc lista de modele…", "Reading the model list…"));
                 });
             }
@@ -749,7 +749,7 @@ impl CompanionApp {
                 _ => self.t("Lucrez…", "Working…"),
             };
             ui.horizontal(|ui| {
-                ui.add(Spinner::new());
+                crate::widgets::spinner(ui);
                 ui.label(RichText::new(what).size(18.0).semibold());
             });
             if let Some(i) = &inst {
@@ -955,7 +955,7 @@ impl CompanionApp {
         self.step_header(ui, 4, self.t("Se încarcă modelul", "Loading the model"), "");
         card(ui, &p, |ui| {
             ui.horizontal(|ui| {
-                ui.add(Spinner::new().size(28.0));
+                crate::widgets::spinner_sized(ui, 28.0);
                 let secs = self
                     .starting_since
                     .map(|t| t.elapsed().as_secs_f64())

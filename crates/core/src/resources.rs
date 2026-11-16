@@ -245,4 +245,23 @@ mod tests {
         assert!(snap.others.len() <= 5);
         assert!(!snap.others.iter().any(|(n, _)| n.is_empty()));
     }
+
+    /// Cost of one sample on this machine (`cargo test --release -p companion-core perf_ --
+    /// --ignored --nocapture`). Prints only.
+    #[test]
+    #[ignore]
+    fn perf_one_resource_sample() {
+        let mut sampler = Sampler::new();
+        let me = vec![("self".to_string(), std::process::id())];
+        let _ = sampler.sample(&me, None);
+        let t = std::time::Instant::now();
+        let n = 20;
+        for _ in 0..n {
+            let _ = sampler.sample(&me, None);
+        }
+        println!(
+            "perf_resources sample: {:.2} ms each on this machine",
+            t.elapsed().as_secs_f64() * 1000.0 / f64::from(n)
+        );
+    }
 }

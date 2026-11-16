@@ -779,7 +779,7 @@ impl CompanionApp {
             }
             CaptureState::Analysing => {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Spinner::new());
+                    crate::widgets::spinner(ui);
                     ui.label(self.t("Se analizează înregistrarea…", "Analysing the recording…"));
                 });
             }
@@ -1112,7 +1112,7 @@ impl CompanionApp {
                 cancelling,
             } => {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Spinner::new());
+                    crate::widgets::spinner(ui);
                     let best_txt = best.map_or("—".to_string(), |b| format!("{b:.1}"));
                     ui.label(
                         self.t(

@@ -1,0 +1,32 @@
+//! Citation-grounded research tools, ported from TEZAUR (MIT, same author) for Colibri Companion.
+pub mod audit;
+pub mod bib;
+pub mod bibtex;
+pub mod bibtext;
+pub mod csljson;
+pub mod declare;
+pub mod dedup;
+pub mod epubpages;
+pub mod evalset;
+pub mod export;
+#[cfg(test)]
+mod hostile;
+pub mod ids;
+pub mod index;
+pub mod ingest;
+pub mod jcs;
+pub mod keys;
+pub mod kinds;
+pub mod locator;
+pub mod names;
+pub mod pdfx;
+pub mod phrase;
+pub mod receipt;
+pub mod refs;
+pub mod retrieve;
+pub mod ris;
+pub mod sanitize;
+pub mod sha256;
+pub mod unitext;
+pub mod verify;
+pub mod xmlmini;

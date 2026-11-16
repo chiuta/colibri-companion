@@ -1,15 +1,14 @@
 //! The conversation screen: saved chats on the left, messages in the middle,
 //! one comfortable box to type in at the bottom.
 
-use crate::app::{CompanionApp, HeightKey};
+use crate::app::{CompanionApp, HeightKey, SearchCache};
 use crate::theme::Semibold;
 use crate::widgets::*;
 use companion_core::chat::{ChatError, ErrorKind, Health, Thinking};
 use companion_core::store::date_label;
 use companion_core::{StoredMessage, Style};
-use egui::{
-    Align, CornerRadius, Frame, Key, Layout, Margin, Modifiers, Panel, RichText, Spinner, Ui, vec2,
-};
+use egui::{Align, CornerRadius, Frame, Key, Layout, Margin, Modifiers, Panel, RichText, Ui, vec2};
+use std::time::{Duration, Instant};
 
 enum MsgAction {
     Copy(String),
@@ -113,26 +112,48 @@ impl CompanionApp {
         });
         let current = self.chat.conv.id.clone();
         let query = self.chat.search.trim().to_lowercase();
-        let hits: Option<std::collections::HashSet<String>> = if query.is_empty() {
-            None
-        } else {
-            Some(self.store.search(&query).into_iter().collect())
-        };
-        let searching = hits.is_some();
-        let list: Vec<(String, String, u64)> = self
+        let stamp = (
+            self.chat.list.len(),
+            self.chat
+                .list
+                .iter()
+                .fold(0u64, |a, c| a.wrapping_add(c.updated)),
+        );
+        // Searching reads every saved conversation, so it runs once per search text (and again when
+        // the list changes or after a few seconds), not on every redraw.
+        let fresh = search_cache_is_fresh(self.chat.search_cache.as_ref(), &query, stamp);
+        if query.is_empty() {
+            self.chat.search_cache = None;
+        } else if !fresh {
+            self.chat.search_cache = Some(SearchCache {
+                hits: self.store.search(&query).into_iter().collect(),
+                query: query.clone(),
+                stamp,
+                at: Instant::now(),
+            });
+        }
+        let searching = !query.is_empty();
+        // indices only: the rows that are on screen are copied below, not the whole history
+        let shown: Vec<usize> = self
             .chat
             .list
             .iter()
-            .filter(|c| hits.as_ref().is_none_or(|h| h.contains(&c.id)))
-            .map(|c| (c.id.clone(), c.title.clone(), c.updated))
+            .enumerate()
+            .filter(|(_, c)| {
+                self.chat
+                    .search_cache
+                    .as_ref()
+                    .is_none_or(|s| s.hits.contains(&c.id))
+            })
+            .map(|(i, _)| i)
             .collect();
         let mut open = None;
         let mut delete = None;
         let mut rename: Option<(String, String)> = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if list.is_empty() {
+            .show_rows(ui, 40.0, shown.len(), |ui, range| {
+                if shown.is_empty() {
                     let msg = if searching {
                         self.t(
                             "Nicio conversație nu se potrivește.",
@@ -146,7 +167,11 @@ impl CompanionApp {
                     };
                     ui.label(RichText::new(msg).color(p.muted));
                 }
-                for (id, title, updated) in &list {
+                let visible: Vec<(String, String, u64)> = range
+                    .filter_map(|r| self.chat.list.get(*shown.get(r)?))
+                    .map(|c| (c.id.clone(), c.title.clone(), c.updated))
+                    .collect();
+                for (id, title, updated) in &visible {
                     let new_name_hint = self.t("Nume nou", "New name");
                     if let Some((rid, name)) =
                         self.chat.renaming.as_mut().filter(|(rid, _)| rid == id)
@@ -155,7 +180,7 @@ impl CompanionApp {
                         let first = !ui.ctx().memory(|m| m.has_focus(edit_id));
                         let chars = name.chars().count();
                         let r = ui.add_sized(
-                            [ui.available_width(), 36.0],
+                            [ui.available_width(), 40.0],
                             egui::TextEdit::singleline(name)
                                 .id(edit_id)
                                 .hint_text(new_name_hint),
@@ -439,7 +464,7 @@ impl CompanionApp {
                                 .show(ui, &mut cache, &m.content);
                         } else if streaming && m.reasoning.is_empty() {
                             ui.horizontal(|ui| {
-                                ui.add(Spinner::new());
+                                crate::widgets::spinner(ui);
                                 let secs = generating.unwrap_or(0);
                                 let msg = w_reading.replacen("{}", &secs.to_string(), 1);
                                 ui.label(RichText::new(msg).color(p.muted));
@@ -850,4 +875,180 @@ fn avatar(ui: &mut Ui, p: &crate::theme::Palette) {
         egui::FontId::proportional(17.0),
         p.on_accent,
     );
+}
+
+/// Frame-cost measurements (`cargo test --release -p colibri-companion perf_ -- --ignored --nocapture`).
+/// They only print timings; nothing here asserts a speed.
+/// Whether the last search can be shown again: same text, same list, and not older than a few seconds.
+fn search_cache_is_fresh(cache: Option<&SearchCache>, query: &str, stamp: (usize, u64)) -> bool {
+    cache.is_some_and(|c| {
+        c.query == query && c.stamp == stamp && c.at.elapsed() < Duration::from_secs(5)
+    })
+}
+
+#[cfg(test)]
+mod search_cache_tests {
+    use super::*;
+
+    fn cache(query: &str, stamp: (usize, u64), age: Duration) -> SearchCache {
+        SearchCache {
+            query: query.into(),
+            stamp,
+            at: Instant::now().checked_sub(age).unwrap_or_else(Instant::now),
+            hits: Default::default(),
+        }
+    }
+
+    #[test]
+    fn the_search_is_reused_only_for_the_same_text_and_list() {
+        let c = cache("rust", (3, 10), Duration::ZERO);
+        assert!(search_cache_is_fresh(Some(&c), "rust", (3, 10)));
+        assert!(!search_cache_is_fresh(Some(&c), "rus", (3, 10)));
+        assert!(!search_cache_is_fresh(Some(&c), "rust", (4, 10)));
+        assert!(!search_cache_is_fresh(Some(&c), "rust", (3, 11)));
+        assert!(!search_cache_is_fresh(None, "rust", (3, 10)));
+        let old = cache("rust", (3, 10), Duration::from_secs(6));
+        assert!(!search_cache_is_fresh(Some(&old), "rust", (3, 10)));
+    }
+}
+
+#[cfg(test)]
+mod perf {
+    use super::*;
+    use companion_core::store::{Conversation, Settings};
+    use std::time::Instant;
+
+    fn app() -> CompanionApp {
+        let ctx = egui::Context::default();
+        CompanionApp::new(
+            ctx,
+            Settings::default(),
+            Some("http://127.0.0.1:1".into()),
+            false,
+        )
+    }
+
+    fn reply(i: usize) -> String {
+        format!(
+            "## Answer {i}\n\nSome **markdown** with `code`, a list:\n\n- one\n- two\n- three\n\n```rust\nfn main() {{\n    println!(\"{i}\");\n}}\n```\n\n{}",
+            "A sentence that makes the paragraph wrap over several lines in the window. ".repeat(6)
+        )
+    }
+
+    fn conversation(n: usize) -> Conversation {
+        let mut c = Conversation::new();
+        c.id = "perf-bench".into();
+        for i in 0..n {
+            let (role, content) = if i % 2 == 0 {
+                ("user", format!("Question number {i}: how does this work?"))
+            } else {
+                ("assistant", reply(i))
+            };
+            c.messages.push(StoredMessage {
+                role: role.into(),
+                content,
+                ..Default::default()
+            });
+        }
+        c
+    }
+
+    fn frame(app: &mut CompanionApp, w: f32, h: f32) -> f64 {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(w, h))),
+            ..Default::default()
+        };
+        let ctx = app.ctx.clone();
+        let t = Instant::now();
+        let mut out = ctx.run_ui(input, |ui| app.chat_main(ui));
+        out.textures_delta.clear();
+        t.elapsed().as_secs_f64() * 1000.0
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_chat_frame_cost() {
+        for n in [100usize, 1000, 4000] {
+            let mut a = app();
+            a.chat.conv = conversation(n);
+            let cold = frame(&mut a, 1000.0, 800.0);
+            let mut warm = Vec::new();
+            for _ in 0..20 {
+                warm.push(frame(&mut a, 1000.0, 800.0));
+            }
+            warm.sort_by(|x, y| x.total_cmp(y));
+            println!(
+                "perf_chat n={n:>5}: first frame {cold:>9.1} ms, steady median {:>7.2} ms, p90 {:>7.2} ms",
+                warm[warm.len() / 2],
+                warm[warm.len() * 9 / 10]
+            );
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_streaming_long_answer() {
+        // the last message grows by a few words per frame, like a streamed answer
+        let mut a = app();
+        a.chat.conv = conversation(20);
+        a.chat.generating = Some(crate::app::Generation {
+            id: 1,
+            cancel: companion_core::http::CancelToken::new(),
+            started: Instant::now(),
+        });
+        let mut times = Vec::new();
+        for step in 0..300 {
+            if let Some(m) = a.chat.conv.messages.last_mut() {
+                m.role = "assistant".into();
+                m.content.push_str(
+                    "another few words of the streamed answer, with `code` and **bold**. ",
+                );
+                if step % 40 == 0 {
+                    m.content.push_str("\n\n- item\n- item\n\n");
+                }
+            }
+            times.push(frame(&mut a, 1000.0, 800.0));
+        }
+        let at = |r: std::ops::Range<usize>| times[r.clone()].iter().sum::<f64>() / r.len() as f64;
+        println!(
+            "perf_stream: chars {} | mean frame ms: first 30 {:.2}, middle 30 {:.2}, last 30 {:.2}",
+            a.chat.conv.messages.last().map_or(0, |m| m.content.len()),
+            at(0..30),
+            at(135..165),
+            at(270..300)
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_sidebar_with_many_conversations() {
+        let mut a = app();
+        for i in 0..2000 {
+            let mut c = Conversation::new();
+            c.id = format!("c{i}");
+            c.title = format!("Conversation title number {i}");
+            c.updated = i as u64;
+            a.chat.list.push(c);
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                vec2(1000.0, 800.0),
+            )),
+            ..Default::default()
+        };
+        let mut v = Vec::new();
+        for _ in 0..30 {
+            let ctx = a.ctx.clone();
+            let t = Instant::now();
+            let mut out = ctx.run_ui(input.clone(), |ui| a.sidebar(ui));
+            out.textures_delta.clear();
+            v.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        v.sort_by(|x, y| x.total_cmp(y));
+        println!(
+            "perf_sidebar 2000 chats: median {:.2} ms, p90 {:.2} ms",
+            v[15], v[27]
+        );
+    }
 }

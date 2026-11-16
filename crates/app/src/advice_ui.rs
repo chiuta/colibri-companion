@@ -61,7 +61,7 @@ impl CompanionApp {
         match self.gpus.clone() {
             None => {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Spinner::new());
+                    crate::widgets::spinner(ui);
                     ui.label(self.t("Caut plăcile video…", "Looking for graphics cards…"));
                 });
             }
@@ -256,7 +256,7 @@ impl CompanionApp {
         match self.plan.clone() {
             None => {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Spinner::new());
+                    crate::widgets::spinner(ui);
                     ui.label(self.t(
                         "colibri calculează planul…",
                         "colibri is working out its plan…",
@@ -313,7 +313,7 @@ impl CompanionApp {
                 self.run_tune();
             }
             if busy {
-                ui.add(egui::Spinner::new());
+                crate::widgets::spinner(ui);
             }
         });
         if busy {
@@ -383,7 +383,7 @@ impl CompanionApp {
                     self.compare_contexts();
                 }
                 if self.ctx_busy {
-                    ui.add(egui::Spinner::new());
+                    crate::widgets::spinner(ui);
                 }
             });
             return;
@@ -467,7 +467,7 @@ impl CompanionApp {
                 self.measure_disk();
             }
             if self.disk_busy {
-                ui.add(egui::Spinner::new());
+                crate::widgets::spinner(ui);
             }
         });
         match self.disk_speed.clone() {

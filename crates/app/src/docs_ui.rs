@@ -288,7 +288,7 @@ impl CompanionApp {
                 );
                 if self.docs.busy > 0 {
                     ui.horizontal(|ui| {
-                        ui.add(egui::Spinner::new());
+                        crate::widgets::spinner(ui);
                         ui.label(
                             self.t("Citesc {} fișiere…", "Reading {} files…")
                                 .replacen("{}", &self.docs.busy.to_string(), 1),

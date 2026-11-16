@@ -6,6 +6,38 @@ use egui::{
     Align, Button, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke, Ui, vec2,
 };
 
+/// A spinning arc like egui's own `Spinner`, but redrawn about 30 times a second instead of at
+/// every screen refresh (egui's asks for a repaint on every frame, for as long as it is shown).
+pub fn spinner(ui: &mut Ui) {
+    let size = ui.style().spacing.interact_size.y;
+    spinner_sized(ui, size);
+}
+
+pub fn spinner_sized(ui: &mut Ui, size: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(size, size), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(33));
+    let radius = (rect.height() / 2.0) - 2.0;
+    let n = (radius.round() as u32).clamp(8, 128);
+    let time = ui.input(|i| i.time);
+    let start = time * std::f64::consts::TAU;
+    let end = start + 240f64.to_radians() * time.sin();
+    let points: Vec<egui::Pos2> = (0..=n)
+        .map(|i| {
+            let a = start + (end - start) * f64::from(i) / f64::from(n);
+            let (sin, cos) = a.sin_cos();
+            rect.center() + radius * vec2(cos as f32, sin as f32)
+        })
+        .collect();
+    ui.painter().add(egui::Shape::line(
+        points,
+        Stroke::new(3.0, ui.visuals().strong_text_color()),
+    ));
+}
+
 pub fn card<R>(ui: &mut Ui, p: &Palette, add: impl FnOnce(&mut Ui) -> R) -> R {
     Frame::new()
         .fill(p.card)
@@ -82,7 +114,10 @@ pub fn progress_bar(ui: &mut Ui, p: &Palette, fraction: Option<f32>, label: &str
             let x = rect.left() + ((t * 0.7).fract()) * (rect.width() - w);
             let bar = egui::Rect::from_min_size(egui::pos2(x, rect.top()), vec2(w, h));
             ui.painter().rect_filled(bar, r, p.accent);
-            ui.ctx().request_repaint();
+            // the bar slides, so it needs redraws; about 30 a second look smooth and cost half of
+            // what redrawing at every screen refresh does, for as long as a model loads
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(33));
         }
     }
     if !label.is_empty() {

@@ -58,7 +58,7 @@ impl CompanionApp {
         let p = self.p;
         let Some(view) = self.res.clone() else {
             ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new());
+                crate::widgets::spinner(ui);
                 ui.label(self.t("Măsor…", "Measuring…"));
             });
             return;
@@ -496,7 +496,7 @@ impl CompanionApp {
                             }
                         });
                         if self.upd.updating {
-                            ui.add(egui::Spinner::new());
+                            crate::widgets::spinner(ui);
                         }
                     }
                     if let Some(r) = self.upd.app.clone() {

@@ -506,11 +506,11 @@ impl Conversation {
     /// Whether the title or any message contains `needle` (case-insensitive).
     pub fn matches(&self, needle: &str) -> bool {
         let n = needle.to_lowercase();
-        self.title.to_lowercase().contains(&n)
+        contains_lowercase(&self.title, &n)
             || self
                 .messages
                 .iter()
-                .any(|m| m.content.to_lowercase().contains(&n))
+                .any(|m| contains_lowercase(&m.content, &n))
     }
 
     pub fn to_markdown(&self, user: &str, assistant: &str) -> String {
@@ -575,6 +575,34 @@ pub fn windows_safe_stem(stem: &str) -> String {
 }
 
 /// The id of the conversation stored in this file: its name without `.json`.
+/// `hay.to_lowercase().contains(needle_lower)` without building the lowercase copy when both are
+/// plain ASCII (the common case): for ASCII the two are the same thing. Other text takes the
+/// general path, so a letter that lowercases to several characters still matches as before.
+fn contains_lowercase(hay: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if needle_lower.is_ascii() && hay.is_ascii() {
+        return find_ascii_ci(hay.as_bytes(), needle_lower.as_bytes());
+    }
+    hay.to_lowercase().contains(needle_lower)
+}
+
+/// Whether `hay` holds `needle` ignoring ASCII case. Looks for the first letter in both cases and
+/// only then compares the rest, which is several times faster than comparing at every position.
+fn find_ascii_ci(hay: &[u8], needle: &[u8]) -> bool {
+    let Some((&first, rest)) = needle.split_first() else {
+        return true;
+    };
+    let (lo, up) = (first.to_ascii_lowercase(), first.to_ascii_uppercase());
+    let Some(last_start) = hay.len().checked_sub(needle.len()) else {
+        return false;
+    };
+    (0..=last_start).any(|i| {
+        (hay[i] == lo || hay[i] == up) && hay[i + 1..i + needle.len()].eq_ignore_ascii_case(rest)
+    })
+}
+
 fn id_of_file(path: &Path) -> Option<String> {
     path.file_stem()?.to_str().map(str::to_string)
 }
@@ -640,11 +668,30 @@ impl ConversationStore {
         if needle.is_empty() {
             return Vec::new();
         }
-        self.list()
+        let lower = needle.to_lowercase();
+        // A file that is plain ASCII and does not hold the needle anywhere in its raw text cannot
+        // hold it in a title or message either, as long as the needle has no character JSON writes
+        // as an escape: the text is stored as it is otherwise. Most files are skipped unparsed.
+        let skippable = lower.is_ascii()
+            && !lower
+                .bytes()
+                .any(|b| b == b'"' || b == b'\\' || b < 0x20 || b == 0x7f);
+        let mut hits: Vec<(u64, String)> = fs::read_dir(&self.dir)
             .into_iter()
-            .filter(|c| c.matches(needle))
-            .map(|c| c.id)
-            .collect()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .filter_map(|e| Some((id_of_file(&e.path())?, fs::read(e.path()).ok()?)))
+            .filter(|(_, bytes)| {
+                !(skippable && bytes.is_ascii() && !find_ascii_ci(bytes, lower.as_bytes()))
+            })
+            .filter_map(|(id, bytes)| {
+                let c: Conversation = serde_json::from_slice(&bytes).ok()?;
+                c.matches(needle).then_some((c.updated, id))
+            })
+            .collect();
+        hits.sort_by_key(|(updated, _)| std::cmp::Reverse(*updated));
+        hits.into_iter().map(|(_, id)| id).collect()
     }
 
     /// One conversation, in full.
@@ -686,9 +733,11 @@ impl ConversationStore {
             .flatten()
             .flatten()
             .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-            .filter_map(|e| Some((id_of_file(&e.path())?, fs::File::open(e.path()).ok()?)))
-            .filter_map(|(id, f)| {
-                let m = serde_json::from_reader::<_, Meta>(io::BufReader::new(f)).ok()?;
+            .filter_map(|e| Some((id_of_file(&e.path())?, fs::read(e.path()).ok()?)))
+            .filter_map(|(id, bytes)| {
+                // from a slice, not from a reader: a reader is parsed byte by byte, about three
+                // times slower, and the skipped messages are most of the file
+                let m = serde_json::from_slice::<Meta>(&bytes).ok()?;
                 Some((id, m))
             })
             .map(|(id, m)| Conversation {
@@ -1137,6 +1186,216 @@ mod lang_tests {
         // the first copy is not overwritten by the second
         assert_eq!(fs::read(dir.join("settings.json.bad")).unwrap(), b"[1,2,3]");
         assert!(dir.join("settings.json.bad1").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Timing of the sidebar operations on a big history (`cargo test --release -p companion-core
+    /// perf_ -- --ignored --nocapture`). Prints only; asserts no speed.
+    #[test]
+    #[ignore]
+    fn perf_search_and_listing_on_a_big_history() {
+        let dir = std::env::temp_dir().join(format!("cc-perf-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let store = ConversationStore::at(dir.clone());
+        let sentence = "A sentence of ordinary text that wraps. ".repeat(15);
+        for i in 0..500 {
+            let mut c = Conversation::new();
+            c.id = format!("c{i}");
+            c.title = format!("Title {i}");
+            c.updated = i;
+            for j in 0..40 {
+                c.messages.push(StoredMessage {
+                    role: if j % 2 == 0 { "user" } else { "assistant" }.into(),
+                    content: format!("{sentence} message {j}"),
+                    ..Default::default()
+                });
+            }
+            store.save(&c).unwrap();
+        }
+        let time = |label: &str, f: &dyn Fn() -> usize| {
+            let _ = f();
+            let t = std::time::Instant::now();
+            let n = (0..5).map(|_| f()).sum::<usize>();
+            println!(
+                "perf_store {label:<28} {:>8.1} ms/call (result {})",
+                t.elapsed().as_secs_f64() * 1000.0 / 5.0,
+                n / 5
+            );
+        };
+        let old = |needle: &str| {
+            let n = needle.to_lowercase();
+            store
+                .list()
+                .into_iter()
+                .filter(|c| {
+                    c.title.to_lowercase().contains(&n)
+                        || c.messages
+                            .iter()
+                            .any(|m| m.content.to_lowercase().contains(&n))
+                })
+                .count()
+        };
+        let old_summaries = || {
+            #[derive(Deserialize)]
+            #[serde(default)]
+            struct Meta {
+                title: String,
+                updated: u64,
+                messages: serde::de::IgnoredAny,
+            }
+            impl Default for Meta {
+                fn default() -> Self {
+                    Meta {
+                        title: String::new(),
+                        updated: 0,
+                        messages: serde::de::IgnoredAny,
+                    }
+                }
+            }
+            fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .filter_map(|e| fs::File::open(e.path()).ok())
+                .filter_map(|f| serde_json::from_reader::<_, Meta>(io::BufReader::new(f)).ok())
+                .inspect(|m| {
+                    std::hint::black_box(m.title.len() + m.updated as usize);
+                })
+                .count()
+        };
+        time("summaries OLD (from_reader)", &old_summaries);
+        time("search OLD (list+lowercase)", &|| old("zzzz-not-there"));
+        time("search (no hit)", &|| store.search("zzzz-not-there").len());
+        time("search (hit in title)", &|| store.search("title 4").len());
+        time("search (non-ASCII needle)", &|| store.search("żółć").len());
+        time("summaries (sidebar list)", &|| store.summaries().len());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_ascii_fast_search_agrees_with_the_general_one() {
+        let cases = [
+            ("Hello World", "hello"),
+            ("Hello World", "o w"),
+            ("Hello", "xyz"),
+            ("", "a"),
+            ("abc", ""),
+            ("Straße", "straße"),
+            ("İstanbul", "i̇stanbul"),
+            ("K\u{212A}elvin", "kk"),
+            ("ŻÓŁĆ text", "żółć"),
+            ("ascii only", "ascii"),
+        ];
+        for (hay, needle) in cases {
+            assert_eq!(
+                contains_lowercase(hay, needle),
+                hay.to_lowercase().contains(needle),
+                "{hay:?} / {needle:?}"
+            );
+        }
+        let mut x: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let alphabet: Vec<char> = "abAB ,.éÉİK\u{212A}ß1".chars().collect();
+        for _ in 0..3000 {
+            let make = |len: usize, n: &mut dyn FnMut() -> u64| -> String {
+                (0..len)
+                    .map(|_| alphabet[(n() % alphabet.len() as u64) as usize])
+                    .collect()
+            };
+            let hay = make((next() % 12) as usize, &mut next);
+            let needle = make((next() % 3) as usize, &mut next).to_lowercase();
+            assert_eq!(
+                contains_lowercase(&hay, &needle),
+                hay.to_lowercase().contains(&needle),
+                "{hay:?} / {needle:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn summaries_read_the_same_titles_and_dates_as_before() {
+        let dir = std::env::temp_dir().join(format!("cc-sum-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let store = ConversationStore::at(dir.clone());
+        for (i, title) in ["b", "a"].iter().enumerate() {
+            let mut c = Conversation::new();
+            c.id = format!("c{i}");
+            c.title = (*title).into();
+            c.updated = 10 + i as u64;
+            c.title_custom = i == 1;
+            c.messages.push(StoredMessage {
+                content: "text with \"quotes\" and ünïcode".into(),
+                ..Default::default()
+            });
+            store.save(&c).unwrap();
+        }
+        fs::write(dir.join("broken.json"), b"{not json").unwrap();
+        let s = store.summaries();
+        assert_eq!(s.len(), 2);
+        assert_eq!(
+            (s[0].id.as_str(), s[0].title.as_str(), s[0].updated),
+            ("c1", "a", 11)
+        );
+        assert!(s[0].title_custom && s[0].messages.is_empty());
+        assert_eq!((s[1].id.as_str(), s[1].title.as_str()), ("c0", "b"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn search_finds_what_the_full_parse_finds_and_in_the_same_order() {
+        let dir = std::env::temp_dir().join(format!("cc-srch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let store = ConversationStore::at(dir.clone());
+        let texts = [
+            "plain words here",
+            "He said \"Quoted\" loudly",
+            "line one\nline two",
+            "back\\slash and tab\there",
+            "Żółć and ünïcode",
+            "needle in the NEEDLE case",
+        ];
+        for (i, t) in texts.iter().enumerate() {
+            let mut c = Conversation::new();
+            c.id = format!("c{i}");
+            c.title = format!("T{i}");
+            c.updated = 100 - i as u64;
+            c.messages.push(StoredMessage {
+                content: (*t).into(),
+                ..Default::default()
+            });
+            store.save(&c).unwrap();
+        }
+        for needle in [
+            "plain",
+            "QUOTED",
+            "\"quoted\"",
+            "line two",
+            "line one\nline two",
+            "back\\slash",
+            "tab\there",
+            "żółć",
+            "ÜNÏCODE",
+            "needle",
+            "role",
+            "t3",
+            "nothing-like-this",
+            "c0",
+        ] {
+            let slow: Vec<String> = store
+                .list()
+                .into_iter()
+                .filter(|c| c.matches(needle))
+                .map(|c| c.id)
+                .collect();
+            assert_eq!(store.search(needle), slow, "needle {needle:?}");
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }

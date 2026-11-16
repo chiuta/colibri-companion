@@ -325,3 +325,52 @@ fn main() -> eframe::Result {
         }),
     )
 }
+
+#[cfg(test)]
+mod perf {
+    use super::*;
+    use std::time::Instant;
+
+    /// Whole-interface cost per frame when nothing happens (`cargo test --release -p
+    /// colibri-companion perf_idle -- --ignored --nocapture`): prints only.
+    #[test]
+    #[ignore]
+    fn perf_idle_frame_and_repaint_rate() {
+        let ctx = egui::Context::default();
+        let mut app = CompanionApp::new(
+            ctx.clone(),
+            companion_core::store::Settings::default(),
+            Some("http://127.0.0.1:1".into()),
+            false,
+        );
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1100.0, 800.0),
+            )),
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            let _ = ctx.run_ui(input(), |ui| app.build_ui(ui));
+        }
+        let mut ms = Vec::new();
+        let mut immediate = 0;
+        for _ in 0..200 {
+            let t = Instant::now();
+            let out = ctx.run_ui(input(), |ui| app.build_ui(ui));
+            ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            if out
+                .viewport_output
+                .values()
+                .any(|v| v.repaint_delay.is_zero())
+            {
+                immediate += 1;
+            }
+        }
+        ms.sort_by(|a, b| a.total_cmp(b));
+        println!(
+            "perf_idle: median {:.2} ms, p90 {:.2} ms, max {:.2} ms; frames asking for an immediate repaint: {immediate}/200",
+            ms[100], ms[180], ms[199]
+        );
+    }
+}

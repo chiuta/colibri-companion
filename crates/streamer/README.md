@@ -51,3 +51,14 @@ The offline-optimal column sees the future, so it is a ceiling, not a target.
 - `ioplan`: tokens/s from drive speed, expert size and overlap of I/O with compute. The
   "overlapped" figure is a ceiling that assumes a perfect prefetcher. Defaults are
   assumptions, not measurements; `--measured-mbs` takes the app's drive-test result (`--example ioplan`).
+
+## Measured skew of real histories
+
+`docs/profiles.md` reports concentration, hold-out and per-layer figures measured on the
+histories colibri ships (`cargo run --release -p expert-streamer --example profiles`), and
+`skew::SKEW_SAMPLES` / `skew::pinned_hit_range` expose the measured spread as constants so other
+crates can use a range instead of one number. At 10% of all experts pinned, a fixed hot set
+served 34-75% of the uses on the history it was built from but only 11-30% on another history of
+the same model; a per-layer budget lost under 1 point against one global ranking. Limits: counts
+only (no order, so nothing about recency and no stability test inside a history), two model
+families, four distinct histories, all from the colibri authors' own machines and prompts.

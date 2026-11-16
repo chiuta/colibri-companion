@@ -126,7 +126,7 @@ impl CompanionApp {
                         }
                         if let Some(msg) = self.busy.clone() {
                             ui.label(RichText::new(msg).color(p.muted));
-                            ui.add(egui::Spinner::new());
+                            crate::widgets::spinner(ui);
                         }
                     });
                 });
@@ -371,7 +371,7 @@ impl CompanionApp {
                     self.check_updates(true);
                 }
                 if self.upd.checking {
-                    ui.add(egui::Spinner::new());
+                    crate::widgets::spinner(ui);
                 }
             });
             ui.separator();

@@ -579,4 +579,31 @@ mod tests {
         assert_eq!(r.status, 200);
         assert_eq!(r.text(), "hi");
     }
+
+    /// Reading a long server-sent stream line by line (`cargo test --release -p companion-core
+    /// perf_ -- --ignored --nocapture`). Prints only.
+    #[test]
+    #[ignore]
+    fn perf_reading_a_long_event_stream() {
+        let line =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"some words of the answer \"}}]}\n\n";
+        let text = line.repeat(150_000); // about 12 MB, around 150k tokens
+        let mut body = Body {
+            reader: BufReader::new(io::Cursor::new(text.as_bytes())),
+            framing: Framing::UntilClose,
+        };
+        let t = std::time::Instant::now();
+        let mut lines = 0u64;
+        while let Some(l) = body.read_line_lossy().unwrap() {
+            lines += l.len() as u64 & 1;
+            lines += 1;
+        }
+        let secs = t.elapsed().as_secs_f64();
+        println!(
+            "perf_http read_line_lossy: {:.1} MB/s ({} lines in {:.1} ms; a fast model streams about 0.15 MB/s)",
+            text.len() as f64 / 1e6 / secs,
+            lines,
+            secs * 1000.0
+        );
+    }
 }

@@ -10,5 +10,6 @@ pub mod ioplan;
 pub mod policy;
 pub mod prefetch;
 pub mod safetensors;
+pub mod skew;
 pub mod speculative;
 pub mod trace;

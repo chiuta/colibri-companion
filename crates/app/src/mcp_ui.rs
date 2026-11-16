@@ -249,7 +249,7 @@ impl CompanionApp {
                     });
                     ui.horizontal(|ui| {
                         if starting {
-                            ui.add(egui::Spinner::new());
+                            crate::widgets::spinner(ui);
                             ui.label(self.t("Pornește…", "Starting…"));
                         } else if running {
                             pill(ui, self.t("pornit", "running"), p.ok, p.accent_soft);
@@ -313,7 +313,7 @@ impl CompanionApp {
                             run_manual = true;
                         }
                         if self.mcp.calling {
-                            ui.add(egui::Spinner::new());
+                            crate::widgets::spinner(ui);
                         }
                         if !self.mcp.manual_out.is_empty()
                             && ui

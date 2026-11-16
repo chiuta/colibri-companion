@@ -67,6 +67,16 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked -p colibri-companion --target ${{ matrix.target }}
+      - name: Binary size (informational)
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.name }}
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          f="target/$TARGET/release/colibri-companion$ext"
+          bytes=$(wc -c < "$f" | tr -d ' ')
+          echo "Release binary, $PLATFORM: $bytes bytes ($((bytes / 1048576)).$(( (bytes % 1048576) * 10 / 1048576 )) MiB)" >> "$GITHUB_STEP_SUMMARY"
       - name: Package
         shell: bash
         run: |

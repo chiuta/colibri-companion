@@ -19,6 +19,7 @@ pub mod flow_eval;
 pub mod flows;
 pub mod gpu;
 pub mod http;
+pub mod light_models;
 pub mod locate;
 pub mod mcp;
 pub mod memory;
