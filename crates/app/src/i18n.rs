@@ -8,6 +8,237 @@ use std::sync::OnceLock;
 
 static TABLE: &[(&str, [&str; 6])] = &[
     (
+        "Check citations",
+        [
+            "Vérifier les citations",
+            "Verifica le citazioni",
+            "Comprobar citas",
+            "Verificar citações",
+            "Zitate prüfen",
+            "Hivatkozások ellenőrzése",
+        ],
+    ),
+    (
+        "Paste a text whose sentences cite the documents in this collection, like [@file, p. 3], and see whether the cited passage backs the sentence. It compares words and figures, not meaning: “supported” points to where to look and is not proof.",
+        [
+            "Colle un texte dont les phrases citent les documents de cette collection, comme [@fichier, p. 3], et vois si le passage cité appuie la phrase. Il compare des mots et des chiffres, pas le sens : « soutenu » indique où regarder, ce n'est pas une preuve.",
+            "Incolla un testo le cui frasi citano i documenti di questa raccolta, come [@file, p. 3], e vedi se il passaggio citato sostiene la frase. Confronta parole e cifre, non il significato: «sostenuto» indica dove guardare, non è una prova.",
+            "Pega un texto cuyas frases citen los documentos de esta colección, como [@archivo, p. 3], y comprueba si el pasaje citado respalda la frase. Compara palabras y cifras, no el sentido: «respaldado» indica dónde mirar, no es una prueba.",
+            "Cola um texto cujas frases citam os documentos desta coleção, como [@ficheiro, p. 3], e vê se a passagem citada sustenta a frase. Compara palavras e números, não o sentido: «sustentado» indica onde olhar, não é uma prova.",
+            "Füge einen Text ein, dessen Sätze die Dokumente dieser Sammlung zitieren, etwa [@datei, S. 3], und sieh, ob die zitierte Passage den Satz stützt. Verglichen werden Wörter und Zahlen, nicht der Sinn: „gestützt“ zeigt, wo du nachsehen sollst, und ist kein Beweis.",
+            "Illessz be egy szöveget, amelynek mondatai az ebben a gyűjteményben lévő dokumentumokra hivatkoznak, például [@fájl, p. 3], és nézd meg, alátámasztja-e az idézett részlet a mondatot. Szavakat és számokat hasonlít össze, nem a jelentést: a „megerősített” csak azt mutatja, hol nézz utána, nem bizonyíték.",
+        ],
+    ),
+    (
+        "Check",
+        [
+            "Vérifier",
+            "Verifica",
+            "Comprobar",
+            "Verificar",
+            "Prüfen",
+            "Ellenőrzés",
+        ],
+    ),
+    (
+        "Copy report",
+        [
+            "Copier le rapport",
+            "Copia il rapporto",
+            "Copiar el informe",
+            "Copiar o relatório",
+            "Bericht kopieren",
+            "Jelentés másolása",
+        ],
+    ),
+    (
+        "No citation like [@file, p. 3] and no quotation was found.",
+        [
+            "Aucune citation de la forme [@fichier, p. 3] ni aucune citation entre guillemets n'a été trouvée.",
+            "Non è stata trovata alcuna citazione del tipo [@file, p. 3] né alcuna citazione tra virgolette.",
+            "No se encontró ninguna cita como [@archivo, p. 3] ni ninguna cita textual.",
+            "Não foi encontrada nenhuma citação como [@ficheiro, p. 3] nem nenhuma citação entre aspas.",
+            "Es wurde weder ein Verweis wie [@datei, S. 3] noch ein wörtliches Zitat gefunden.",
+            "Nem találtam [@fájl, p. 3] alakú hivatkozást, sem idézőjeles idézetet.",
+        ],
+    ),
+    (
+        "checked",
+        [
+            "vérifiées",
+            "verificate",
+            "comprobadas",
+            "verificadas",
+            "geprüft",
+            "ellenőrizve",
+        ],
+    ),
+    (
+        "to read",
+        [
+            "à lire",
+            "da leggere",
+            "por leer",
+            "a ler",
+            "zu lesen",
+            "elolvasandó",
+        ],
+    ),
+    (
+        "Incomplete report: a limit was reached, so not all of the text was checked.",
+        [
+            "Rapport incomplet : une limite a été atteinte, donc tout le texte n'a pas été vérifié.",
+            "Rapporto incompleto: è stato raggiunto un limite, quindi non tutto il testo è stato verificato.",
+            "Informe incompleto: se alcanzó un límite, así que no se comprobó todo el texto.",
+            "Relatório incompleto: foi atingido um limite, por isso nem todo o texto foi verificado.",
+            "Unvollständiger Bericht: Ein Limit wurde erreicht, daher wurde nicht der ganze Text geprüft.",
+            "Hiányos jelentés: elértünk egy korlátot, ezért nem az egész szöveget ellenőriztük.",
+        ],
+    ),
+    (
+        "supported",
+        [
+            "soutenu",
+            "sostenuto",
+            "respaldado",
+            "sustentado",
+            "gestützt",
+            "megerősített",
+        ],
+    ),
+    (
+        "weak",
+        [
+            "faible",
+            "debole",
+            "débil",
+            "fraco",
+            "schwach",
+            "gyenge",
+        ],
+    ),
+    (
+        "unsupported",
+        [
+            "non soutenu",
+            "non sostenuto",
+            "sin respaldo",
+            "não sustentado",
+            "nicht gestützt",
+            "alá nem támasztott",
+        ],
+    ),
+    (
+        "wrong page",
+        [
+            "mauvaise page",
+            "pagina sbagliata",
+            "página equivocada",
+            "página errada",
+            "falsche Seite",
+            "rossz oldal",
+        ],
+    ),
+    (
+        "number differs",
+        [
+            "chiffre différent",
+            "cifra diversa",
+            "cifra distinta",
+            "número diferente",
+            "Zahl weicht ab",
+            "eltérő szám",
+        ],
+    ),
+    (
+        "unknown source",
+        [
+            "source inconnue",
+            "fonte sconosciuta",
+            "fuente desconocida",
+            "fonte desconhecida",
+            "unbekannte Quelle",
+            "ismeretlen forrás",
+        ],
+    ),
+    (
+        "page does not exist",
+        [
+            "la page n'existe pas",
+            "la pagina non esiste",
+            "la página no existe",
+            "a página não existe",
+            "Seite existiert nicht",
+            "az oldal nem létezik",
+        ],
+    ),
+    (
+        "bad page range",
+        [
+            "intervalle de pages incorrect",
+            "intervallo di pagine errato",
+            "intervalo de páginas erróneo",
+            "intervalo de páginas errado",
+            "falscher Seitenbereich",
+            "hibás oldaltartomány",
+        ],
+    ),
+    (
+        "no citation",
+        [
+            "sans citation",
+            "senza citazione",
+            "sin cita",
+            "sem citação",
+            "ohne Beleg",
+            "hivatkozás nélkül",
+        ],
+    ),
+    (
+        "exact quotation",
+        [
+            "citation exacte",
+            "citazione esatta",
+            "cita textual exacta",
+            "citação exata",
+            "wörtliches Zitat",
+            "pontos idézet",
+        ],
+    ),
+    (
+        "quotation from another source",
+        [
+            "citation d'une autre source",
+            "citazione da un'altra fonte",
+            "cita de otra fuente",
+            "citação de outra fonte",
+            "Zitat aus anderer Quelle",
+            "idézet másik forrásból",
+        ],
+    ),
+    (
+        "quotation not found",
+        [
+            "citation introuvable",
+            "citazione non trovata",
+            "cita no encontrada",
+            "citação não encontrada",
+            "Zitat nicht gefunden",
+            "az idézet nem található",
+        ],
+    ),
+    (
+        "contradicted",
+        [
+            "contredit",
+            "contraddetto",
+            "contradicho",
+            "contrariado",
+            "widerlegt",
+            "ellentmond",
+        ],
+    ),
+    (
         "Light models for your memory",
         [
             "Modèles légers pour ta mémoire",
@@ -13099,6 +13330,7 @@ mod tests {
             include_str!("sheets_ui.rs"),
             include_str!("speed_tools_ui.rs"),
             include_str!("light_ui.rs"),
+            include_str!("verify_ui.rs"),
         ];
         let (mut checked, mut missing) = (0, Vec::new());
         for src in sources {

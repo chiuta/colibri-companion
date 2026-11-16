@@ -22,6 +22,7 @@ pub struct DocsState {
     /// Files still being read in the background.
     pub busy: usize,
     pub message: String,
+    pub verify: crate::verify_ui::VerifyState,
     searcher: Option<(String, u64, Searcher)>,
 }
 
@@ -319,6 +320,8 @@ impl CompanionApp {
                             });
                         }
                     });
+                ui.add_space(6.0);
+                self.verify_section(ui, &id);
                 ui.add_space(6.0);
                 if ui
                     .button(self.t("Șterge această colecție", "Delete this collection"))

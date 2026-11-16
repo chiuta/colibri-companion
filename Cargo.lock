@@ -666,6 +666,7 @@ name = "colibri-companion"
 version = "0.1.0-alpha.4"
 dependencies = [
  "companion-core",
+ "companion-scholar",
  "eframe",
  "egui",
  "egui_commonmark",

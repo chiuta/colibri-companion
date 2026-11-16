@@ -23,6 +23,7 @@ mod sheets_ui;
 mod speed_tools_ui;
 mod studio_ui;
 mod theme;
+mod verify_ui;
 mod widgets;
 mod windows;
 
