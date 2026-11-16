@@ -16,6 +16,7 @@ pub struct Lru {
     cap: usize,
     clock: u64,
     last: HashMap<u32, u64>,
+    order: std::collections::BTreeMap<u64, u32>,
 }
 
 impl Lru {
@@ -24,6 +25,7 @@ impl Lru {
             cap,
             clock: 0,
             last: HashMap::new(),
+            order: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -31,23 +33,21 @@ impl Lru {
 impl Cache for Lru {
     fn access(&mut self, key: u32) -> bool {
         self.clock += 1;
-        if self.last.contains_key(&key) {
-            self.last.insert(key, self.clock);
+        if let Some(old) = self.last.insert(key, self.clock) {
+            self.order.remove(&old);
+            self.order.insert(self.clock, key);
             return true;
         }
         if self.cap == 0 {
+            self.last.remove(&key);
             return false;
         }
-        if self.last.len() >= self.cap {
-            let victim = *self
-                .last
-                .iter()
-                .min_by_key(|(_, t)| **t)
-                .map(|(k, _)| k)
-                .unwrap();
+        self.order.insert(self.clock, key);
+        if self.last.len() > self.cap {
+            let (&t, &victim) = self.order.iter().next().unwrap();
+            self.order.remove(&t);
             self.last.remove(&victim);
         }
-        self.last.insert(key, self.clock);
         false
     }
 }
@@ -117,36 +117,38 @@ pub fn replay(trace: &[Step], cache: &mut dyn Cache) -> f64 {
 /// Needs the future, so it is a ceiling for measurement, never something an engine can run.
 pub fn belady(trace: &[Step], cap: usize) -> f64 {
     let flat: Vec<u32> = trace.iter().flatten().copied().collect();
-    let mut next_use: HashMap<u32, VecDeque<usize>> = HashMap::new();
-    for (i, k) in flat.iter().enumerate() {
-        next_use.entry(*k).or_default().push_back(i);
+    let n = flat.len();
+    // next[i]: the position of the next use of flat[i], or n when there is none
+    let mut next = vec![n; n];
+    let mut seen: HashMap<u32, usize> = HashMap::new();
+    for i in (0..n).rev() {
+        if let Some(p) = seen.insert(flat[i], i) {
+            next[i] = p;
+        }
     }
-    let mut cache: HashMap<u32, ()> = HashMap::new();
+    let mut when: HashMap<u32, usize> = HashMap::new(); // resident key -> its next use
+    let mut by_when: std::collections::BTreeSet<(usize, u32)> = Default::default();
     let mut hits = 0u64;
-    for (i, k) in flat.iter().enumerate() {
-        next_use.get_mut(k).unwrap().pop_front();
-        if cache.contains_key(k) {
+    for (i, &k) in flat.iter().enumerate() {
+        if let Some(w) = when.get(&k).copied() {
             hits += 1;
+            by_when.remove(&(w, k));
+            when.insert(k, next[i]);
+            by_when.insert((next[i], k));
             continue;
         }
         if cap == 0 {
             continue;
         }
-        if cache.len() >= cap {
-            let victim = *cache
-                .keys()
-                .max_by_key(|c| next_use[c].front().copied().unwrap_or(usize::MAX))
-                .unwrap();
-            cache.remove(&victim);
+        if when.len() >= cap {
+            let &(w, victim) = by_when.iter().next_back().unwrap();
+            by_when.remove(&(w, victim));
+            when.remove(&victim);
         }
-        cache.insert(*k, ());
-        let _ = i;
+        when.insert(k, next[i]);
+        by_when.insert((next[i], k));
     }
-    if flat.is_empty() {
-        1.0
-    } else {
-        hits as f64 / flat.len() as f64
-    }
+    if n == 0 { 1.0 } else { hits as f64 / n as f64 }
 }
 
 /// A deterministic synthetic trace: `tokens` steps of `k` distinct experts out of `n`, drawn from a

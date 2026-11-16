@@ -8,3 +8,4 @@
 pub mod expert_index;
 pub mod policy;
 pub mod safetensors;
+pub mod trace;

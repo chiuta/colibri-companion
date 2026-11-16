@@ -12,5 +12,11 @@ colibri. Written from the public safetensors layout and from first principles; n
 **Not here yet:** tokenizer, attention, int4 kernels, sampling, an I/O scheduler. This crate does
 not run a model.
 
-`cargo run -p expert-streamer --example headroom` prints a comparison on a synthetic trace. The
-numbers say how the policies relate, not how a real model routes: real traces are needed.
+- `trace`: reads colibri's documented text formats: the `ROUTE_TRACE=<path>` stream (order of
+  events) and the `.coli_usage` history (popularity only), and can sample a trace from a history.
+
+`cargo run --release -p expert-streamer --example headroom -- --usage FILE` samples a trace from a
+real history: real popularity, but no recency, so it favours pinning the hottest experts and
+understates LRU-like policies on real conversations; `-- --trace FILE --experts N` replays a real
+`ROUTE_TRACE=` capture and is the measurement that decides whether a prefetcher is worth building.
+The offline-optimal column sees the future, so it is a ceiling, not a target.
