@@ -4,7 +4,7 @@
 
 **Site web : https://colibri-companion.chiuta.ro** — téléchargement, tutoriels vidéo, aide.
 
-Une application de bureau conviviale pour [colibri](https://github.com/JustVugg/colibri) : choisis un modèle adapté à ton ordinateur, télécharge-le en un clic, puis discute — tout en local, sans compte ni cloud.
+Une application de bureau conviviale pour [colibri](https://github.com/JustVugg/colibri) : choisis un modèle adapté à ton ordinateur, télécharge-le en un clic, puis discute — le modèle tourne sur ton ordinateur, sans compte ni service cloud.
 
 ## Lancement
 

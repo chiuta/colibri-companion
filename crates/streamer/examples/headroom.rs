@@ -33,11 +33,14 @@ fn number<T: std::str::FromStr>(name: &str) -> Option<T> {
 
 fn main() {
     let tokens: usize = number("--tokens").unwrap_or(600);
+    if tokens == 0 || tokens > 1_000_000 {
+        or_exit::<()>(Err(format!("--tokens must be 1..=1000000, got {tokens}")));
+    }
     let (label, universe, trace, usage) = if let Some(f) = arg("--usage") {
         let u = or_exit(read_usage_file(&f));
         let k: usize = number("--k").unwrap_or(8);
         let uni = u.n_layers as usize * u.n_experts as usize;
-        let t = u.sample_trace(k, tokens, 42);
+        let t = or_exit(u.try_sample_trace(k, tokens, 42));
         (
             format!("{f}: popularity from the history, {k} experts per layer"),
             uni,
@@ -60,14 +63,10 @@ fn main() {
     );
     for pct in [5usize, 10, 25, 50] {
         let cap = (universe * pct / 100).max(1);
-        let decay = if cap <= 3000 {
-            format!(
-                "{:.1}%",
-                100.0 * replay(&trace, &mut DecayFreq::new(cap, 300.0))
-            )
-        } else {
-            "-".into()
-        };
+        let decay = format!(
+            "{:.1}%",
+            100.0 * replay(&trace, &mut DecayFreq::new(cap, 300.0))
+        );
         let pinned = match &usage {
             Some(u) if u.total() > 0 => format!("{:.1}%", 100.0 * u.static_coverage(cap)),
             _ => "n/a".into(), // no history, or a history with no uses: nothing to pin

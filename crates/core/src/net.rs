@@ -386,7 +386,7 @@ pub fn connections_of(pids: &[u32]) -> Result<Vec<Conn>, String> {
     }
     #[cfg(windows)]
     {
-        let mut c = std::process::Command::new("netstat");
+        let mut c = std::process::Command::new(crate::proc::system_exe(r"System32\NETSTAT.EXE"));
         c.arg("-ano");
         crate::proc::hide_window(&mut c);
         let out = crate::proc::run_capture(c, std::time::Duration::from_secs(15))

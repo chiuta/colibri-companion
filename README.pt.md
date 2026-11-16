@@ -4,7 +4,7 @@
 
 **Site: https://colibri-companion.chiuta.ro** — transferência, tutoriais em vídeo, ajuda.
 
-Uma aplicação de secretária simples para o [colibri](https://github.com/JustVugg/colibri): escolhe um modelo adequado ao teu computador, transfere-o com um clique e conversa — tudo local, sem conta e sem nuvem.
+Uma aplicação de secretária simples para o [colibri](https://github.com/JustVugg/colibri): escolhe um modelo adequado ao teu computador, transfere-o com um clique e conversa — o modelo corre no teu computador, sem conta e sem serviços na nuvem.
 
 ## Execução
 

@@ -33,6 +33,9 @@ fn number<T: std::str::FromStr>(name: &str) -> Option<T> {
 
 fn main() {
     let tokens: usize = number("--tokens").unwrap_or(1500);
+    if tokens == 0 || tokens > 1_000_000 {
+        or_exit::<()>(Err(format!("--tokens must be 1..=1000000, got {tokens}")));
+    }
     let (label, ne, trace) = if let Some(f) = arg("--trace") {
         let ne: u32 = or_exit(number("--experts").ok_or("--trace needs --experts N".to_string()));
         let t = or_exit(read_trace_file(&f, ne));
@@ -40,7 +43,7 @@ fn main() {
     } else if let Some(f) = arg("--usage") {
         let u = or_exit(read_usage_file(&f));
         let k: usize = number("--k").unwrap_or(8);
-        let t = u.sample_trace(k, tokens, 42);
+        let t = or_exit(u.try_sample_trace(k, tokens, 42));
         (
             format!("{f}: SAMPLED from popularity, layers independent by construction"),
             u.n_experts,
@@ -59,8 +62,8 @@ fn main() {
         trace.len()
     );
     println!("{:>8} {:>10} {:>12}", "budget", "predicted", "popularity");
-    for m in [1usize, 2, 4] {
-        let s = evaluate(&trace, ne, 0.5, m);
+    let mults = [1usize, 2, 4];
+    for (m, s) in mults.iter().zip(evaluate_budgets(&trace, ne, 0.5, &mults)) {
         println!(
             "{:>7}x {:>9.1}% {:>11.1}%",
             m,

@@ -92,15 +92,18 @@ const MAX_HEADERS: usize = 200;
 const MAX_BODY_LINE: u64 = 32 * 1024 * 1024;
 const MAX_TEXT: u64 = 64 * 1024 * 1024;
 
-/// `read_line`, but a line longer than [`MAX_LINE`] is an error.
+/// `read_line`, but a line longer than [`MAX_LINE`] is an error, and bytes that are not UTF-8
+/// (a header in Latin-1 from some server) are replaced instead of failing the whole response.
 fn read_line_capped<R: BufRead>(r: &mut R, line: &mut String) -> io::Result<usize> {
-    let n = r.by_ref().take(MAX_LINE + 1).read_line(line)?;
+    let mut raw = Vec::new();
+    let n = r.by_ref().take(MAX_LINE + 1).read_until(b'\n', &mut raw)?;
     if n as u64 > MAX_LINE {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "a line is too long",
         ));
     }
+    line.push_str(&String::from_utf8_lossy(&raw));
     Ok(n)
 }
 
@@ -566,5 +569,14 @@ mod tests {
         .err()
         .unwrap();
         assert_ne!(e.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn a_header_that_is_not_utf8_does_not_break_the_response() {
+        let mut raw = b"HTTP/1.1 200 OK\r\nX-Name: caf\xe9\r\nContent-Length: 2\r\n\r\nhi".to_vec();
+        raw.extend_from_slice(b"");
+        let r = read_response(Cursor::new(raw)).unwrap();
+        assert_eq!(r.status, 200);
+        assert_eq!(r.text(), "hi");
     }
 }

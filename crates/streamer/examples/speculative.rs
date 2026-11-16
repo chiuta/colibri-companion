@@ -3,7 +3,7 @@
 //! Real overlap between consecutive tokens is only known from a real ROUTE_TRACE; a trace sampled
 //! from a `.coli_usage` history overlaps only through popularity.
 use expert_streamer::policy::synthetic_trace;
-use expert_streamer::speculative::loads_per_token;
+use expert_streamer::speculative::{expected_accepted, loads_per_pass};
 use expert_streamer::trace::*;
 
 fn arg(name: &str) -> Option<String> {
@@ -32,7 +32,7 @@ fn number<T: std::str::FromStr>(name: &str) -> Option<T> {
 fn main() {
     let (label, universe, trace) = if let Some(f) = arg("--usage") {
         let u = or_exit(read_usage_file(&f));
-        let t = u.sample_trace(8, 800, 42);
+        let t = or_exit(u.try_sample_trace(8, 800, 42));
         (
             format!("{f}: sampled, popularity only"),
             u.n_layers as usize * u.n_experts as usize,
@@ -51,7 +51,10 @@ fn main() {
         )
     };
     let pct: usize = number("--cache").unwrap_or(10);
-    let cap = (universe * pct / 100).max(1);
+    if pct > 100 {
+        or_exit::<()>(Err(format!("--cache is a percentage, 0..=100, got {pct}")));
+    }
+    let cap = (universe / 100 * pct + universe % 100 * pct / 100).max(1);
     println!(
         "{label}: {} tokens, {universe} experts. A cost model, not an engine.",
         trace.len()
@@ -67,9 +70,11 @@ fn main() {
         );
         println!("{:>4} {:>9} {:>9} {:>9}", "k", "a=50%", "a=70%", "a=90%");
         for k in [1usize, 2, 4, 8] {
+            // one replay per (k, cache): the acceptance only divides the result
+            let pass = loads_per_pass(&trace, k, c);
             let v: Vec<String> = [0.5, 0.7, 0.9]
                 .iter()
-                .map(|a| format!("{:>9.1}", loads_per_token(&trace, k, *a, c)))
+                .map(|a| format!("{:>9.1}", pass / expected_accepted(k, *a)))
                 .collect();
             println!("{k:>4} {}", v.join(" "));
         }

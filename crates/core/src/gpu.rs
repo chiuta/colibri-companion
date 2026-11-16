@@ -291,7 +291,9 @@ pub fn detect() -> Vec<GpuInfo> {
 
 #[cfg(target_os = "windows")]
 fn detect_os() -> Vec<GpuInfo> {
-    let mut c = Command::new("powershell");
+    let mut c = Command::new(crate::proc::system_exe(
+        r"System32\WindowsPowerShell\v1.0\powershell.exe",
+    ));
     c.args(["-NoProfile", "-NonInteractive", "-Command", WINDOWS_SCRIPT]);
     capture(c, 15)
         .map(|t| parse_windows(&t))

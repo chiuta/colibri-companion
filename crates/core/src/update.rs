@@ -17,9 +17,18 @@ const MARKER: &str = ".colibri-companion-fetched";
 
 const GET_SCRIPT: &str = r#"
 import sys, urllib.request
-req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "colibri-companion", "Accept": "application/vnd.github+json"})
-with urllib.request.urlopen(req, timeout=15) as r:
-    sys.stdout.write(r.read().decode("utf-8", "replace"))
+url = sys.argv[1]
+class Https(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, r, fp, code, msg, headers, newurl):
+        if not newurl.lower().startswith("https://"):
+            raise RuntimeError("redirected away from https")
+        return urllib.request.HTTPRedirectHandler.redirect_request(self, r, fp, code, msg, headers, newurl)
+if not url.startswith("https://"):
+    sys.exit("only https addresses are read")
+req = urllib.request.Request(url, headers={"User-Agent": "colibri-companion", "Accept": "application/vnd.github+json"})
+with urllib.request.build_opener(Https).open(req, timeout=15) as r:
+    # a few megabytes at most: a release list or one commit
+    sys.stdout.write(r.read(4_000_000).decode("utf-8", "replace"))
 "#;
 
 /// One GET, through Python. Returns the body.

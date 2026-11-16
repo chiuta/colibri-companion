@@ -12,5 +12,9 @@ serde_json.workspace = true
 expert-streamer = { path = "../streamer" }
 sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
 
+# already in the lockfile through sysinfo; used for posix_fadvise/mincore in the drive test
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tiny_http = "0.12"

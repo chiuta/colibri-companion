@@ -4,7 +4,7 @@
 
 **Sito web: https://colibri-companion.chiuta.ro** — download, video tutorial, aiuto.
 
-Un'app desktop semplice per [colibri](https://github.com/JustVugg/colibri): scegli un modello adatto al tuo computer, scaricalo con un clic, poi conversa — tutto in locale, senza account e senza cloud.
+Un'app desktop semplice per [colibri](https://github.com/JustVugg/colibri): scegli un modello adatto al tuo computer, scaricalo con un clic, poi conversa — il modello gira sul tuo computer, senza account e senza servizi cloud.
 
 ## Avvio
 

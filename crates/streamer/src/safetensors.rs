@@ -2,6 +2,7 @@
 //! tensor name to its dtype, shape and byte range inside the data that follows.
 
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -40,6 +41,55 @@ fn dtype_bytes(d: &str) -> Option<u64> {
     })
 }
 
+/// The first object key that appears twice in the same JSON object, at any depth (compared after
+/// unescaping, so `"a"` and `"\u0061"` are the same key). `serde_json` keeps only the last of two
+/// equal keys without a word, which would let a header hide one tensor behind another; this is a
+/// single pass over the bytes that tracks only strings and the nesting of `{}`/`[]`. Malformed
+/// JSON never panics here (the real parser reports it).
+pub fn duplicate_key(json: &[u8]) -> Option<String> {
+    // one entry per open container: (keys seen, a key is expected next); `None` marks an array
+    let mut stack: Vec<(Option<HashSet<String>>, bool)> = Vec::new();
+    let n = json.len();
+    let mut i = 0;
+    while i < n {
+        match json[i] {
+            b'{' => stack.push((Some(HashSet::new()), true)),
+            b'[' => stack.push((None, false)),
+            b'}' | b']' => {
+                stack.pop();
+            }
+            b',' => {
+                if let Some((Some(_), expect)) = stack.last_mut() {
+                    *expect = true;
+                }
+            }
+            b'"' => {
+                let mut j = i + 1;
+                while j < n && json[j] != b'"' {
+                    j += if json[j] == b'\\' { 2 } else { 1 };
+                }
+                if j >= n {
+                    return None; // unterminated string: not our error to report
+                }
+                if let Some((Some(keys), expect)) = stack.last_mut() {
+                    if *expect {
+                        *expect = false;
+                        if let Ok(k) = serde_json::from_slice::<String>(&json[i..=j]) {
+                            if !keys.insert(k.clone()) {
+                                return Some(k);
+                            }
+                        }
+                    }
+                }
+                i = j;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Parses a header already in memory. `file_len` bounds every range. Hostile input gets an error:
 /// offsets are added with overflow checks, the declared size of every tensor must match its
 /// dtype and shape, and no two tensors may share bytes.
@@ -61,6 +111,9 @@ pub fn parse_header(bytes: &[u8], file_len: u64) -> Result<Vec<Tensor>, String> 
         .ok()
         .filter(|e| *e <= bytes.len())
         .ok_or("header runs past the data given")?;
+    if let Some(k) = duplicate_key(&bytes[8..end]) {
+        return Err(format!("duplicate key {k:?} in the header"));
+    }
     let json: Value = serde_json::from_slice(&bytes[8..end]).map_err(|e| e.to_string())?;
     let obj = json.as_object().ok_or("header is not a JSON object")?;
     let mut out = Vec::new();
@@ -260,5 +313,154 @@ mod tests {
     fn unknown_and_sub_byte_dtypes_are_not_size_checked() {
         let f = build(&[("a", "F4", &[3], 0, 2)], 2);
         assert!(parse_header(&f, f.len() as u64).is_ok());
+    }
+
+    #[test]
+    fn a_key_given_twice_is_an_error_not_a_silent_last_wins() {
+        // the second "a" would overwrite the first in a plain parse, hiding a 4-byte tensor
+        let j = r#"{"a":{"dtype":"U8","shape":[4],"data_offsets":[0,4]},"a":{"dtype":"U8","shape":[1],"data_offsets":[4,5]}}"#;
+        assert!(err(&raw(j, 5)).contains("duplicate key \"a\""));
+        // inside one tensor entry as well
+        let j = r#"{"a":{"dtype":"U8","dtype":"F32","shape":[1],"data_offsets":[0,1]}}"#;
+        assert!(err(&raw(j, 1)).contains("duplicate key \"dtype\""));
+        // equal after unescaping
+        let j = r#"{"a":{"dtype":"U8","shape":[1],"data_offsets":[0,1]},"\u0061":{"dtype":"U8","shape":[1],"data_offsets":[1,2]}}"#;
+        assert!(err(&raw(j, 2)).contains("duplicate"));
+        // the same name in different objects, in arrays, or inside a string value is fine
+        let ok = r#"{"a":{"dtype":"U8","shape":[1],"data_offsets":[0,1]},"b":{"dtype":"U8","shape":[1],"data_offsets":[1,2]},"__metadata__":{"x":"\",\"a\":","y":["a","a",{"k":1},{"k":2}]}}"#;
+        let f = raw(ok, 2);
+        assert_eq!(parse_header(&f, f.len() as u64).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_duplicate_scan_agrees_with_a_reference_on_random_json() {
+        // reference: serialise with the keys collected by hand, count duplicates the slow way
+        let mut s = 0x9e3779b97f4a7c15u64;
+        let mut r = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let keys = [
+            "a",
+            "b",
+            "dtype",
+            "x y",
+            "q\"uote",
+            "back\\slash",
+            "é",
+            "\u{1F600}",
+            "",
+        ];
+        // returns (json text, whether some object has the same key twice)
+        fn random_json(r: &mut impl FnMut() -> u64, keys: &[&str], depth: u32) -> (String, bool) {
+            match r() % if depth > 3 { 3 } else { 6 } {
+                0 => ("1".into(), false),
+                1 => (
+                    serde_json::to_string(keys[(r() % keys.len() as u64) as usize]).unwrap(),
+                    false,
+                ),
+                2 => ("null".into(), false),
+                3 | 4 => {
+                    let n = r() % 5;
+                    let (mut parts, mut seen, mut dup) = (Vec::new(), Vec::new(), false);
+                    for _ in 0..n {
+                        let k = keys[(r() % keys.len() as u64) as usize];
+                        if seen.contains(&k) {
+                            dup = true;
+                        }
+                        seen.push(k);
+                        let (v, d) = random_json(r, keys, depth + 1);
+                        dup |= d;
+                        parts.push(format!("{}:{v}", serde_json::to_string(k).unwrap()));
+                    }
+                    (format!("{{{}}}", parts.join(",")), dup)
+                }
+                _ => {
+                    let n = r() % 4;
+                    let (mut parts, mut dup) = (Vec::new(), false);
+                    for _ in 0..n {
+                        let (v, d) = random_json(r, keys, depth + 1);
+                        dup |= d;
+                        parts.push(v);
+                    }
+                    (format!("[{}]", parts.join(",")), dup)
+                }
+            }
+        }
+        let (mut flagged, mut clean) = (0, 0);
+        for _ in 0..4000 {
+            let (text, has_dup) = random_json(&mut r, &keys, 0);
+            assert_eq!(duplicate_key(text.as_bytes()).is_some(), has_dup, "{text}");
+            if has_dup {
+                flagged += 1;
+            } else {
+                clean += 1;
+            }
+        }
+        assert!(flagged > 200 && clean > 200, "{flagged} {clean}");
+    }
+
+    #[test]
+    fn the_duplicate_scan_never_panics_on_garbage() {
+        let mut s = 77u64;
+        let mut r = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let alphabet = b"{}[],:\"\\ab1 \n";
+        for _ in 0..20000 {
+            let len = (r() % 40) as usize;
+            let g: Vec<u8> = (0..len)
+                .map(|_| alphabet[(r() % alphabet.len() as u64) as usize])
+                .collect();
+            let _ = duplicate_key(&g);
+        }
+        assert_eq!(duplicate_key(b"\"unterminated"), None);
+        assert_eq!(duplicate_key(b"{\"a\\"), None);
+        assert_eq!(duplicate_key(b""), None);
+        assert_eq!(duplicate_key(b"}}}]]]"), None);
+    }
+
+    #[test]
+    fn random_bytes_and_mutated_valid_headers_are_errors_or_ok_never_panics() {
+        let mut s = 123u64;
+        let mut r = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let base = build(
+            &[
+                ("a.layers.0.mlp.experts.1.w", "F16", &[2, 3], 0, 12),
+                ("b", "U8", &[4], 12, 16),
+            ],
+            16,
+        );
+        let mut ok_after = 0;
+        for _ in 0..5000 {
+            let mut f = base.clone();
+            for _ in 0..(1 + r() % 4) {
+                let at = (r() % f.len() as u64) as usize;
+                f[at] = (r() & 0xff) as u8;
+            }
+            let cut = (r() % (f.len() as u64 + 1)) as usize;
+            let len = if r() % 3 == 0 { cut } else { f.len() };
+            if parse_header(&f[..len], f.len() as u64).is_ok() {
+                ok_after += 1;
+            }
+        }
+        // a header that parses must also respect its own invariants
+        let f = base.clone();
+        let t = parse_header(&f, f.len() as u64).unwrap();
+        assert!(
+            t.iter()
+                .all(|t| t.start <= t.end && t.end <= f.len() as u64)
+        );
+        assert!(ok_after < 5000);
     }
 }

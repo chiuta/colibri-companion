@@ -12,7 +12,9 @@ use std::time::Duration;
 pub fn detect() -> Option<String> {
     #[cfg(windows)]
     {
-        let mut c = Command::new("powershell");
+        let mut c = Command::new(crate::proc::system_exe(
+            r"System32\WindowsPowerShell\v1.0\powershell.exe",
+        ));
         c.args([
             "-NoProfile",
             "-NonInteractive",

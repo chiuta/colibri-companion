@@ -16,25 +16,30 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Write through a temporary file so a crash never leaves half a file behind. The temporary
 /// name is unique (a neighbouring `x.tmp` is never touched, two writers never share one), the
 /// data is flushed to disk before the rename, and on Unix the file is private to its owner:
 /// settings hold the API key and conversations hold what the person wrote.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
+    use std::sync::atomic::Ordering;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(
-        ".{}-{}.tmp",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    let tmp = path.with_file_name(name);
-    let result = (|| {
+    let stem = path.file_name().unwrap_or_default().to_os_string();
+    // A temporary file left by a crashed run (the same process id can come back) must never block
+    // saving for good: take the next free name.
+    let mut tries = 0;
+    let (tmp, mut f) = loop {
+        let mut name = stem.clone();
+        name.push(format!(
+            ".{}-{}.tmp",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let tmp = path.with_file_name(name);
         let mut opts = fs::OpenOptions::new();
         opts.write(true).create_new(true);
         #[cfg(unix)]
@@ -42,7 +47,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
         }
-        let mut f = opts.open(&tmp)?;
+        match opts.open(&tmp) {
+            Ok(f) => break (tmp, f),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && tries < 1000 => tries += 1,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = (|| {
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
@@ -258,6 +269,25 @@ impl Default for Settings {
     }
 }
 
+/// Copies a settings file that could not be read whole to `settings.json.bad` (then `.bad1`, `.bad2`…
+/// up to `.bad9`, then the last is replaced), so the next save never destroys the only copy.
+fn keep_aside(path: &Path) {
+    let base = path.as_os_str().to_os_string();
+    for n in 0..10 {
+        let mut name = base.clone();
+        name.push(if n == 0 {
+            ".bad".to_string()
+        } else {
+            format!(".bad{n}")
+        });
+        let target = PathBuf::from(name);
+        if !target.exists() || n == 9 {
+            let _ = fs::copy(path, target);
+            return;
+        }
+    }
+}
+
 impl Settings {
     /// Reads the settings. A file that cannot be read at all is kept beside the original as
     /// `settings.json.bad` (the next save would otherwise overwrite it) and the defaults are used.
@@ -266,28 +296,32 @@ impl Settings {
         let Ok(text) = fs::read_to_string(path) else {
             return Self::default();
         };
+        let aside = || keep_aside(path);
         let value: serde_json::Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(_) => {
-                let mut bad = path.as_os_str().to_os_string();
-                bad.push(".bad");
-                let _ = fs::copy(path, PathBuf::from(bad));
+                aside();
                 return Self::default();
             }
         };
-        let mut s = serde_json::from_value::<Settings>(value.clone()).unwrap_or_else(|_| {
-            let mut good = serde_json::Map::new();
-            if let Some(obj) = value.as_object() {
-                for (k, v) in obj {
-                    let mut one = serde_json::Map::new();
-                    one.insert(k.clone(), v.clone());
-                    if serde_json::from_value::<Settings>(one.into()).is_ok() {
-                        good.insert(k.clone(), v.clone());
+        let mut s = match serde_json::from_value::<Settings>(value.clone()) {
+            Ok(s) => s,
+            Err(_) => {
+                // something in the file is wrong: keep the original, and every value that is fine
+                aside();
+                let mut good = serde_json::Map::new();
+                if let Some(obj) = value.as_object() {
+                    for (k, v) in obj {
+                        let mut one = serde_json::Map::new();
+                        one.insert(k.clone(), v.clone());
+                        if serde_json::from_value::<Settings>(one.into()).is_ok() {
+                            good.insert(k.clone(), v.clone());
+                        }
                     }
                 }
+                serde_json::from_value(good.into()).unwrap_or_default()
             }
-            serde_json::from_value(good.into()).unwrap_or_default()
-        });
+        };
         s.sanitize();
         s
     }
@@ -503,6 +537,48 @@ impl Conversation {
     }
 }
 
+/// Letters, digits, `-` and `_`, not too long: an id that is its own file name everywhere.
+fn is_plain_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 120
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// A name that is one ordinary file name on every system.
+fn is_plain_file_name(n: &str) -> bool {
+    !n.is_empty()
+        && n.len() <= 120
+        && !n.starts_with('.')
+        && !n.ends_with(['.', ' '])
+        && !n
+            .chars()
+            .any(|c| c.is_control() || "/\\:*?\"<>|".contains(c))
+}
+
+/// Windows refuses file names such as `CON.json` or `nul.txt` (a device name with any
+/// extension, in any case). Such a stem gets a leading underscore, on every system, so the
+/// same conversation folder works when it is copied to a Windows machine.
+pub fn windows_safe_stem(stem: &str) -> String {
+    let up = stem.to_ascii_uppercase();
+    let base = up.split('.').next().unwrap_or("");
+    let reserved = matches!(base, "CON" | "PRN" | "AUX" | "NUL")
+        || (base.len() == 4
+            && (base.starts_with("COM") || base.starts_with("LPT"))
+            && matches!(base.as_bytes()[3], b'1'..=b'9'));
+    if reserved {
+        format!("_{stem}")
+    } else {
+        stem.to_string()
+    }
+}
+
+/// The id of the conversation stored in this file: its name without `.json`.
+fn id_of_file(path: &Path) -> Option<String> {
+    path.file_stem()?.to_str().map(str::to_string)
+}
+
 pub struct ConversationStore {
     dir: PathBuf,
 }
@@ -516,18 +592,35 @@ impl ConversationStore {
     pub fn at(dir: PathBuf) -> Self {
         Self { dir }
     }
+    /// The file of a conversation. The file name is the one source of truth for the id: a plain id
+    /// (letters, digits, `-`, `_`) is the file's stem as it is; the listings take the id from the
+    /// stem, never from the content, so what is shown can always be loaded and deleted. An id
+    /// with other characters (it cannot come from this app) is mapped to a plain name that still
+    /// differs for different ids, and a file already there under that exact name is used as it is.
     fn file(&self, id: &str) -> PathBuf {
+        if is_plain_id(id) {
+            return self.dir.join(format!("{}.json", windows_safe_stem(id)));
+        }
+        let literal = self.dir.join(format!("{id}.json"));
+        if is_plain_file_name(id) && literal.is_file() {
+            return literal;
+        }
         let safe: String = id
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .take(80)
             .collect();
-        // never a nameless ".json" (the names already on disk stay as they are)
-        let safe = if safe.is_empty() {
-            "_".to_string()
+        // a short hash of the whole id: "a/b" and "ab" must not share a file
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in id.bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+        let stem = if safe.is_empty() {
+            format!("_{h:016x}")
         } else {
-            safe
+            format!("{safe}-{h:016x}")
         };
-        self.dir.join(format!("{safe}.json"))
+        self.dir.join(format!("{}.json", windows_safe_stem(&stem)))
     }
     pub fn save(&self, c: &Conversation) -> io::Result<()> {
         write_atomic(
@@ -556,9 +649,11 @@ impl ConversationStore {
 
     /// One conversation, in full.
     pub fn load(&self, id: &str) -> Option<Conversation> {
-        fs::read_to_string(self.file(id))
+        let mut c: Conversation = fs::read_to_string(self.file(id))
             .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
+            .and_then(|t| serde_json::from_str(&t).ok())?;
+        c.id = id.to_string(); // the name decides, not what a hand-edited file claims
+        Some(c)
     }
 
     /// The sidebar list, newest first: ids, titles and dates only. The messages are skipped
@@ -591,11 +686,13 @@ impl ConversationStore {
             .flatten()
             .flatten()
             .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-            .filter_map(|e| fs::File::open(e.path()).ok())
-            .filter_map(|f| serde_json::from_reader::<_, Meta>(io::BufReader::new(f)).ok())
-            .filter(|m| !m.id.is_empty())
-            .map(|m| Conversation {
-                id: m.id,
+            .filter_map(|e| Some((id_of_file(&e.path())?, fs::File::open(e.path()).ok()?)))
+            .filter_map(|(id, f)| {
+                let m = serde_json::from_reader::<_, Meta>(io::BufReader::new(f)).ok()?;
+                Some((id, m))
+            })
+            .map(|(id, m)| Conversation {
+                id,
                 title: m.title,
                 created: m.created,
                 updated: m.updated,
@@ -616,8 +713,12 @@ impl ConversationStore {
             .flatten()
             .flatten()
             .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-            .filter_map(|e| fs::read_to_string(e.path()).ok())
-            .filter_map(|t| serde_json::from_str(&t).ok())
+            .filter_map(|e| Some((id_of_file(&e.path())?, fs::read_to_string(e.path()).ok()?)))
+            .filter_map(|(id, t)| {
+                let mut c: Conversation = serde_json::from_str(&t).ok()?;
+                c.id = id;
+                Some(c)
+            })
             .collect();
         all.sort_by_key(|c| std::cmp::Reverse(c.updated));
         all
@@ -701,10 +802,15 @@ mod tests {
     #[test]
     fn ids_cannot_escape_the_folder() {
         let store = ConversationStore::at(PathBuf::from("/tmp/x"));
-        assert_eq!(
-            store.file("../../etc/passwd"),
-            PathBuf::from("/tmp/x/etcpasswd.json")
-        );
+        for id in ["../../etc/passwd", "..", "a/../b", "/abs/olute", "C:\\x\\y"] {
+            let f = store.file(id);
+            assert_eq!(f.parent(), Some(Path::new("/tmp/x")), "{id}");
+            let name = f.file_name().unwrap().to_string_lossy().to_string();
+            assert!(
+                !name.starts_with('.') && !name.contains(['/', '\\', ':']),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -939,6 +1045,98 @@ mod lang_tests {
     #[test]
     fn an_id_with_no_usable_characters_still_gets_a_name() {
         let store = ConversationStore::at(PathBuf::from("/tmp/x"));
-        assert_eq!(store.file("///"), PathBuf::from("/tmp/x/_.json"));
+        let f = store.file("///");
+        assert_eq!(f.parent(), Some(Path::new("/tmp/x")));
+        assert_ne!(f.file_name().unwrap(), ".json");
+        assert_ne!(f, store.file("////"), "different ids, different files");
+    }
+
+    #[test]
+    fn a_stale_temporary_file_from_a_crashed_run_never_blocks_saving() {
+        use std::sync::atomic::Ordering;
+        let dir = temp("stale-tmp");
+        fs::create_dir_all(&dir).unwrap();
+        let cur = SEQ.load(Ordering::Relaxed);
+        for n in cur..cur + 60 {
+            fs::write(
+                dir.join(format!("s.json.{}-{n}.tmp", std::process::id())),
+                b"old",
+            )
+            .unwrap();
+        }
+        write_atomic(&dir.join("s.json"), b"new").unwrap();
+        assert_eq!(fs::read(dir.join("s.json")).unwrap(), b"new");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_file_name_decides_the_conversation_id() {
+        let dir = temp("names");
+        fs::create_dir_all(&dir).unwrap();
+        let store = ConversationStore::at(dir.clone());
+        // a file whose content claims another id (copied, renamed or edited by hand)
+        let mut c = Conversation::new();
+        c.id = "claimed-elsewhere".into();
+        fs::write(dir.join("c1-1.json"), serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(store.list()[0].id, "c1-1");
+        assert_eq!(store.summaries()[0].id, "c1-1");
+        assert_eq!(store.load("c1-1").unwrap().id, "c1-1");
+        assert!(store.load("claimed-elsewhere").is_none());
+        store.delete("c1-1").unwrap();
+        assert!(!dir.join("c1-1.json").exists());
+        assert!(store.list().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn different_ids_never_share_a_file_and_device_names_are_avoided() {
+        let dir = temp("collide");
+        fs::create_dir_all(&dir).unwrap();
+        let store = ConversationStore::at(dir.clone());
+        let ids = [
+            "ab", "a/b", "a\\b", "A B", "CON", "nul", "com1", "lpt9", "../x", "é", "",
+        ];
+        for id in ids {
+            let mut c = Conversation::new();
+            c.id = id.to_string();
+            c.title = format!("t:{id}");
+            store.save(&c).unwrap();
+        }
+        let files: Vec<_> = fs::read_dir(&dir).unwrap().flatten().collect();
+        assert_eq!(files.len(), ids.len(), "every id has its own file");
+        for id in ids {
+            assert_eq!(store.load(id).unwrap().title, format!("t:{id}"), "{id:?}");
+        }
+        for f in files {
+            let name = f.file_name().to_string_lossy().to_string();
+            assert!(!name.contains(['/', '\\']) && name.len() < 140, "{name}");
+            let stem = name.trim_end_matches(".json").to_ascii_uppercase();
+            assert!(
+                !["CON", "NUL", "COM1", "LPT9", "PRN", "AUX"].contains(&stem.as_str()),
+                "{name}"
+            );
+        }
+        for id in ids {
+            store.delete(id).unwrap();
+        }
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_settings_file_that_is_not_an_object_or_loses_a_value_is_kept_aside_every_time() {
+        let dir = temp("aside");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, b"[1,2,3]").unwrap();
+        let _ = Settings::load_from(&path);
+        assert!(dir.join("settings.json.bad").exists());
+        fs::write(&path, br#"{"font_scale":"big","api_key":"k2"}"#).unwrap();
+        let s = Settings::load_from(&path);
+        assert_eq!(s.api_key, "k2");
+        // the first copy is not overwritten by the second
+        assert_eq!(fs::read(dir.join("settings.json.bad")).unwrap(), b"[1,2,3]");
+        assert!(dir.join("settings.json.bad1").exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

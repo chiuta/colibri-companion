@@ -372,21 +372,76 @@ pub fn search(
 
 // ------------------------------------------------------------------ memory of the winner
 
-/// Identifies this computer and model; a different amount of RAM or core count is a different case.
-pub fn machine_key(total_ram_gb: f64, physical_cores: u32, model: &str) -> String {
+/// The usual sizes of memory; the amount the system reports (15.7, 31.2...) is rounded to the
+/// nearest one, so the same computer always gets the same key.
+const RAM_TIERS: [u64; 15] = [4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512];
+
+/// The standard memory size nearest to `gb`; above the table, multiples of 128 GB.
+pub fn ram_tier(gb: f64) -> u64 {
+    if !gb.is_finite() || gb <= 0.0 {
+        return 0;
+    }
+    if gb > 640.0 {
+        return ((gb.min(1e9) / 128.0).round() as u64).max(5) * 128;
+    }
+    RAM_TIERS
+        .iter()
+        .copied()
+        .min_by(|a, b| (*a as f64 - gb).abs().total_cmp(&(*b as f64 - gb).abs()))
+        .unwrap_or(0)
+}
+
+/// `cpu`, `cuda`, `vulkan` or `metal`; anything else (including empty) is `auto`.
+pub fn backend_name(backend: &str) -> &'static str {
+    match backend.trim().to_ascii_lowercase().as_str() {
+        "cpu" => "cpu",
+        "cuda" => "cuda",
+        "vulkan" => "vulkan",
+        "metal" => "metal",
+        _ => "auto",
+    }
+}
+
+/// Identifies this computer, backend and model: another memory size, core count or backend is a
+/// different case (the best settings for the GPU are not those for the processor).
+pub fn machine_key(total_ram_gb: f64, physical_cores: u32, backend: &str, model: &str) -> String {
     format!(
-        "{}gb-{}c/{}",
-        total_ram_gb.round() as i64,
+        "{}gb-{}c-{}/{}",
+        ram_tier(total_ram_gb),
         physical_cores,
+        backend_name(backend),
         model
     )
+}
+
+/// A saved result older than this is measured again before it is trusted (drivers, background
+/// load and the model files change).
+pub const STALE_AFTER_SECS: u64 = 21 * 24 * 3600;
+/// How many past measurements are kept per key.
+pub const HISTORY_LEN: usize = 8;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Point {
+    pub knobs: Knobs,
+    pub score: f64,
+    pub at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub knobs: Knobs,
+    /// The last measured score of `knobs` (a fresh measurement may be lower than an earlier one).
     pub score: f64,
     pub saved_at: u64,
+    /// The latest measurements, oldest first, at most [`HISTORY_LEN`].
+    #[serde(default)]
+    pub history: Vec<Point>,
+}
+
+impl Profile {
+    pub fn is_stale(&self, now: u64) -> bool {
+        now.saturating_sub(self.saved_at) > STALE_AFTER_SECS
+    }
 }
 
 #[derive(Default)]
@@ -409,6 +464,12 @@ fn read_book(path: &Path) -> Book {
             if let Ok(mut p) = serde_json::from_value::<Profile>(e.clone()) {
                 if p.score.is_finite() && p.score > 0.0 {
                     p.knobs = p.knobs.sanitized();
+                    p.history.retain(|h| h.score.is_finite() && h.score > 0.0);
+                    for h in &mut p.history {
+                        h.knobs = h.knobs.sanitized();
+                    }
+                    let extra = p.history.len().saturating_sub(HISTORY_LEN);
+                    p.history.drain(..extra);
                     profiles.insert(k.clone(), p);
                 }
             }
@@ -511,9 +572,22 @@ fn with_lock<T>(path: &Path, f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// Remembers the winner for `key`. A worse score never replaces a better saved one. A score
-/// that is not a positive finite number is refused (it would corrupt the file for every model).
+/// Remembers a measured result for `key`. Rules: the same settings measured again replace the old
+/// figure (a lucky first run must not stand forever); a stored result older than
+/// [`STALE_AFTER_SECS`] is replaced; otherwise another setting replaces it only when better.
+/// Every measurement goes into a short history. A score that is not a positive finite number is
+/// refused (it would corrupt the file for every model).
 pub fn save_profile(path: &Path, key: &str, knobs: &Knobs, score: f64) -> std::io::Result<()> {
+    save_profile_at(path, key, knobs, score, crate::store::now_secs())
+}
+
+fn save_profile_at(
+    path: &Path,
+    key: &str,
+    knobs: &Knobs,
+    score: f64,
+    now: u64,
+) -> std::io::Result<()> {
     if !score.is_finite() || score <= 0.0 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -528,19 +602,62 @@ pub fn save_profile(path: &Path, key: &str, knobs: &Knobs, score: f64) -> std::i
             }
         }
         let mut book = read_book(path);
-        if book.profiles.get(key).is_some_and(|p| p.score >= score) {
-            return Ok(());
-        }
-        book.profiles.insert(
-            key.to_string(),
-            Profile {
-                knobs: knobs.sanitized(),
+        let knobs = knobs.sanitized();
+        let point = Point {
+            knobs: knobs.clone(),
+            score,
+            at: now,
+        };
+        let entry = match book.profiles.remove(key) {
+            None => Profile {
+                knobs: knobs.clone(),
                 score,
-                saved_at: crate::store::now_secs(),
+                saved_at: now,
+                history: vec![point],
             },
-        );
+            Some(mut old) => {
+                old.history.push(point);
+                let extra = old.history.len().saturating_sub(HISTORY_LEN);
+                old.history.drain(..extra);
+                if old.knobs == knobs || old.is_stale(now) || score > old.score {
+                    old.knobs = knobs;
+                    old.score = score;
+                    old.saved_at = now;
+                }
+                old
+            }
+        };
+        book.profiles.insert(key.to_string(), entry);
         write_atomic_unique(path, book_json(&book)?.as_bytes())
     })
+}
+
+/// Measures the stored best settings of `key` again and records the figure (it may be lower than
+/// before). Returns the profile now stored, or `None` when nothing is stored for `key`. A failed
+/// or cancelled measurement changes nothing and returns the error.
+pub fn revalidate(
+    path: &Path,
+    key: &str,
+    runner: &mut dyn Runner,
+    budget: Duration,
+    cancel: &AtomicBool,
+) -> Result<Option<Profile>, String> {
+    let Some(p) = load_profile(path, key) else {
+        return Ok(None);
+    };
+    if cancel.load(Ordering::Relaxed) {
+        return Err("cancelled".into());
+    }
+    let m = runner.run(&p.knobs, budget.min(Duration::from_secs(3600)), cancel)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err("cancelled".into());
+    }
+    let s = score(&m);
+    if s <= 0.0 {
+        return Err("the measurement was not usable".into());
+    }
+    save_profile(path, key, &p.knobs, s).map_err(|e| e.to_string())?;
+    Ok(load_profile(path, key))
 }
 
 pub fn load_profile(path: &Path, key: &str) -> Option<Profile> {
@@ -760,8 +877,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("autotune-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let file = dir.join("autotune.json");
-        let key = machine_key(15.7, 8, "qwen36-35b");
-        assert_eq!(key, "16gb-8c/qwen36-35b");
+        let key = machine_key(15.7, 8, "CPU", "qwen36-35b");
+        assert_eq!(key, "16gb-8c-cpu/qwen36-35b");
         let a = Knobs {
             pin_gb: Some(5.0),
             threads: Some(8),
@@ -1060,9 +1177,106 @@ mod tests {
 
     #[test]
     fn the_machine_key_is_stable_and_total() {
-        assert_eq!(machine_key(15.7, 8, "m"), machine_key(15.69, 8, "m"));
-        assert_ne!(machine_key(15.7, 8, "m"), machine_key(31.6, 8, "m"));
-        let _ = machine_key(f64::NAN, 0, "");
-        let _ = machine_key(f64::INFINITY, u32::MAX, "é/ ü");
+        assert_eq!(
+            machine_key(15.7, 8, "cpu", "m"),
+            machine_key(15.69, 8, "cpu", "m")
+        );
+        assert_eq!(
+            machine_key(15.2, 8, "cpu", "m"),
+            machine_key(16.0, 8, "cpu", "m")
+        );
+        assert_ne!(
+            machine_key(15.7, 8, "cpu", "m"),
+            machine_key(31.6, 8, "cpu", "m")
+        );
+        assert_ne!(
+            machine_key(15.7, 8, "cpu", "m"),
+            machine_key(15.7, 8, "cuda", "m")
+        );
+        assert_eq!(
+            machine_key(15.7, 8, "weird", "m"),
+            machine_key(15.7, 8, "", "m")
+        );
+        let _ = machine_key(f64::NAN, 0, "", "");
+        let _ = machine_key(f64::INFINITY, u32::MAX, "x", "é/ ü");
+        let _ = machine_key(1e300, 1, "x", "m");
+        assert_eq!(ram_tier(1000.0), 1024);
+        assert_eq!(ram_tier(-3.0), 0);
+    }
+
+    struct Fixed(f64, usize);
+    impl Runner for Fixed {
+        fn run(&mut self, _: &Knobs, _: Duration, _: &AtomicBool) -> Result<Measurement, String> {
+            self.1 += 1;
+            Ok(Measurement {
+                tok_s: self.0,
+                swap_used_gb: 0.0,
+            })
+        }
+    }
+
+    #[test]
+    fn a_lucky_score_does_not_block_honest_later_saves() {
+        let d = Scratch::new("lucky");
+        let file = d.0.join("autotune.json");
+        let (k1, k2) = (knobs(Some(2.0), Some(4)), knobs(Some(3.0), Some(6)));
+        save_profile(&file, "k", &k1, 12.0).unwrap();
+        // a better-looking rival does not win while the stored figure is fresh and higher
+        save_profile(&file, "k", &k2, 9.0).unwrap();
+        assert_eq!(load_profile(&file, "k").unwrap().knobs, k1);
+        // measuring the stored best again shows it was luck
+        let mut r = Fixed(8.0, 0);
+        let p = revalidate(
+            &file,
+            "k",
+            &mut r,
+            Duration::from_secs(5),
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((p.knobs.clone(), p.score, r.1), (k1.clone(), 8.0, 1));
+        save_profile(&file, "k", &k2, 9.0).unwrap();
+        let p = load_profile(&file, "k").unwrap();
+        assert_eq!((p.knobs, p.score), (k2, 9.0));
+        assert!(p.history.len() >= 3 && p.history.len() <= HISTORY_LEN);
+    }
+
+    #[test]
+    fn a_stale_result_is_replaced_and_the_history_is_bounded() {
+        let d = Scratch::new("stale");
+        let file = d.0.join("autotune.json");
+        let (k1, k2) = (knobs(Some(2.0), None), knobs(Some(3.0), None));
+        save_profile_at(&file, "k", &k1, 10.0, 1_000).unwrap();
+        save_profile_at(&file, "k", &k2, 5.0, 2_000).unwrap();
+        assert_eq!(load_profile(&file, "k").unwrap().knobs, k1);
+        save_profile_at(&file, "k", &k2, 5.0, 1_000 + STALE_AFTER_SECS + 1).unwrap();
+        assert_eq!(load_profile(&file, "k").unwrap().knobs, k2);
+        // a clock that went backwards is not "stale"
+        save_profile_at(&file, "k", &k1, 1.0, 5).unwrap();
+        assert_eq!(load_profile(&file, "k").unwrap().knobs, k2);
+        for i in 0..50 {
+            save_profile_at(&file, "k", &k2, 5.0 + f64::from(i), 9_000_000).unwrap();
+        }
+        assert_eq!(load_profile(&file, "k").unwrap().history.len(), HISTORY_LEN);
+    }
+
+    #[test]
+    fn revalidating_fails_safely() {
+        let d = Scratch::new("reval");
+        let file = d.0.join("autotune.json");
+        let go = AtomicBool::new(false);
+        let b = Duration::from_secs(1);
+        assert!(
+            revalidate(&file, "none", &mut Fixed(1.0, 0), b, &go)
+                .unwrap()
+                .is_none()
+        );
+        save_profile(&file, "k", &knobs(None, Some(2)), 4.0).unwrap();
+        assert!(revalidate(&file, "k", &mut Fixed(f64::NAN, 0), b, &go).is_err());
+        let stop = AtomicBool::new(true);
+        let mut r = Fixed(9.0, 0);
+        assert!(revalidate(&file, "k", &mut r, b, &stop).is_err() && r.1 == 0);
+        assert_eq!(load_profile(&file, "k").unwrap().score, 4.0);
     }
 }

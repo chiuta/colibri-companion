@@ -46,5 +46,7 @@ pub use store::{
     Backend, Conversation, ConversationStore, Lang, Settings, StoredMessage, Style, Theme,
 };
 pub mod autotune;
+pub mod autotune_runner;
 pub mod capture;
 pub mod estimate;
+pub mod mailbox;

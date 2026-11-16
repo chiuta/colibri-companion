@@ -4,7 +4,7 @@
 
 **Site: https://colibri-companion.chiuta.ro** — descărcare, tutoriale video, ajutor.
 
-O aplicație desktop simplă pentru [colibri](https://github.com/JustVugg/colibri): alege un model potrivit calculatorului tău, descarcă-l cu un clic, apoi conversează — totul local, fără cont și fără cloud.
+O aplicație desktop simplă pentru [colibri](https://github.com/JustVugg/colibri): alege un model potrivit calculatorului tău, descarcă-l cu un clic, apoi conversează — modelul rulează pe calculatorul tău, fără cont și fără serviciu cloud.
 
 ## Pornire
 

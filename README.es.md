@@ -4,7 +4,7 @@
 
 **Sitio web: https://colibri-companion.chiuta.ro** — descarga, videotutoriales, ayuda.
 
-Una aplicación de escritorio sencilla para [colibri](https://github.com/JustVugg/colibri): elige un modelo adecuado a tu ordenador, descárgalo con un clic y conversa — todo en local, sin cuenta y sin nube.
+Una aplicación de escritorio sencilla para [colibri](https://github.com/JustVugg/colibri): elige un modelo adecuado a tu ordenador, descárgalo con un clic y conversa — el modelo funciona en tu ordenador, sin cuenta y sin servicios en la nube.
 
 ## Ejecución
 

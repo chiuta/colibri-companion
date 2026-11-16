@@ -27,6 +27,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// What the sampler threads leave for the interface: only the newest of each, so a window that is
+/// hidden (and does not drain its channel) cannot make the queue grow.
+#[derive(Default)]
+pub struct Mail {
+    pub health: companion_core::mailbox::Latest<Health>,
+    pub status: companion_core::mailbox::Latest<Result<StatusReport, String>>,
+    pub resources: companion_core::mailbox::Latest<Box<ResView>>,
+}
+
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8000";
 
 #[allow(clippy::large_enum_variant)]
@@ -49,6 +58,8 @@ pub enum Event {
     DiskSpeed(Result<f64, String>),
     Status(Result<StatusReport, String>),
     Health(Health),
+    /// A sampler left a newer value in [`Mail`]; read it with `take`.
+    Mail,
     ModelIds(Vec<String>),
     CloneLine(String),
     CloneDone(Result<PathBuf, String>),
@@ -271,6 +282,7 @@ pub struct CompanionApp {
     pub s: Settings,
     pub p: Palette,
     pub tx: Sender<Event>,
+    pub mail: Arc<Mail>,
     rx: Receiver<Event>,
     poll: Arc<Mutex<PollCfg>>,
     last_poll_sync: (Option<PathBuf>, String, String, bool),
@@ -405,6 +417,7 @@ impl CompanionApp {
                 .unwrap_or_default(),
             s: settings,
             tx,
+            mail: Arc::default(),
             rx,
             poll,
             last_poll_sync: (None, String::new(), String::new(), false),
@@ -946,11 +959,12 @@ impl CompanionApp {
         if !open {
             return; // the newer generation makes the running thread stop
         }
-        let (run, targets, tx, ctx) = (
+        let (run, targets, tx, ctx, mail) = (
             self.res_gen.clone(),
             self.res_targets.clone(),
             self.tx.clone(),
             self.ctx.clone(),
+            self.mail.clone(),
         );
         let disk = self
             .s
@@ -997,7 +1011,7 @@ impl CompanionApp {
                     applog: net::log_summary(),
                     egress: net::egress_log(),
                 };
-                if tx.send(Event::Resources(Box::new(view))).is_err() {
+                if mail.resources.put(Box::new(view)) && tx.send(Event::Mail).is_err() {
                     return;
                 }
                 ctx.request_repaint();
@@ -1384,7 +1398,12 @@ impl CompanionApp {
     }
 
     fn spawn_poller(&mut self) {
-        let (cfg, tx, ctx) = (self.poll.clone(), self.tx.clone(), self.ctx.clone());
+        let (cfg, tx, ctx, mail) = (
+            self.poll.clone(),
+            self.tx.clone(),
+            self.ctx.clone(),
+            self.mail.clone(),
+        );
         thread::spawn(move || {
             let mut tick = 0u64;
             let mut last_ids_for: Option<String> = None;
@@ -1413,7 +1432,7 @@ impl CompanionApp {
                     last_health = Some(health_dbg);
                     changed = true;
                 }
-                if tx.send(Event::Health(health)).is_err() {
+                if mail.health.put(health) && tx.send(Event::Mail).is_err() {
                     return;
                 }
                 // `coli status` starts a Python process, so it is asked for rarely when nothing is going on.
@@ -1425,7 +1444,7 @@ impl CompanionApp {
                         last_status = Some(status_dbg);
                         changed = true;
                     }
-                    if tx.send(Event::Status(status)).is_err() {
+                    if mail.status.put(status) && tx.send(Event::Mail).is_err() {
                         return;
                     }
                 }
@@ -1825,8 +1844,10 @@ impl CompanionApp {
     pub fn preview_block(&mut self, b: &companion_core::blocks::Block) {
         let dir = companion_core::paths::data_dir().join("preview");
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join(format!("preview.{}", b.extension()));
-        match std::fs::write(&path, &b.code) {
+        // HTML and SVG are written as a page that opens with a restrictive policy (see `preview_file`).
+        let (ext, text) = b.preview_file();
+        let path = dir.join(format!("preview.{ext}"));
+        match std::fs::write(&path, text) {
             // Scripts (.py, .sh, .js…) are refused by the opener: a preview must never run code.
             Ok(()) if companion_core::proc::open_externally(&path.display().to_string()) => {}
             Ok(()) => self.toast(
@@ -2096,6 +2117,17 @@ impl CompanionApp {
                     self.awaiting_status = false;
                 }
             },
+            Event::Mail => {
+                if let Some(h) = self.mail.health.take() {
+                    self.handle(Event::Health(h));
+                }
+                if let Some(st) = self.mail.status.take() {
+                    self.handle(Event::Status(st));
+                }
+                if let Some(v) = self.mail.resources.take() {
+                    self.handle(Event::Resources(v));
+                }
+            }
             Event::Health(h) => {
                 if matches!(h, Health::Ready(_)) {
                     self.starting_since = None;

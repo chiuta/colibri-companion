@@ -10,7 +10,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "That folder doesn't look like colibri (c/coli is missing). Pick the folder that contains «c», «docs» and «README.md».",
         [
-            "Ce dossier ne ressemble pas à colibri (c/coli est introuvable). Choisis le dossier qui contient «c», «docs» et «README.md».",
+            "Ce dossier ne ressemble pas à colibri (c/coli est introuvable). Choisis le dossier qui contient « c », « docs » et « README.md ».",
             "Questa cartella non sembra contenere colibri (manca c/coli). Scegli la cartella che contiene «c», «docs» e «README.md».",
             "Esa carpeta no parece contener colibri (falta c/coli). Elige la carpeta que contiene «c», «docs» y «README.md».",
             "Esta pasta não parece conter o colibri (falta c/coli). Escolhe a pasta que contém «c», «docs» e «README.md».",
@@ -521,8 +521,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "2. Su Windows, spunta «Add python.exe to PATH» nel programma di installazione.",
             "2. En Windows, marca «Add python.exe to PATH» en el instalador.",
             "2. No Windows, assinala «Add python.exe to PATH» no instalador.",
-            "2. Hake unter Windows im Installer «Add python.exe to PATH» an.",
-            "2. Windowson jelöld be a telepítőben az «Add python.exe to PATH» opciót.",
+            "2. Hake unter Windows im Installer „Add python.exe to PATH“ an.",
+            "2. Windowson jelöld be a telepítőben az „Add python.exe to PATH” opciót.",
         ],
     ),
     (
@@ -532,8 +532,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "3. Torna qui e premi «Controlla di nuovo».",
             "3. Vuelve aquí y pulsa «Comprobar de nuevo».",
             "3. Volta aqui e carrega em «Verificar de novo».",
-            "3. Komm hierher zurück und drücke «Erneut prüfen».",
-            "3. Térj vissza ide, és nyomd meg az «Újra ellenőrzés» gombot.",
+            "3. Komm hierher zurück und drücke „Erneut prüfen“.",
+            "3. Térj vissza ide, és nyomd meg az „Újra ellenőrzés” gombot.",
         ],
     ),
     (
@@ -631,8 +631,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Non trovo il programma «git»: scarica lo ZIP dal browser, decomprimilo e trascina la cartella in questa finestra.",
             "No encuentro el programa «git»: descarga el ZIP desde tu navegador, descomprímelo y arrastra la carpeta a esta ventana.",
             "Não encontro o programa «git»: obtém o ZIP no navegador, descompacta-o e arrasta a pasta para esta janela.",
-            "Das Programm «git» wurde nicht gefunden. Lade die ZIP-Datei im Browser herunter, entpacke sie und ziehe den Ordner in dieses Fenster.",
-            "A «git» program nem található, ezért töltsd le a ZIP-et a böngészőből, csomagold ki, és húzd a mappát ebbe az ablakba.",
+            "Das Programm „git“ wurde nicht gefunden. Lade die ZIP-Datei im Browser herunter, entpacke sie und ziehe den Ordner in dieses Fenster.",
+            "A „git” program nem található, ezért töltsd le a ZIP-et a böngészőből, csomagold ki, és húzd a mappát ebbe az ablakba.",
         ],
     ),
     (
@@ -665,7 +665,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Arrastra la carpeta de colibri a esta ventana o pega su ruta.",
             "Arrasta a pasta do colibri para esta janela ou cola o respetivo caminho.",
             "Ziehe den colibri-Ordner in dieses Fenster oder füge seinen Pfad ein.",
-            "Húzza a colibri mappát ebbe az ablakba, vagy illessze be az elérési útját.",
+            "Húzd a colibri mappát ebbe az ablakba, vagy illeszd be az elérési útját.",
         ],
     ),
     (
@@ -719,8 +719,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Un modello è il «cervello» che risponde. Ho segnato quelli adatti a questo computer.",
             "Un modelo es el «cerebro» que responde. He marcado lo que encaja con este ordenador.",
             "Um modelo é o «cérebro» que responde. Marquei o que se adequa a este computador.",
-            "Ein Modell ist das «Gehirn», das antwortet. Ich habe markiert, was zu diesem Computer passt.",
-            "A modell az «agy», amely válaszol. Megjelöltem, mi illik ehhez a számítógéphez.",
+            "Ein Modell ist das „Gehirn“, das antwortet. Ich habe markiert, was zu diesem Computer passt.",
+            "A modell az „agy”, amely válaszol. Megjelöltem, mi illik ehhez a számítógéphez.",
         ],
     ),
     (
@@ -1103,8 +1103,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Specializzato in codice e strumenti, senza il passaggio di «ragionamento». Risponde anche alle domande di tutti i giorni.",
             "Especializado en código y herramientas, sin el paso de «razonamiento». También resuelve preguntas cotidianas.",
             "Especializado em código e ferramentas, sem o passo de «raciocínio». Também responde às perguntas do dia a dia.",
-            "Spezialisiert auf Code und Werkzeuge, ohne den «Denk»-Schritt. Beantwortet auch Alltagsfragen.",
-            "Kódra és eszközökre specializálva, «gondolkodási» lépés nélkül. A mindennapi kérdésekre is válaszol.",
+            "Spezialisiert auf Code und Werkzeuge, ohne den „Denk“-Schritt. Beantwortet auch Alltagsfragen.",
+            "Kódra és eszközökre specializálva, „gondolkodási” lépés nélkül. A mindennapi kérdésekre is válaszol.",
         ],
     ),
     (
@@ -1196,14 +1196,14 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Per usare la scheda grafica, esegui questo comando in un terminale (non installo mai pacchetti di sistema da solo), poi premi «Riprendi».",
             "Para usar tu tarjeta gráfica, ejecuta este comando en un terminal (yo nunca instalo paquetes del sistema) y luego pulsa «Reanudar».",
             "Para usar a placa gráfica, executa este comando num terminal (eu nunca instalo pacotes do sistema), e depois carrega em «Retomar».",
-            "Um deine Grafikkarte zu nutzen, führe diesen Befehl in einem Terminal aus (ich installiere nie selbst Systempakete) und klicke dann auf «Fortsetzen».",
-            "A videókártya használatához futtasd ezt a parancsot egy terminálban (rendszercsomagokat soha nem telepítek magam), majd nyomd meg a «Folytatás» gombot.",
+            "Um deine Grafikkarte zu nutzen, führe diesen Befehl in einem Terminal aus (ich installiere nie selbst Systempakete) und klicke dann auf „Fortsetzen“.",
+            "A videókártya használatához futtasd ezt a parancsot egy terminálban (rendszercsomagokat soha nem telepítek magam), majd nyomd meg a „Folytatás” gombot.",
         ],
     ),
     (
         "Added file «{}»",
         [
-            "Fichier «{}» ajouté",
+            "Fichier « {} » ajouté",
             "File «{}» aggiunto",
             "Archivo «{}» añadido",
             "Ficheiro «{}» adicionado",
@@ -1214,7 +1214,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "«{}» is not a text file or is too large (max 256 KB)",
         [
-            "«{}» n'est pas un fichier texte ou est trop volumineux (max 256 Ko)",
+            "« {} » n'est pas un fichier texte ou est trop volumineux (max 256 Ko)",
             "«{}» non è un file di testo o è troppo grande (max 256 KB)",
             "«{}» no es un archivo de texto o es demasiado grande (máx. 256 KB)",
             "«{}» não é um ficheiro de texto ou é demasiado grande (máx. 256 KB)",
@@ -1704,8 +1704,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Mostra il «ragionamento» del modello, quando c'è",
             "Mostrar el «razonamiento» del modelo, cuando lo haya",
             "Mostrar o «raciocínio» do modelo, quando existir",
-            "«Denkprozess» des Modells anzeigen, falls vorhanden",
-            "A modell «gondolkodásának» megjelenítése, ha van",
+            "„Denkprozess“ des Modells anzeigen, falls vorhanden",
+            "A modell „gondolkodásának” megjelenítése, ha van",
         ],
     ),
     (
@@ -1715,8 +1715,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Istruzioni permanenti (facoltative), ad es. «Rispondi in modo breve»:",
             "Instrucciones permanentes (opcional), p. ej. «Responde brevemente»:",
             "Instruções permanentes (opcional), p. ex. «Responde de forma breve»:",
-            "Dauerhafte Anweisungen (optional), z. B. «Antworte kurz»:",
-            "Állandó utasítások (nem kötelező), pl. «Válaszolj röviden»:",
+            "Dauerhafte Anweisungen (optional), z. B. „Antworte kurz“:",
+            "Állandó utasítások (nem kötelező), pl. „Válaszolj röviden”:",
         ],
     ),
     (
@@ -2614,7 +2614,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Los chips de IA dedicados (NPU) son solo experimentales en colibri y permanecen apagados; esta aplicación no los activa a escondidas.",
             "Os chips de IA dedicados (NPU) são apenas experimentais no colibri e ficam desligados; esta aplicação não os liga às escondidas.",
             "Dedizierte KI-Chips (NPUs) sind in colibri nur experimentell und bleiben aus; diese App schaltet sie nicht heimlich ein.",
-            "A dedikált MI-chipek (NPU) a colibriban csak kísérleti jellegűek, és kikapcsolva maradnak; ez az alkalmazás nem kapcsolja be őket a te tudtod nélkül.",
+            "A dedikált MI-chipek (NPU) a colibriban csak kísérleti jellegűek, és kikapcsolva maradnak; ez az alkalmazás nem kapcsolja be őket a tudtod nélkül.",
         ],
     ),
     (
@@ -3080,7 +3080,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Picture «{}» goes with your message. It only works with models that can see pictures.",
         [
-            "L'image «{}» part avec ton message. Cela ne marche qu'avec les modèles qui voient les images.",
+            "L'image « {} » part avec ton message. Cela ne marche qu'avec les modèles qui voient les images.",
             "L'immagine «{}» parte con il messaggio. Funziona solo con i modelli che vedono le immagini.",
             "La imagen «{}» se envía con tu mensaje. Solo funciona con modelos que ven imágenes.",
             "A imagem «{}» vai com a tua mensagem. Só funciona com modelos que veem imagens.",
@@ -3091,7 +3091,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Reading «{}»…",
         [
-            "Lecture de «{}»…",
+            "Lecture de « {} »…",
             "Leggo «{}»…",
             "Leyendo «{}»…",
             "A ler «{}»…",
@@ -3157,7 +3157,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Added «{}» (the long text was cut)",
         [
-            "«{}» ajouté (le long texte a été coupé)",
+            "« {} » ajouté (le long texte a été coupé)",
             "Aggiunto «{}» (il testo lungo è stato tagliato)",
             "Añadido «{}» (el texto largo se ha recortado)",
             "«{}» adicionado (o texto longo foi cortado)",
@@ -3825,7 +3825,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "I can't write to «{}». Pick another folder or disk.",
         [
-            "Je ne peux pas écrire dans «{}». Choisis un autre dossier ou disque.",
+            "Je ne peux pas écrire dans « {} ». Choisis un autre dossier ou disque.",
             "Non è possibile scrivere in «{}». Scegli un'altra cartella o un altro disco.",
             "No puedo escribir en «{}». Elige otra carpeta u otro disco.",
             "Não consigo escrever em «{}». Escolhe outra pasta ou outro disco.",
@@ -3840,8 +3840,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "I modelli già scaricati restano dove sono e compaiono ancora nell'elenco. Se scegli «Accanto a questa app», un modello da decine di GB occupa il disco su cui è installata l'app.",
             "Los modelos ya descargados se quedan donde están y siguen apareciendo en la lista. Si eliges «Junto a esta aplicación», un modelo de decenas de GB ocupa el disco donde está instalada la aplicación.",
             "Os modelos já transferidos ficam onde estão e continuam na lista. Se escolheres «Junto a esta aplicação», um modelo de dezenas de GB ocupa o disco onde a aplicação está instalada.",
-            "Bereits heruntergeladene Modelle bleiben, wo sie sind, und erscheinen weiter in der Liste. Wählst du «Neben dieser App», belegt ein Modell mit Dutzenden GB den Datenträger, auf dem die App installiert ist.",
-            "A már letöltött modellek ott maradnak, ahol vannak, és továbbra is látszanak a listában. Ha az «Az alkalmazás mellett» lehetőséget választod, a több tíz GB-os modell azt a lemezt foglalja, ahová az alkalmazás telepítve van.",
+            "Bereits heruntergeladene Modelle bleiben, wo sie sind, und erscheinen weiter in der Liste. Wählst du „Neben dieser App“, belegt ein Modell mit Dutzenden GB den Datenträger, auf dem die App installiert ist.",
+            "A már letöltött modellek ott maradnak, ahol vannak, és továbbra is látszanak a listában. Ha az „Az alkalmazás mellett” lehetőséget választod, a több tíz GB-os modell azt a lemezt foglalja, ahová az alkalmazás telepítve van.",
         ],
     ),
     (
@@ -3851,8 +3851,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Scegli il primo file (quello con «-00001-of-…» nel nome) oppure un singolo file .gguf.",
             "Elige el primer archivo (el que lleva «-00001-of-…» en el nombre) o un único archivo .gguf.",
             "Escolhe o primeiro ficheiro (o que tem «-00001-of-…» no nome) ou um único ficheiro .gguf.",
-            "Wähle die erste Datei (die mit «-00001-of-…» im Namen) oder eine einzelne .gguf-Datei.",
-            "Válaszd az első fájlt (amelynek a nevében «-00001-of-…» szerepel) vagy egyetlen .gguf fájlt.",
+            "Wähle die erste Datei (die mit „-00001-of-…“ im Namen) oder eine einzelne .gguf-Datei.",
+            "Válaszd az első fájlt (amelynek a nevében „-00001-of-…” szerepel) vagy egyetlen .gguf fájlt.",
         ],
     ),
     (
@@ -3884,8 +3884,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "File del modello trovato. Premi «Usa questo modello» nella finestra Modelli.",
             "Archivo de modelo encontrado. Pulsa «Usar este modelo» en la ventana Modelos.",
             "Ficheiro de modelo encontrado. Prime «Usar este modelo» na janela Modelos.",
-            "Modelldatei gefunden. Drücke im Fenster Modelle auf «Dieses Modell verwenden».",
-            "Modellfájl megtalálva. Nyomd meg a «Modell használata» gombot a Modellek ablakban.",
+            "Modelldatei gefunden. Drücke im Fenster Modelle auf „Dieses Modell verwenden“.",
+            "Modellfájl megtalálva. Nyomd meg a „Modell használata” gombot a Modellek ablakban.",
         ],
     ),
     (
@@ -3906,8 +3906,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Se hai file .gguf (ad esempio «…-00001-of-00008.gguf»), scegli il primo; le altre parti devono trovarsi nella stessa cartella. colibri li converte in una cartella di modello accanto (può richiedere tempo e spazio aggiuntivo), poi lo avvio. Puoi anche scegliere una cartella di modello colibri già pronta.",
             "Si tienes archivos .gguf (por ejemplo «…-00001-of-00008.gguf»), elige el primero; las demás partes deben estar en la misma carpeta. colibri los convierte en una carpeta de modelo a su lado (puede tardar y necesita espacio adicional) y después lo arranco. También puedes elegir una carpeta de modelo colibri ya preparada.",
             "Se tens ficheiros .gguf (por exemplo «…-00001-of-00008.gguf»), escolhe o primeiro; as outras partes têm de estar na mesma pasta. O colibri converte-os numa pasta de modelo ao lado (pode demorar e precisa de espaço extra) e depois arranco-o. Também podes escolher uma pasta de modelo colibri já pronta.",
-            "Wenn du .gguf-Dateien hast (zum Beispiel «…-00001-of-00008.gguf»), wähle die erste; die übrigen Teile müssen im selben Ordner liegen. colibri wandelt sie in einen Modellordner daneben um (das kann dauern und braucht zusätzlichen Platz), danach starte ich es. Du kannst auch einen fertigen colibri-Modellordner wählen.",
-            "Ha vannak .gguf fájljaid (például «…-00001-of-00008.gguf»), válaszd ki az elsőt; a többi résznek ugyanabban a mappában kell lennie. A colibri mellé egy modellmappává alakítja őket (ez sokáig tarthat és további helyet igényel), aztán elindítom. Választhatsz kész colibri modellmappát is.",
+            "Wenn du .gguf-Dateien hast (zum Beispiel „…-00001-of-00008.gguf“), wähle die erste; die übrigen Teile müssen im selben Ordner liegen. colibri wandelt sie in einen Modellordner daneben um (das kann dauern und braucht zusätzlichen Platz), danach starte ich es. Du kannst auch einen fertigen colibri-Modellordner wählen.",
+            "Ha vannak .gguf fájljaid (például „…-00001-of-00008.gguf”), válaszd ki az elsőt; a többi résznek ugyanabban a mappában kell lennie. A colibri mellé egy modellmappává alakítja őket (ez sokáig tarthat és további helyet igényel), aztán elindítom. Választhatsz kész colibri modellmappát is.",
         ],
     ),
     (
@@ -4291,8 +4291,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Qualsiasi programma di questo computer che parla «OpenAI» o «Anthropic» può usare colibri tramite lo stesso indirizzo locale. Nulla esce dal computer. Copia le impostazioni qui sotto in quel programma.",
             "Cualquier programa de este ordenador que hable «OpenAI» o «Anthropic» puede usar colibri a través de la misma dirección local. Nada sale del ordenador. Copia los ajustes de abajo en ese programa.",
             "Qualquer programa deste computador que fale «OpenAI» ou «Anthropic» pode usar o colibri através do mesmo endereço local. Nada sai do computador. Copia as definições abaixo para esse programa.",
-            "Jedes Programm auf diesem Computer, das «OpenAI» oder «Anthropic» spricht, kann colibri über dieselbe lokale Adresse nutzen. Nichts verlässt den Computer. Kopiere die Einstellungen unten in dieses Programm.",
-            "A gépen lévő bármely program, amely «OpenAI» vagy «Anthropic» protokollt beszél, használhatja a colibrit ugyanazon a helyi címen. Semmi nem hagyja el a számítógépet. Másold a lenti beállításokat abba a programba.",
+            "Jedes Programm auf diesem Computer, das „OpenAI“ oder „Anthropic“ spricht, kann colibri über dieselbe lokale Adresse nutzen. Nichts verlässt den Computer. Kopiere die Einstellungen unten in dieses Programm.",
+            "A gépen lévő bármely program, amely „OpenAI” vagy „Anthropic” protokollt beszél, használhatja a colibrit ugyanazon a helyi címen. Semmi nem hagyja el a számítógépet. Másold a lenti beállításokat abba a programba.",
         ],
     ),
     (
@@ -4302,8 +4302,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Programmi con un'impostazione «provider OpenAI» (editor di codice, agenti, interfacce)",
             "Programas con un ajuste de «proveedor OpenAI» (editores de código, agentes, interfaces)",
             "Programas com uma definição de «fornecedor OpenAI» (editores de código, agentes, interfaces)",
-            "Programme mit einer Einstellung «OpenAI-Anbieter» (Code-Editoren, Agenten, Oberflächen)",
-            "Programok «OpenAI-szolgáltató» beállítással (kódszerkesztők, ügynökök, felületek)",
+            "Programme mit einer Einstellung „OpenAI-Anbieter“ (Code-Editoren, Agenten, Oberflächen)",
+            "Programok „OpenAI-szolgáltató” beállítással (kódszerkesztők, ügynökök, felületek)",
         ],
     ),
     (
@@ -4335,8 +4335,8 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "I programmi che usano MCP (ad esempio Claude Desktop o Claude Code) possono chiedere a colibri di consigliare, installare, avviare o fermare modelli: il comando è «coli mcp».",
             "Los programas que usan MCP (por ejemplo Claude Desktop o Claude Code) pueden pedir a colibri que recomiende, instale, inicie o detenga modelos: el comando es «coli mcp».",
             "Os programas que usam MCP (por exemplo Claude Desktop ou Claude Code) podem pedir ao colibri que recomende, instale, inicie ou pare modelos: o comando é «coli mcp».",
-            "Programme, die MCP nutzen (zum Beispiel Claude Desktop oder Claude Code), können colibri bitten, Modelle zu empfehlen, zu installieren, zu starten oder zu stoppen: Der Befehl lautet «coli mcp».",
-            "Az MCP-t használó programok (például a Claude Desktop vagy a Claude Code) megkérhetik a colibrit, hogy ajánljon, telepítsen, indítson vagy állítson le modelleket: a parancs «coli mcp».",
+            "Programme, die MCP nutzen (zum Beispiel Claude Desktop oder Claude Code), können colibri bitten, Modelle zu empfehlen, zu installieren, zu starten oder zu stoppen: Der Befehl lautet „coli mcp“.",
+            "Az MCP-t használó programok (például a Claude Desktop vagy a Claude Code) megkérhetik a colibrit, hogy ajánljon, telepítsen, indítson vagy állítson le modelleket: a parancs „coli mcp”.",
         ],
     ),
     (
@@ -5106,7 +5106,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Added «{}» from the repository",
         [
-            "«{}» ajouté depuis le dépôt",
+            "« {} » ajouté depuis le dépôt",
             "«{}» aggiunto dal repository",
             "«{}» añadido desde el repositorio",
             "«{}» adicionado do repositório",
@@ -5208,7 +5208,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "J'ai besoin de Python pour accéder à Internet.",
             "Mi serve Python per accedere a Internet.",
             "Necesito Python para acceder a Internet.",
-            "Preciso do Python para acessar a Internet.",
+            "Preciso do Python para aceder à Internet.",
             "Ich brauche Python für den Internetzugriff.",
             "Az internet eléréséhez Python kell.",
         ],
@@ -6186,7 +6186,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Pour dicter au lieu de taper, utilise la dictée du système : Windows Win+H, macOS appuie deux fois sur Fn, Linux selon le bureau. Elle fonctionne dans tout champ de texte ici.",
             "Per dettare invece di scrivere usa la dettatura del sistema: Windows Win+H, macOS premi due volte Fn, Linux dipende dal desktop. Funziona in ogni campo di testo qui.",
             "Para dictar en lugar de escribir, utiliza el dictado del sistema: Windows Win+H, macOS pulsa Fn dos veces, Linux depende del escritorio. Funciona en cualquier cuadro de texto de la aplicación.",
-            "Para ditar em vez de digitar, usa o ditado do sistema: Windows Win+H, macOS pressiona Fn duas vezes, Linux depende do ambiente. Funciona em qualquer caixa de texto aqui.",
+            "Para ditar em vez de escrever, usa o ditado do sistema: Windows Win+H, macOS prime Fn duas vezes, Linux depende do ambiente. Funciona em qualquer caixa de texto aqui.",
             "Zum Diktieren statt Tippen nutze die Diktierfunktion deines Systems: Windows Win+H, macOS zweimal Fn drücken, Linux je nach Desktop. Sie funktioniert in jedem Textfeld hier.",
             "Gépelés helyett diktálhatsz a rendszer diktálásával: Windows Win+H, macOS kétszer nyomd meg az Fn-t, Linuxon az asztali környezettől függ. Itt minden szövegmezőben működik.",
         ],
@@ -6526,7 +6526,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Supprimer l'automatisation",
             "Elimina l'automazione",
             "Eliminar la automatización",
-            "Excluir a automação",
+            "Eliminar a automação",
             "Automatisierung löschen",
             "Az automatizálás törlése",
         ],
@@ -7068,7 +7068,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
         "A standard way for programs to offer tools to a model; colibri has its own.",
         [
             "Une manière standard pour des programmes de proposer des outils à un modèle ; colibri a la sienne.",
-            "Un modo standard con cui i programmi offrono strumenti a un modello; colibri ha il tuo.",
+            "Un modo standard con cui i programmi offrono strumenti a un modello; colibri ha il suo.",
             "Una forma estándar para que los programas ofrezcan herramientas a un modelo; colibri tiene la suya.",
             "Uma forma normalizada de os programas oferecerem ferramentas a um modelo; o colibri tem a sua.",
             "Ein Standard, mit dem Programme einem Modell Werkzeuge anbieten; colibri hat seinen eigenen.",
@@ -7851,7 +7851,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
         [
             "Produit la vidéo et son son en une seule passe, jusqu'en 4K ; rapide et facile à adapter.",
             "Crea video e audio insieme in un solo passaggio, fino a 4K; veloce e flessibile da adattare.",
-            "Crea el vídeo y tu sonido a la vez, en una sola pasada, hasta 4K; rápido y flexible de adaptar.",
+            "Crea el vídeo y su sonido a la vez, en una sola pasada, hasta 4K; rápido y flexible de adaptar.",
             "Cria o vídeo e o seu som de uma só vez, até 4K; rápido e flexível de adaptar.",
             "Erzeugt Video und Ton zusammen in einem Durchgang, bis 4K; schnell und flexibel anpassbar.",
             "A videót és a hangját egy menetben készíti, 4K-ig; gyors és rugalmasan igazítható.",
@@ -9372,7 +9372,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
         "an address with a user name or password in it is refused",
         [
             "une adresse contenant un nom d'utilisateur ou un mot de passe est refusée",
-            "un indirizzo con nome utente o password al tuo interno viene rifiutato",
+            "un indirizzo con nome utente o password al suo interno viene rifiutato",
             "se rechaza una dirección que contenga nombre de usuario o contraseña",
             "um endereço com nome de utilizador ou palavra-passe é recusado",
             "eine Adresse mit Benutzername oder Passwort wird abgelehnt",
@@ -10438,7 +10438,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Could not save the documents",
         [
-            "Impossible d’enregistrer les documents",
+            "Impossible d'enregistrer les documents",
             "Impossibile salvare i documenti",
             "No se pudieron guardar los documentos",
             "Não foi possível guardar os documentos",
@@ -10449,7 +10449,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "I found no files there.",
         [
-            "Je n’y ai trouvé aucun fichier.",
+            "Je n'y ai trouvé aucun fichier.",
             "Non ho trovato file lì.",
             "No encontré archivos allí.",
             "Não encontrei ficheiros lá.",
@@ -10537,7 +10537,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Name of a new collection",
         [
-            "Nom d’une nouvelle collection",
+            "Nom d'une nouvelle collection",
             "Nome di una nuova raccolta",
             "Nombre de una colección nueva",
             "Nome de uma nova coleção",
@@ -10548,7 +10548,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Path to a file or folder (you can also drop files here)",
         [
-            "Chemin d’un fichier ou dossier (tu peux aussi y déposer des fichiers)",
+            "Chemin d'un fichier ou dossier (tu peux aussi y déposer des fichiers)",
             "Percorso di un file o cartella (puoi anche trascinare qui i file)",
             "Ruta de un archivo o carpeta (también puedes soltar archivos aquí)",
             "Caminho de um ficheiro ou pasta (também podes largar ficheiros aqui)",
@@ -10559,10 +10559,10 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Put files in a collection, then pick the collection above the message box. Answers are written from the passages found, with their numbers. Everything is searched on this computer, with no internet and no second model.",
         [
-            "Mets des fichiers dans une collection, puis choisis-la au-dessus de la zone de saisie. Les réponses s’appuient sur les passages trouvés, avec leurs numéros. Tout est cherché sur cet ordinateur, sans internet et sans second modèle.",
+            "Mets des fichiers dans une collection, puis choisis-la au-dessus de la zone de saisie. Les réponses s'appuient sur les passages trouvés, avec leurs numéros. Tout est cherché sur cet ordinateur, sans internet et sans second modèle.",
             "Inserisci i file in una raccolta, poi scegli la raccolta sopra la casella dei messaggi. Le risposte si basano sui passaggi trovati, con i loro numeri. Tutto viene cercato su questo computer, senza internet e senza un secondo modello.",
-            "Coloca archivos en una colección y elígela sobre el cuadro de mensaje. Las respuestas se redactan a partir de los pasajes encontrados, con tus números. Todo se busca en este ordenador, sin internet y sin un segundo modelo.",
-            "Põe ficheiros numa coleção e escolhe a coleção acima da caixa de mensagem. As respostas são escritas a partir das passagens encontradas, com os teus números. Tudo é pesquisado neste computador, sem internet e sem um segundo modelo.",
+            "Coloca archivos en una colección y elígela sobre el cuadro de mensaje. Las respuestas se redactan a partir de los pasajes encontrados, con sus números. Todo se busca en este ordenador, sin internet y sin un segundo modelo.",
+            "Põe ficheiros numa coleção e escolhe a coleção acima da caixa de mensagem. As respostas são escritas a partir das passagens encontradas, com os seus números. Tudo é pesquisado neste computador, sem internet e sem um segundo modelo.",
             "Lege Dateien in einer Sammlung ab und wähle diese über dem Nachrichtenfeld aus. Antworten entstehen aus den gefundenen Textstellen, mit ihren Nummern. Alles wird auf diesem Computer durchsucht, ohne Internet und ohne zweites Modell.",
             "Tegyél fájlokat egy gyűjteménybe, majd válaszd ki a gyűjteményt az üzenetmező fölött. A válaszok a megtalált szövegrészekből készülnek, a számaikkal. Minden ezen a számítógépen keres, internet és második modell nélkül.",
         ],
@@ -10647,7 +10647,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Could not save the servers",
         [
-            "Impossible d’enregistrer les serveurs",
+            "Impossible d'enregistrer les serveurs",
             "Impossibile salvare i server",
             "No se pudieron guardar los servidores",
             "Não foi possível guardar os servidores",
@@ -10658,7 +10658,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Too many tool calls in a row; I stopped.",
         [
-            "Trop d’appels d’outils à la suite ; je me suis arrêté.",
+            "Trop d'appels d'outils à la suite ; je me suis arrêté.",
             "Troppe chiamate di strumenti di fila: mi sono fermato.",
             "Demasiadas llamadas a herramientas seguidas; me detuve.",
             "Demasiadas chamadas de ferramentas seguidas; parei.",
@@ -10669,7 +10669,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Result from tool {}",
         [
-            "Résultat de l’outil {}",
+            "Résultat de l'outil {}",
             "Risultato dallo strumento {}",
             "Resultado de la herramienta {}",
             "Resultado da ferramenta {}",
@@ -10680,7 +10680,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "Error from tool {}",
         [
-            "Erreur de l’outil {}",
+            "Erreur de l'outil {}",
             "Errore dallo strumento {}",
             "Error de la herramienta {}",
             "Erro da ferramenta {}",
@@ -10707,13 +10707,13 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "El comando, p. ej. npx -y @modelcontextprotocol/server-filesystem /tu/ruta",
             "O comando, p. ex. npx -y @modelcontextprotocol/server-filesystem /teu/caminho",
             "Der Befehl, z. B. npx -y @modelcontextprotocol/server-filesystem /ihr/pfad",
-            "A parancs, pl. npx -y @modelcontextprotocol/server-filesystem /az/ön/útvonala",
+            "A parancs, pl. npx -y @modelcontextprotocol/server-filesystem /a/te/utad",
         ],
     ),
     (
         "An MCP server is a program that runs on your computer with your rights. Add only programs you trust. It never starts by itself: you start it, and every tool call asks for your approval.",
         [
-            "Un serveur MCP est un programme qui s’exécute sur ton ordinateur avec tes droits. N’ajoute que des programmes de confiance. Il ne démarre jamais tout seul : tu le lances, et chaque appel d’outil demande ton accord.",
+            "Un serveur MCP est un programme qui s'exécute sur ton ordinateur avec tes droits. N'ajoute que des programmes de confiance. Il ne démarre jamais tout seul : tu le lances, et chaque appel d'outil demande ton accord.",
             "Un server MCP è un programma che gira sul tuo computer con i tuoi privilegi. Aggiungi solo programmi di cui ti fidi. Non parte mai da solo: lo avvii tu, e ogni chiamata a uno strumento richiede il tuo consenso.",
             "Un servidor MCP es un programa que se ejecuta en tu ordenador con tus permisos. Añade solo programas de confianza. Nunca arranca por sí solo: lo inicias tú, y cada llamada a una herramienta solicita tu aprobación.",
             "Um servidor MCP é um programa que corre no teu computador com as tuas permissões. Adiciona apenas programas de confiança. Nunca arranca sozinho: inicia-o tu, e cada chamada de ferramenta pede a tua aprovação.",
@@ -10724,7 +10724,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "No server added yet.",
         [
-            "Aucun serveur ajouté pour l’instant.",
+            "Aucun serveur ajouté pour l'instant.",
             "Nessun server aggiunto finora.",
             "Todavía no se ha añadido ningún servidor.",
             "Ainda não foi adicionado nenhum servidor.",
@@ -10823,7 +10823,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "The model asks to run:",
         [
-            "Le modèle demande d’exécuter :",
+            "Le modèle demande d'exécuter :",
             "Il modello chiede di eseguire:",
             "El modelo pide ejecutar:",
             "O modelo pede para executar:",
@@ -10834,7 +10834,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
     (
         "The tool can read or change things on this computer, depending on how it was made. Check the arguments.",
         [
-            "L’outil peut lire ou modifier des choses sur cet ordinateur, selon sa conception. Vérifie les arguments.",
+            "L'outil peut lire ou modifier des choses sur cet ordinateur, selon sa conception. Vérifie les arguments.",
             "Lo strumento può leggere o modificare cose su questo computer, a seconda di come è fatto. Controlla gli argomenti.",
             "La herramienta puede leer o cambiar cosas en este ordenador, según cómo esté hecha. Revisa los argumentos.",
             "A ferramenta pode ler ou alterar coisas neste computador, conforme foi feita. Verifica os argumentos.",
@@ -11166,7 +11166,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
         [
             "{} Go des experts du modèle restent sur le disque ; {} Go de mémoire sont réservés au cache d'experts. En moyenne, {} % des experts nécessaires sont déjà en mémoire.",
             "{} GB degli esperti del modello restano sul disco; {} GB di memoria sono riservati alla cache degli esperti. In media, il {}% degli esperti necessari è già in memoria.",
-            "{} GB de los expertos del modelo permanecen en el disco; {} GB de memoria se reservan para la caché de expertos. De media, el {}% de los expertos necesarios ya está en memoria.",
+            "{} GB de los expertos del modelo permanecen en el disco; {} GB de memoria se reservan para la caché de expertos. De media, el {} % de los expertos necesarios ya está en memoria.",
             "{} GB dos especialistas do modelo ficam no disco; {} GB de memória estão reservados para a cache de especialistas. Em média, {}% dos especialistas necessários já estão em memória.",
             "{} GB der Experten des Modells bleiben auf der Festplatte; {} GB Speicher sind für den Experten-Cache reserviert. Im Durchschnitt befinden sich {} % der benötigten Experten bereits im Speicher.",
             "A modell szakértőinek {} GB-ja a lemezen marad; {} GB memória van fenntartva a szakértői gyorsítótár számára. Átlagosan a szükséges szakértők {}%-a már a memóriában van.",
@@ -11198,7 +11198,7 @@ static TABLE: &[(&str, [&str; 6])] = &[
         "colibri tries its safe settings one by one (direct reads, overlapped reads, threads, cache size) and keeps only the fastest, without changing any answer. The model is stopped meanwhile and restarted at the end.",
         [
             "colibri essaie ses réglages sûrs un par un (lecture directe, lectures superposées, threads, taille du cache) et ne garde que les plus rapides, sans modifier aucune réponse. Le modèle est arrêté pendant ce temps, puis redémarré à la fin.",
-            "colibri prova una a una le tue impostazioni sicure (lettura diretta, letture sovrapposte, thread, dimensione della cache) e conserva solo le più veloci, senza modificare alcuna risposta. Nel frattempo il modello viene arrestato e riavviato al termine.",
+            "colibri prova una a una le sue impostazioni sicure (lettura diretta, letture sovrapposte, thread, dimensione della cache) e conserva solo le più veloci, senza modificare alcuna risposta. Nel frattempo il modello viene arrestato e riavviato al termine.",
             "colibri prueba uno a uno sus ajustes seguros (lectura directa, lecturas solapadas, hilos, tamaño de la caché) y conserva solo los más rápidos, sin cambiar ninguna respuesta. El modelo se detiene mientras tanto y se reinicia al final.",
             "O colibri experimenta uma a uma as suas definições seguras (leitura direta, leituras sobrepostas, threads, tamanho da cache) e mantém apenas as mais rápidas, sem alterar qualquer resposta. O modelo é parado entretanto e reiniciado no fim.",
             "colibri probiert seine sicheren Einstellungen nacheinander aus (direktes Lesen, überlappendes Lesen, Threads, Cache-Größe) und behält nur die schnellsten, ohne eine Antwort zu verändern. Das Modell wird währenddessen angehalten und am Ende neu gestartet.",

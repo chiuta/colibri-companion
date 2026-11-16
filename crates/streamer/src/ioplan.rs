@@ -5,6 +5,12 @@
 //! One request of `expert_bytes` takes `latency + expert_bytes / seq_bw`. With `q` requests in
 //! flight the drive delivers at most `rand_bw` in total, so a wave of `q` requests lasts
 //! `max(single request time, q * expert_bytes / rand_bw)`.
+//!
+//! The "overlapped" figures are a CEILING, not a prediction: they assume the experts of layer L+1
+//! are already known while layer L computes (a perfect prefetcher). In a real engine they are
+//! known only once the router of layer L+1 has run, unless a predictor guesses them (see
+//! `prefetch`, which measures how often a guess would be right). The "serial" figures need no
+//! such assumption.
 
 /// Drive and model parameters. Bandwidths in bytes per second, times in seconds.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +91,9 @@ impl Params {
         if self.layers == 0 {
             return Err("layers must be at least 1".into());
         }
+        if self.experts_per_layer == 0 {
+            return Err("experts per layer must be at least 1".into());
+        }
         Ok(())
     }
 
@@ -119,11 +128,14 @@ impl Params {
         (q.max(1) as f64 * self.expert_bytes / t).min(self.rand_bw)
     }
 
-    /// Smallest queue depth (1..=64) that reaches 95% of the ceiling.
-    pub fn saturation_depth(&self) -> u32 {
-        (1..=64)
-            .find(|&q| self.throughput(q) >= 0.95 * self.rand_bw)
-            .unwrap_or(64)
+    /// Smallest queue depth (1..=64) that reaches 95% of the ceiling; `None` when even 64
+    /// requests in flight stay below it (a drive that is slow per request and has a high
+    /// ceiling), or when the drive has no usable speed.
+    pub fn saturation_depth(&self) -> Option<u32> {
+        if !usable(self.rand_bw) {
+            return None;
+        }
+        (1..=64).find(|&q| self.throughput(q) >= 0.95 * self.rand_bw)
     }
 
     /// Read time for one layer at queue depth `q`.
@@ -208,10 +220,10 @@ mod tests {
     fn saturation_depth_is_one_when_a_single_request_fills_the_drive() {
         let mut p = Params::sata();
         p.latency = 0.0;
-        assert_eq!(p.saturation_depth(), 1);
+        assert_eq!(p.saturation_depth(), Some(1));
         let mut n = Params::nvme();
         n.seq_bw = 1.0e9; // one request reaches a third of the ceiling
-        assert!(n.saturation_depth() >= 3);
+        assert!(n.saturation_depth().unwrap() >= 3);
     }
 
     #[test]
@@ -303,6 +315,76 @@ mod tests {
     fn the_defaults_are_valid() {
         for p in [Params::nvme(), Params::sata(), Params::measured(1800.0)] {
             assert!(p.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn a_drive_that_never_reaches_its_ceiling_does_not_claim_a_saturation_depth() {
+        let mut p = Params::nvme();
+        p.seq_bw = 20e6; // one request moves 20 MB/s, 64 of them 1.28 GB/s: below 95% of 3 GB/s
+        assert_eq!(p.saturation_depth(), None);
+        let mut p = Params::nvme();
+        p.rand_bw = f64::NAN;
+        assert_eq!(p.saturation_depth(), None);
+        // and the depth it reports, when it reports one, really reaches the 95% mark first
+        for seq in [50e6, 100e6, 400e6, 3e9] {
+            let mut p = Params::nvme();
+            p.seq_bw = seq;
+            if let Some(q) = p.saturation_depth() {
+                assert!(p.throughput(q) >= 0.95 * p.rand_bw);
+                assert!(q == 1 || p.throughput(q - 1) < 0.95 * p.rand_bw);
+            }
+        }
+    }
+
+    #[test]
+    fn zero_experts_per_layer_is_refused() {
+        let mut p = Params::nvme();
+        p.experts_per_layer = 0;
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn more_hits_more_depth_a_faster_drive_or_less_compute_never_lower_the_speed() {
+        // monotonicity over a grid of random valid parameter sets
+        let mut s = 31u64;
+        let mut r = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for _ in 0..2000 {
+            let mut p = Params::nvme();
+            p.seq_bw = 50e6 + r() * 3e9;
+            p.rand_bw = p.seq_bw + r() * 3e9;
+            p.latency = r() * 1e-3;
+            p.expert_bytes = 1e5 + r() * 5e7;
+            p.experts_per_layer = 1 + (r() * 16.0) as u32;
+            p.layers = 1 + (r() * 80.0) as u32;
+            p.hit_rate = r() * 0.9;
+            p.compute = r() * 1e-2;
+            assert!(p.validate().is_ok());
+            for q in [1u32, 4, 16, 64] {
+                let base = p.tokens_per_s_overlapped(q);
+                let mut better = p.clone();
+                better.hit_rate = (p.hit_rate + 0.05).min(1.0);
+                assert!(better.tokens_per_s_overlapped(q) >= base - 1e-9, "hit rate");
+                let mut faster = p.clone();
+                faster.rand_bw *= 1.5;
+                faster.seq_bw *= 1.5;
+                assert!(faster.tokens_per_s_overlapped(q) >= base - 1e-9, "drive");
+                let mut lighter = p.clone();
+                lighter.compute *= 0.5;
+                assert!(lighter.tokens_per_s_overlapped(q) >= base - 1e-9, "compute");
+                assert!(p.tokens_per_s_overlapped(q) >= p.tokens_per_s_serial(q) - 1e-9);
+            }
+            assert!(
+                p.tokens_per_s_serial(8) >= p.tokens_per_s_serial(1) - 1e-9,
+                "depth"
+            );
+            assert!(p.throughput(8) >= p.throughput(1) - 1e-6);
+            assert!(p.throughput(64) <= p.rand_bw + 1e-6);
         }
     }
 }

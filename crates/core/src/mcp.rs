@@ -171,7 +171,18 @@ impl Client {
 
     /// Starts the server and completes the MCP handshake.
     pub fn start(cfg: &ServerConfig) -> Result<(Client, Vec<Tool>), String> {
-        let mut cmd = Command::new(&cfg.command);
+        // On Windows `npx` is `npx.cmd`: look it up the way the command interpreter would.
+        let program: std::ffi::OsString = if cfg!(windows) {
+            crate::proc::resolve_program(
+                &cfg.command,
+                std::env::var_os("PATH").as_deref(),
+                std::env::var("PATHEXT").ok().as_deref(),
+            )
+            .map_or_else(|| cfg.command.clone().into(), Into::into)
+        } else {
+            cfg.command.clone().into()
+        };
+        let mut cmd = Command::new(program);
         cmd.args(&cfg.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

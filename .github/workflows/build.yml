@@ -6,6 +6,12 @@ on:
     inputs:
       release_tag: { description: "Version to publish as a draft pre-release (e.g. v0.1.0-alpha.1); leave empty for a plain build", required: false }
 permissions: { contents: read }
+# A newer push to a pull request replaces a build of it that is still running. Pushes to main, tags
+# and manual runs each have a group of their own, so none is ever cancelled or left waiting: every
+# commit keeps a result that can be read by its SHA.
+concurrency:
+  group: build-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.sha, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   licenses:
@@ -22,6 +28,7 @@ jobs:
   advisories:
     # Informational: a new advisory shows up here without stopping a release.
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
@@ -73,12 +80,15 @@ jobs:
         with:
           name: colibri-companion-${{ matrix.name }}
           path: colibri-companion-${{ matrix.name }}.*
+          retention-days: 14
+          if-no-files-found: error
 
   release:
     # Only for version tags: attaches every platform's archive to a draft pre-release.
     if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: build
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v5

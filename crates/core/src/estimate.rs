@@ -83,10 +83,25 @@ const MAX_TOK_S: f64 = 1000.0;
 const ASSUMED_DENSE_SHARE: f64 = 0.15;
 /// Memory taken by the conversation per token of context (an assumption, in GB).
 const STATE_GB_PER_TOKEN: f64 = 6.0e-5;
-/// Share of the expert bytes one token reads: low and high assumptions.
-const ACTIVE_SHARE: (f64, f64) = (0.02, 0.06);
-/// RAM streaming speed assumptions, GB/s: slow and fast.
-const RAM_GBS: (f64, f64) = (12.0, 40.0);
+/// Share of the expert bytes one token reads: optimistic and pessimistic assumptions. The
+/// catalogue gives no active-parameter count, so this is the widest part of the uncertainty.
+const ACTIVE_SHARE: (f64, f64) = (0.015, 0.05);
+/// Effective memory speed the engine reaches, GB/s: pessimistic and optimistic. These are not
+/// the memory's peak: the measured in-memory models (README: 6.0 tok/s on an 8-core DDR5 desktop
+/// for a model that needs 3.9 GB a token) reach well under half of the peak, and a unified-memory
+/// machine reaches far above a laptop.
+const RAM_GBS: (f64, f64) = (6.0, 60.0);
+/// Share of the always-resident part read for every token: optimistic and pessimistic. The
+/// resident part holds embedding tables that are looked up, not streamed (MiMo-V2.6 Flash keeps
+/// 24 GB resident and still decodes at 2.3-3.4 tok/s on the README's machine A).
+const DENSE_SHARE: (f64, f64) = (0.2, 1.0);
+
+/// The speed classes, in tokens per second of the range's geometric midpoint.
+pub const FAST_TOK_S: f64 = 10.0;
+/// From this speed on a model is "usable" for chat; below it a recommendation would be a promise
+/// the estimate does not support.
+pub const USABLE_TOK_S: f64 = 3.0;
+pub const SLOW_TOK_S: f64 = 1.0;
 
 /// Share of expert lookups a cache of `frac` of all expert bytes serves. Points measured on one
 /// shipped profile (qwen36-35b): an LRU cache (`low`) and the hottest experts pinned (`high`).
@@ -123,11 +138,11 @@ fn interp(pts: &[(f64, f64)], x: f64) -> f64 {
 
 fn classify(low: f64, high: f64) -> Speed {
     let mid = (low.max(1e-6) * high.max(1e-6)).sqrt();
-    if mid >= 10.0 {
+    if mid >= FAST_TOK_S {
         Speed::Fast
-    } else if mid >= 3.0 {
+    } else if mid >= USABLE_TOK_S {
         Speed::Usable
-    } else if mid >= 1.0 {
+    } else if mid >= SLOW_TOK_S {
         Speed::Slow
     } else {
         Speed::TooSlow
@@ -143,16 +158,24 @@ fn rate(t: f64) -> f64 {
     (1.0 / t.max(1.0 / MAX_TOK_S)).min(MAX_TOK_S)
 }
 
+/// Seconds a token spends reading from memory: the resident part and the cached experts it uses.
+fn resident_time(dense: f64, experts: f64, pessimistic: bool) -> f64 {
+    if pessimistic {
+        (dense * DENSE_SHARE.1 + experts * ACTIVE_SHARE.1) / RAM_GBS.0
+    } else {
+        (dense * DENSE_SHARE.0 + experts * ACTIVE_SHARE.0) / RAM_GBS.1
+    }
+}
+
 /// The streaming case: `frac` of the expert bytes are cached, the rest is read from the drive.
 /// Returns (low, high) tokens per second.
 fn streaming_range(experts: f64, dense: f64, frac: f64, (d_lo, d_hi): (f64, f64)) -> (f64, f64) {
-    let ram_time = |share: f64, gbs: f64| (dense + experts * share) / gbs;
     let (hit_lo, hit_hi) = hit_rate(frac);
-    // Pessimistic: low hit rate, large active share, slow drive, slow RAM.
+    // Pessimistic: low hit rate, large active share, slow drive, slow RAM, all resident bytes read.
     let t_lo =
-        experts * ACTIVE_SHARE.1 * (1.0 - hit_lo) / d_lo + ram_time(ACTIVE_SHARE.1, RAM_GBS.0);
+        experts * ACTIVE_SHARE.1 * (1.0 - hit_lo) / d_lo + resident_time(dense, experts, true);
     let t_hi =
-        experts * ACTIVE_SHARE.0 * (1.0 - hit_hi) / d_hi + ram_time(ACTIVE_SHARE.0, RAM_GBS.1);
+        experts * ACTIVE_SHARE.0 * (1.0 - hit_hi) / d_hi + resident_time(dense, experts, false);
     (rate(t_lo), rate(t_hi))
 }
 
@@ -178,11 +201,11 @@ pub fn estimate(m: &ModelFacts, ram_total_gb: f64, drive: Drive, ctx_tokens: u32
         Drive::Measured(v) if v.is_finite() && v > 0.0 => (v.min(MAX_DRIVE_MBS), false),
         _ => (ASSUMED_DRIVE_MBS, true),
     };
-    // Unmeasured drive: from a slow SATA-class SSD (a quarter of the assumed figure) to a fast
-    // PCIe 4.0 NVMe (six times it). The upper end is set by colibri's own README, which measures
-    // 0.93 tok/s for DeepSeek V4 Flash on 32 GB: a drive capped at 2 GB/s cannot reach that.
+    // Unmeasured drive: from a slow SATA-class SSD (a quarter of the assumed figure) to two fast
+    // NVMe drives in an array (eight times it; the README reads experts at 6.3 GB/s on such a
+    // machine for Kimi K3). The table of measured points in the tests fixes both ends.
     let d = if drive_assumed {
-        (drive_mbs * 0.25 / 1000.0, drive_mbs * 6.0 / 1000.0)
+        (drive_mbs * 0.25 / 1000.0, drive_mbs * 8.0 / 1000.0)
     } else {
         (drive_mbs * 0.8 / 1000.0, drive_mbs * 1.2 / 1000.0)
     };
@@ -209,9 +232,8 @@ pub fn estimate(m: &ModelFacts, ram_total_gb: f64, drive: Drive, ctx_tokens: u32
     }
 
     if cache >= experts {
-        let ram_time = |share: f64, gbs: f64| (dense + experts * share) / gbs;
-        let low = rate(ram_time(ACTIVE_SHARE.1, RAM_GBS.0));
-        let high = rate(ram_time(ACTIVE_SHARE.0, RAM_GBS.1));
+        let low = rate(resident_time(dense, experts, true));
+        let high = rate(resident_time(dense, experts, false));
         return Estimate {
             tok_s_low: low,
             tok_s_high: high,
@@ -496,20 +518,156 @@ mod tests {
         }
     }
 
+    /// Every CPU-only decode speed in colibri's README (c. 2026-11), with the machine it was
+    /// measured on. Catalogue figures from `c/setup_catalog.py`. The estimate's range, with the
+    /// drive unknown, must contain each measured value: a model that cannot reproduce the only
+    /// data there is has no business printing a number. Points that used a graphics card are left
+    /// out (the model is for the processor): DeepSeek V4 Flash 1.5-1.6 on an RTX 5080, Inkling
+    /// 0.25 with an RTX A6000, GLM-5.2 on 6x RTX 5090.
+    /// One README measurement: catalogue figures, the machine's RAM and the measured range.
+    struct Point {
+        name: &'static str,
+        download: f64,
+        dense: f64,
+        min: f64,
+        good: f64,
+        ram: f64,
+        lo: f64,
+        hi: f64,
+    }
+
+    const README_POINTS: [Point; 9] = [
+        Point {
+            name: "deepseek-v4-flash, Ryzen 7 5800X, 32 GB",
+            download: 166.9,
+            dense: 7.9,
+            min: 16.0,
+            good: 32.0,
+            ram: 32.0,
+            lo: 0.93,
+            hi: 0.93,
+        },
+        Point {
+            name: "deepseek-v4-flash, Ryzen 9 5950X, 63 GB",
+            download: 166.9,
+            dense: 7.9,
+            min: 16.0,
+            good: 32.0,
+            ram: 63.0,
+            lo: 1.24,
+            hi: 1.24,
+        },
+        Point {
+            name: "mimo-v2.6-flash, machine A, 64 GB",
+            download: 171.8,
+            dense: 24.0,
+            min: 32.0,
+            good: 52.0,
+            ram: 64.0,
+            lo: 2.34,
+            hi: 3.37,
+        },
+        Point {
+            name: "qwen38-flash-next, machine A, 64 GB",
+            download: 185.6,
+            dense: 8.0,
+            min: 24.0,
+            good: 32.0,
+            ram: 64.0,
+            lo: 1.91,
+            hi: 2.56,
+        },
+        Point {
+            name: "qwen36-35b, machine A, 64 GB",
+            download: 23.1,
+            dense: 3.5,
+            min: 10.0,
+            good: 20.0,
+            ram: 64.0,
+            lo: 6.0,
+            hi: 6.0,
+        },
+        Point {
+            name: "qwen3-coder-30b, machine A, 64 GB",
+            download: 19.4,
+            dense: 3.6,
+            min: 8.0,
+            good: 18.0,
+            ram: 64.0,
+            lo: 8.5,
+            hi: 9.6,
+        },
+        Point {
+            name: "glm-5.2, Ryzen AI Max+ 395, 128 GB",
+            download: 429.3,
+            dense: 9.9,
+            min: 16.0,
+            good: 24.0,
+            ram: 128.0,
+            lo: 1.83,
+            hi: 1.83,
+        },
+        Point {
+            name: "glm-5.2, the 25 GB laptop, cold",
+            download: 429.3,
+            dense: 9.9,
+            min: 16.0,
+            good: 24.0,
+            ram: 25.0,
+            lo: 0.05,
+            hi: 0.1,
+        },
+        Point {
+            name: "mimo-v2.6-pro, machine A, 64 GB",
+            download: 563.6,
+            dense: 32.4,
+            min: 54.0,
+            good: 64.0,
+            ram: 64.0,
+            lo: 0.66,
+            hi: 0.79,
+        },
+    ];
+
     #[test]
-    fn agrees_with_colibris_own_measurements_of_deepseek_v4_flash() {
-        // README: 0.93 tok/s with 32 GB (Ryzen 7 5800X, CPU only), 1.24 with 63 GB (Ryzen 9 5950X).
-        // 167 GB download, 7.9 GB resident, catalogue memory 16 / 32 GB. The drives are not stated,
-        // so the drive is unknown and the range is the widest one.
-        let m = facts(166.9, 7.9, 16.0, 32.0);
-        for (ram, measured) in [(32.0, 0.93), (63.0, 1.24)] {
-            let e = estimate(&m, ram, Drive::Unknown, 16384);
+    fn every_measured_cpu_point_in_colibris_readme_lies_inside_the_range() {
+        for p in &README_POINTS {
+            let e = estimate(
+                &facts(p.download, p.dense, p.min, p.good),
+                p.ram,
+                Drive::Unknown,
+                8192,
+            );
             assert!(
-                e.tok_s_low <= measured && measured <= e.tok_s_high,
-                "{ram} GB: measured {measured} outside {:.2}-{:.2}",
+                e.tok_s_low <= p.lo && p.hi <= e.tok_s_high,
+                "{}: measured {}-{} outside {:.3}-{:.3}",
+                p.name,
+                p.lo,
+                p.hi,
                 e.tok_s_low,
                 e.tok_s_high
             );
+        }
+    }
+
+    #[test]
+    fn models_that_run_from_memory_are_not_called_slow() {
+        // README: 6.0 and 8.5-9.6 tok/s with everything in memory on machine A
+        for (dl, dense, min, good) in [(23.1, 3.5, 10.0, 20.0), (19.4, 3.6, 8.0, 18.0)] {
+            let e = estimate(&facts(dl, dense, min, good), 64.0, Drive::Unknown, 8192);
+            assert_eq!(e.bottleneck, Bottleneck::RamResident);
+            assert!(matches!(e.speed, Speed::Usable | Speed::Fast), "{e:?}");
+        }
+    }
+
+    #[test]
+    fn streaming_giants_are_never_called_fast() {
+        for p in &README_POINTS {
+            let m = facts(p.download, p.dense, p.min, p.good);
+            let e = estimate(&m, p.ram, Drive::Unknown, 8192);
+            if e.bottleneck != Bottleneck::RamResident {
+                assert_ne!(e.speed, Speed::Fast, "{}: {e:?}", p.name);
+            }
         }
     }
 }

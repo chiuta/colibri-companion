@@ -4,7 +4,7 @@
 
 **Website: https://colibri-companion.chiuta.ro** — Download, Video-Anleitungen, Hilfe.
 
-Eine benutzerfreundliche Desktop-App für [colibri](https://github.com/JustVugg/colibri): Wähle ein Modell, das zu deinem Computer passt, lade es mit einem Klick herunter und chatte – alles lokal, ohne Konto und ohne Cloud.
+Eine benutzerfreundliche Desktop-App für [colibri](https://github.com/JustVugg/colibri): Wähle ein Modell, das zu deinem Computer passt, lade es mit einem Klick herunter und chatte – das Modell läuft auf deinem Computer, ohne Konto und ohne Cloud-Dienst.
 
 ## Starten
 

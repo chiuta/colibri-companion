@@ -4,7 +4,7 @@
 //! linked: this program only talks to it, the way any other client would.
 
 use crate::locate::PythonCmd;
-use crate::proc::{hide_window, interrupt_pid, run_capture};
+use crate::proc::{hide_window, interrupt_pid, run_capture, run_capture_keep};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
@@ -462,7 +462,8 @@ impl PlanSummary {
 
 /// The first complete JSON object in `text`, however much log noise comes before or after it.
 fn first_json_object(text: &str) -> Option<serde_json::Value> {
-    text.match_indices('{').find_map(|(i, _)| {
+    // a few candidates are enough: a plan is one object near the start, and each try reads on
+    text.match_indices('{').take(256).find_map(|(i, _)| {
         serde_json::Deserializer::from_str(&text[i..])
             .into_iter::<serde_json::Value>()
             .next()?
@@ -499,12 +500,12 @@ fn strip_ansi(text: &str) -> String {
                 chars.next();
                 // parameter and intermediate bytes, then one final byte 0x40..=0x7E
                 while let Some(&n) = chars.peek() {
+                    if !('\u{20}'..='\u{7e}').contains(&n) {
+                        break; // not a CSI after all: stop, and keep this character as text
+                    }
                     chars.next();
                     if ('\u{40}'..='\u{7e}').contains(&n) {
-                        break;
-                    }
-                    if !('\u{20}'..='\u{3f}').contains(&n) {
-                        break; // not a CSI after all: stop without eating text
+                        break; // the final byte
                     }
                 }
             }
@@ -606,6 +607,7 @@ fn arg_path(p: &Path) -> PathBuf {
 fn check_word(what: &str, v: &str) -> io::Result<()> {
     let ok = !v.is_empty()
         && !v.starts_with('-')
+        && !v.split('/').any(|part| part == ".." || part == ".")
         && v.chars()
             .all(|c| c.is_ascii_alphanumeric() || "._:/@+-".contains(c));
     ok.then_some(()).ok_or_else(|| {
@@ -648,7 +650,16 @@ impl Coli {
     }
 
     fn run(&self, args: &[&str], timeout: Duration) -> Result<String, String> {
-        let out = run_capture(self.coli_cmd(args), timeout).map_err(|e| e.to_string())?;
+        self.run_with(args, timeout, run_capture)
+    }
+
+    fn run_with(
+        &self,
+        args: &[&str],
+        timeout: Duration,
+        runner: fn(Command, Duration) -> io::Result<std::process::Output>,
+    ) -> Result<String, String> {
+        let out = runner(self.coli_cmd(args), timeout).map_err(|e| e.to_string())?;
         let text = String::from_utf8_lossy(&out.stdout).to_string();
         if out.status.success() || !text.trim().is_empty() {
             Ok(text)
@@ -823,9 +834,11 @@ impl Coli {
     }
 
     pub fn start_server(&self) -> Result<String, String> {
-        self.run(
+        // The daemon it launches must outlive a timeout of this call.
+        self.run_with(
             &["start", "--background", "--no-browser"],
             Duration::from_secs(120),
+            run_capture_keep,
         )
     }
 
@@ -1215,5 +1228,33 @@ mod hardening_tests {
         let _ = fs::remove_file(&log);
         // a relative or dash-led path becomes absolute
         assert!(arg_path(Path::new("-models")).is_absolute());
+    }
+
+    #[test]
+    fn a_broken_escape_keeps_the_character_after_it() {
+        assert_eq!(strip_ansi("a\u{1b}[\nb"), "a\nb");
+        assert_eq!(strip_ansi("a\u{1b}[é b"), "aé b");
+        assert_eq!(strip_ansi("a\u{1b}[12;3"), "a"); // unfinished at the end: only the escape goes
+        assert_eq!(strip_ansi("\u{1b}[31mred\u{1b}[0m"), "red");
+    }
+
+    #[test]
+    fn a_log_full_of_opening_braces_is_read_in_bounded_time() {
+        let t = std::time::Instant::now();
+        let noise = "{\"a\":[".repeat(200_000);
+        assert!(PlanSummary::from_json(&noise).is_err());
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+        // the plan is still found when it is among the first candidates
+        let j = r#"{"bottleneck_class":"ram","projected_hit_rate":1.0}"#;
+        assert!(PlanSummary::from_json(&format!("{{x}} {{y}} {j}")).is_ok());
+    }
+
+    #[test]
+    fn a_model_id_cannot_climb_out_of_a_folder() {
+        for bad in ["..", "a/../b", "./x", "a/./b", "../.."] {
+            assert!(check_word("model id", bad).is_err(), "{bad}");
+        }
+        assert!(check_word("model id", "org/model.v2").is_ok());
+        assert!(check_word("model id", "a..b").is_ok());
     }
 }

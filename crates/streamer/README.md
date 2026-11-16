@@ -11,6 +11,13 @@ colibri. Written from the public safetensors layout and from first principles; n
 
 - `trace`: reads colibri's documented text formats: the `ROUTE_TRACE=<path>` stream (order of
   events) and the `.coli_usage` history (popularity only), and can sample a trace from a history.
+  Input files must be regular files of at most 1 GiB; ids outside `0..n_experts` are skipped, and
+  sampling requests that would not fit memory are refused.
+- `expert_index` also recognises packed expert tensors (`...experts.gate_up_proj` with the experts
+  on the leading dimension); a layout that stacks experts on another axis is not handled.
+- Safetensors headers with duplicate keys are rejected.
+- All replay policies run in O(log n) per access (checked against naive references in the tests).
+  Numbers are only as real as the trace: no real colibri capture has been replayed yet.
 
 **Not here yet:** tokenizer, attention, int4 kernels, sampling, an I/O scheduler. This crate does
 not run a model.
@@ -30,5 +37,6 @@ The offline-optimal column sees the future, so it is a ceiling, not a target.
   their experts). On the sampled profile it does not pay off; a pessimistic bound if real
   consecutive tokens overlap more than sampled ones (unmeasured) (`--example speculative`). A
   trace shorter than one pass gives NaN (no data), never 0.
-- `ioplan`: tokens/s from drive speed, expert size and overlap of I/O with compute. Defaults are
+- `ioplan`: tokens/s from drive speed, expert size and overlap of I/O with compute. The
+  "overlapped" figure is a ceiling that assumes a perfect prefetcher. Defaults are
   assumptions, not measurements; `--measured-mbs` takes the app's drive-test result (`--example ioplan`).

@@ -15,16 +15,24 @@ pub const MAX_ZIP_BYTES: u64 = 1 << 30;
 /// Run as `python -I -c SCRIPT URL DEST MAX_BYTES`. It prints `P <done> <total>` lines while
 /// downloading, then `OK` once `DEST` holds the colibri folder; failures go to stderr.
 const SCRIPT: &str = r#"
-import os, shutil, sys, tempfile, urllib.request, zipfile
+import os, shutil, sys, tempfile, time, urllib.request, zipfile
 url, dest, limit = sys.argv[1], os.path.abspath(sys.argv[2]), int(sys.argv[3])
 parent = os.path.dirname(dest)
 os.makedirs(parent, exist_ok=True)
+class Https(urllib.request.HTTPRedirectHandler):
+    # an archive that is later run as code never arrives over a plain-http hop
+    def redirect_request(self, r, fp, code, msg, headers, newurl):
+        if url.startswith("https://") and not newurl.lower().startswith("https://"):
+            raise RuntimeError("redirected away from https")
+        return urllib.request.HTTPRedirectHandler.redirect_request(self, r, fp, code, msg, headers, newurl)
+opener = urllib.request.build_opener(Https)
+started = time.monotonic()
 work = tempfile.mkdtemp(prefix=".colibri-fetch-", dir=parent)
 try:
     archive = os.path.join(work, "colibri.zip")
     req = urllib.request.Request(url, headers={"User-Agent": "colibri-companion"})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r, open(archive, "wb") as out:
+        with opener.open(req, timeout=60) as r, open(archive, "wb") as out:
             total = int(r.headers.get("Content-Length") or 0)
             done = 0
             while True:
@@ -35,25 +43,32 @@ try:
                 done += len(chunk)
                 if done > limit:
                     raise RuntimeError("the download is larger than expected")
+                if time.monotonic() - started > 1800:
+                    raise RuntimeError("the download is taking too long")
                 print("P", done, total, flush=True)
     except Exception as first:
         # Some Python installs (python.org on macOS) have no certificates: curl uses the system's.
         curl = shutil.which("curl")
-        if not curl or url.startswith("file:") or "larger than expected" in str(first):
+        if not curl or url.startswith("file:") or "larger than expected" in str(first) or "too long" in str(first):
             raise
         import subprocess
         print("P", 0, 0, flush=True)
-        r = subprocess.run([curl, "-fsSL", "--retry", "2", "--max-filesize", str(limit), "-o", archive, "--", url])
+        r = subprocess.run([curl, "-fsSL", "--retry", "2", "--proto", "=https", "--proto-redir", "=https",
+                            "--max-time", "1800", "--max-filesize", str(limit), "-o", archive, "--", url])
         if r.returncode != 0:
             raise RuntimeError("%s (curl also failed: %d)" % (first, r.returncode))
+        # --max-filesize only counts when the server announces a size: check what arrived
+        if os.path.getsize(archive) > limit:
+            raise RuntimeError("the download is larger than expected")
     print("U", flush=True)
     with zipfile.ZipFile(archive) as z:
-        bad = z.testzip()
-        if bad:
-            raise RuntimeError("the download is damaged (%s)" % bad)
+        # sizes first: testing the archive unpacks every member in memory
         infos = z.infolist()
         if len(infos) > 200000 or sum(i.file_size for i in infos) > limit * 4:
             raise RuntimeError("the archive is larger than expected")
+        bad = z.testzip()
+        if bad:
+            raise RuntimeError("the download is damaged (%s)" % bad)
         z.extractall(os.path.join(work, "x"))
     top = os.path.join(work, "x")
     entries = [e for e in os.listdir(top)]
@@ -104,6 +119,17 @@ pub fn spawn_zip_download_capped(
     dest: &Path,
     max_bytes: u64,
 ) -> io::Result<Child> {
+    // Code that will be run later: only over https (a local `file:` copy only in this crate's own tests).
+    let lower = url.to_ascii_lowercase();
+    let local_test = cfg!(test) && lower.starts_with("file:");
+    if !(lower.starts_with("https://") || local_test)
+        || url.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the archive address must be a plain https address",
+        ));
+    }
     let mut c = python.command();
     c.args(["-I", "-c", SCRIPT, url])
         .arg(dest)
@@ -228,5 +254,27 @@ mod tests {
         assert!(err.contains("larger than expected"), "{err}");
         assert!(!dest.exists());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn only_plain_https_addresses_are_downloaded() {
+        let python = PythonCmd {
+            program: "python3".into(),
+            pre_args: vec![],
+            version: (3, 12),
+        };
+        let dest = std::env::temp_dir().join("cc-never-made");
+        for bad in [
+            "http://github.com/x.zip",
+            "ftp://x/y.zip",
+            "https://x/y z.zip",
+            "https://x/\n.zip",
+            "",
+            "-o/etc/x",
+        ] {
+            let e = spawn_zip_download(&python, bad, &dest).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
+        }
+        assert!(!dest.exists());
     }
 }

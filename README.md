@@ -4,7 +4,7 @@
 
 **Website: https://colibri-companion.chiuta.ro** — download, video tutorials, help.
 
-A friendly desktop app for [colibri](https://github.com/JustVugg/colibri): pick a model that fits your computer, download it in one click, then chat — all local, no account, no cloud.
+A friendly desktop app for [colibri](https://github.com/JustVugg/colibri): pick a model that fits your computer, download it in one click, then chat — the model runs on your computer; no account, no cloud service.
 
 ## Run
 

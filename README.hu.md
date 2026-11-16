@@ -4,7 +4,7 @@
 
 **Weboldal: https://colibri-companion.chiuta.ro** — letöltés, videós útmutatók, segítség.
 
-Egyszerű asztali alkalmazás a [colibrihez](https://github.com/JustVugg/colibri): válassz a számítógépedhez illő modellt, töltsd le egy kattintással, majd csevegj — minden helyben, fiók és felhő nélkül.
+Egyszerű asztali alkalmazás a [colibrihez](https://github.com/JustVugg/colibri): válassz a számítógépedhez illő modellt, töltsd le egy kattintással, majd csevegj — a modell a saját gépeden fut, fiók és felhőszolgáltatás nélkül.
 
 ## Indítás
 
