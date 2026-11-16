@@ -2,7 +2,7 @@
 //! against cache policies and against the optimal offline policy (Belady), which no real engine
 //! can reach but which bounds how much any cleverer policy or prefetcher could ever gain.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 /// One token's experts, as dense ids.
 pub type Step = Vec<u32>;
