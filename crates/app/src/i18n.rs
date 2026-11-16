@@ -12030,6 +12030,17 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "{} teszt, {} sikeres",
         ],
     ),
+    (
+        "The settings search is running: stop it first.",
+        [
+            "La recherche de réglages est en cours : arrête-la d'abord.",
+            "La ricerca delle impostazioni è in corso: fermala prima.",
+            "La búsqueda de ajustes está en curso: párala primero.",
+            "A pesquisa de definições está a decorrer: pára-a primeiro.",
+            "Die Einstellungssuche läuft: Stoppe sie zuerst.",
+            "A beállításkeresés fut: állítsd le előbb.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
@@ -12794,6 +12805,42 @@ static ENGINE: &[(&str, [&str; 7])] = &[
             "Apenas os primeiros {} dos {} tokens foram analisados.",
             "Nur die ersten {} von {} Token wurden ausgewertet.",
             "Csak az első {} tokent elemeztük a(z) {} közül.",
+        ],
+    ),
+    (
+        "The model did not stop, so the search was not started.",
+        [
+            "Modelul nu s-a oprit, deci căutarea nu a pornit.",
+            "Le modèle ne s'est pas arrêté, la recherche n'a donc pas démarré.",
+            "Il modello non si è fermato, quindi la ricerca non è partita.",
+            "El modelo no se detuvo, así que la búsqueda no se inició.",
+            "O modelo não parou, por isso a pesquisa não foi iniciada.",
+            "Das Modell wurde nicht gestoppt, daher wurde die Suche nicht gestartet.",
+            "A modell nem állt le, ezért a keresés nem indult el.",
+        ],
+    ),
+    (
+        "The settings search stopped unexpectedly; the model was started again.",
+        [
+            "Căutarea de setări s-a oprit neașteptat; modelul a fost pornit din nou.",
+            "La recherche de réglages s'est arrêtée de façon inattendue ; le modèle a été redémarré.",
+            "La ricerca delle impostazioni si è interrotta in modo imprevisto; il modello è stato riavviato.",
+            "La búsqueda de ajustes se detuvo de forma inesperada; el modelo se volvió a iniciar.",
+            "A pesquisa de definições parou inesperadamente; o modelo foi iniciado de novo.",
+            "Die Einstellungssuche wurde unerwartet beendet; das Modell wurde neu gestartet.",
+            "A beállításkeresés váratlanul leállt; a modellt újraindítottuk.",
+        ],
+    ),
+    (
+        "Could not restore the context length: {}",
+        [
+            "Lungimea contextului nu a putut fi restabilită: {}",
+            "Impossible de rétablir la longueur du contexte : {}",
+            "Impossibile ripristinare la lunghezza del contesto: {}",
+            "No se pudo restaurar la longitud del contexto: {}",
+            "Não foi possível repor o comprimento do contexto: {}",
+            "Die Kontextlänge konnte nicht wiederhergestellt werden: {}",
+            "A környezet hosszát nem sikerült visszaállítani: {}",
         ],
     ),
 ];

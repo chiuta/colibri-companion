@@ -978,7 +978,9 @@ impl CompanionApp {
                 if secondary_button(ui, self.t("Arată jurnalul", "Show the log")).clicked() {
                     self.fetch_logs(false);
                 }
-                if secondary_button(ui, self.t("Oprește", "Stop")).clicked() {
+                if secondary_button(ui, self.t("Oprește", "Stop")).clicked()
+                    && !self.tune_blocks_server()
+                {
                     self.stop_server();
                 }
             });

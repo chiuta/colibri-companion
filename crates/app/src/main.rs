@@ -119,6 +119,7 @@ impl eframe::App for CompanionApp {
 
     /// Never leave a tool server running after the window is closed.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.tools_on_exit();
         for c in self.mcp.clients.values() {
             c.shutdown();
         }

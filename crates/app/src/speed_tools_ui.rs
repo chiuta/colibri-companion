@@ -26,6 +26,10 @@ use std::time::{Duration, Instant};
 pub const ESTIMATE_CTX: u32 = 8192;
 /// The recording stops growing its analysis at this size (the core's own default cap).
 const CAP_BYTES: u64 = capture::DEFAULT_CAP_BYTES;
+/// Texts the search thread can fail with; `engine_text` translates them where they are shown.
+const MSG_NOT_STOPPED: &str = "The model did not stop, so the search was not started.";
+const MSG_PANIC: &str = "The settings search stopped unexpectedly; the model was started again.";
+const MSG_CTX_PREFIX: &str = "Could not restore the context length: {}";
 /// How often the recording file is looked at.
 const POLL: Duration = Duration::from_secs(2);
 
@@ -86,6 +90,13 @@ pub fn drive_of(test: Option<&Result<f64, String>>) -> Drive {
     }
 }
 
+/// The estimate for a model on a computer with `ram_gb` of memory. Without a usable memory
+/// reading there is no estimate at all: guessing zero would call every model too slow.
+pub fn estimate_at(ram_gb: f64, drive: Drive, m: &ModelInfo) -> Option<Estimate> {
+    (ram_gb.is_finite() && ram_gb > 0.0)
+        .then(|| estimate::estimate(&ModelFacts::from(m), ram_gb, drive, ESTIMATE_CTX))
+}
+
 /// Where a routing recording is.
 #[derive(Debug, Clone, Default)]
 pub enum CaptureState {
@@ -116,9 +127,12 @@ pub enum CaptureStep {
     Full,
 }
 
-/// `exists` and `len` describe the trace file now (`None`: no such file yet).
-pub fn capture_step(state: &CaptureState, len: Option<u64>, cap: u64) -> CaptureStep {
+/// `len` is the size of the trace file now (`None`: no such file yet). `stale` is true while the
+/// file is one left from before the recording was asked for (it could not be removed because the
+/// model still holds it open): until the model restarts it says nothing about the new recording.
+pub fn capture_step(state: &CaptureState, len: Option<u64>, cap: u64, stale: bool) -> CaptureStep {
     match (state, len) {
+        (CaptureState::Armed, Some(_)) if stale => CaptureStep::Stay,
         (CaptureState::Armed | CaptureState::Recording, Some(n)) if n >= cap => CaptureStep::Full,
         (CaptureState::Armed, Some(_)) => CaptureStep::Begin,
         _ => CaptureStep::Stay,
@@ -267,6 +281,13 @@ pub struct ToolsState {
     pub cancel: Arc<AtomicBool>,
     /// Start the model with the settings the search found.
     pub apply_tuned: bool,
+    /// The recording file was still there (held open by the model) when a new recording was asked
+    /// for; it is ignored until the model restarts.
+    pub stale_file: bool,
+    /// Set by the search thread when it has finished for good (also after a panic).
+    pub worker_done: Arc<AtomicBool>,
+    /// The saved settings for this computer, read from disk now and then, not on every frame.
+    pub tuned_cache: Option<(Instant, Option<String>, Option<Knobs>)>,
 }
 
 impl Default for ToolsState {
@@ -279,6 +300,9 @@ impl Default for ToolsState {
             tune: TuneUi::Idle,
             cancel: Arc::new(AtomicBool::new(false)),
             apply_tuned: true,
+            stale_file: false,
+            worker_done: Arc::new(AtomicBool::new(true)),
+            tuned_cache: None,
         }
     }
 }
@@ -306,7 +330,7 @@ pub fn save_ctx(n: u32) {
 }
 
 fn mb(bytes: u64) -> String {
-    format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    format!("{:.1} MiB", bytes as f64 / 1_048_576.0)
 }
 
 /// Wraps the real runner to report progress after every trial.
@@ -369,15 +393,7 @@ impl CompanionApp {
     }
 
     fn estimate_for(&self, m: &ModelInfo) -> Option<Estimate> {
-        let ram = self.known_ram_gb();
-        (ram > 0.0).then(|| {
-            estimate::estimate(
-                &ModelFacts::from(m),
-                ram,
-                drive_of(self.disk_speed.as_ref()),
-                ESTIMATE_CTX,
-            )
-        })
+        estimate_at(self.known_ram_gb(), drive_of(self.disk_speed.as_ref()), m)
     }
 
     fn speed_class(&self, s: Speed) -> &'static str {
@@ -524,6 +540,20 @@ impl CompanionApp {
         (!prof.is_stale(now)).then_some(prof.knobs)
     }
 
+    /// [`Self::tuned_knobs`] for drawing: the profile file is read at most every few seconds, not
+    /// on every frame.
+    fn tuned_knobs_cached(&mut self) -> Option<Knobs> {
+        let key = self.tune_key();
+        if let Some((at, k, v)) = &self.tools.tuned_cache {
+            if *k == key && at.elapsed() < Duration::from_secs(5) {
+                return v.clone();
+            }
+        }
+        let v = self.tuned_knobs();
+        self.tools.tuned_cache = Some((Instant::now(), key, v.clone()));
+        v
+    }
+
     /// The extra environment these tools add when the model starts: the recording switch and the
     /// settings the search found.
     pub fn tools_env(&self) -> Vec<(String, String)> {
@@ -545,7 +575,7 @@ impl CompanionApp {
         let Some(mut coli) = self.coli.clone() else {
             return;
         };
-        if self.chat.generating.is_some() {
+        if self.chat.generating.is_some() || self.tune_blocks_server() {
             return;
         }
         coli.env = self.accel_env();
@@ -561,8 +591,25 @@ impl CompanionApp {
         });
     }
 
+    /// True (with a note on screen) while the settings search owns the model: nothing else may
+    /// stop, start or restart it meanwhile.
+    pub fn tune_blocks_server(&mut self) -> bool {
+        if !self.tools.tune.is_running() {
+            return false;
+        }
+        let text = self.t(
+            "Căutarea de setări rulează: oprește-o mai întâi.",
+            "The settings search is running: stop it first.",
+        );
+        self.toast(text);
+        true
+    }
+
     fn arm_capture(&mut self) {
         let _ = std::fs::remove_file(trace_file());
+        // on Windows a file the model holds open cannot be removed: it must not pass for the
+        // new recording
+        self.tools.stale_file = trace_file().exists();
         self.tools.bytes_now = 0;
         self.tools.capture = CaptureState::Armed;
     }
@@ -601,7 +648,7 @@ impl CompanionApp {
         self.tools.last_poll = Some(Instant::now());
         let len = std::fs::metadata(trace_file()).ok().map(|m| m.len());
         self.tools.bytes_now = len.unwrap_or(0);
-        match capture_step(&self.tools.capture, len, CAP_BYTES) {
+        match capture_step(&self.tools.capture, len, CAP_BYTES, self.tools.stale_file) {
             CaptureStep::Stay => {}
             CaptureStep::Begin => {
                 self.tools.capture = CaptureState::Recording;
@@ -619,6 +666,8 @@ impl CompanionApp {
         if !self.tools.capture.is_on() {
             self.tools.writing = false;
         }
+        // a restart makes the model create the file afresh
+        self.tools.stale_file = false;
     }
 
     pub fn remember_context(&mut self, n: u32) {
@@ -647,7 +696,9 @@ impl CompanionApp {
         let generating = self.chat.generating.is_some();
         match self.tools.capture.clone() {
             CaptureState::Idle => {
-                let ready = self.coli.is_some() && self.active_model_dir().is_some();
+                let ready = self.coli.is_some()
+                    && self.active_model_dir().is_some()
+                    && !self.tools.tune.is_running();
                 if ui
                     .add_enabled(
                         ready,
@@ -657,7 +708,7 @@ impl CompanionApp {
                 {
                     self.arm_capture();
                 }
-                if !ready {
+                if !ready && !self.tools.tune.is_running() {
                     muted(
                         ui,
                         &p,
@@ -907,10 +958,16 @@ impl CompanionApp {
         let cancel = self.tools.cancel.clone();
         let (tx, ui_ctx) = (self.tx.clone(), self.ctx.clone());
         let user_ctx = saved_ctx();
+        let finished = Arc::new(AtomicBool::new(false));
+        self.tools.worker_done = finished.clone();
         std::thread::spawn(move || {
             let mut coli = coli;
             coli.env = base_env.clone();
-            let r = run_search(&coli, &space, cfg, &cancel, &tx, &ui_ctx, &key, user_ctx);
+            // a panic must neither leave the screen stuck on "running" nor the model stopped
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_search(&coli, &space, cfg, &cancel, &tx, &ui_ctx, &key, user_ctx)
+            }))
+            .unwrap_or_else(|_| Err(MSG_PANIC.to_string()));
             // always bring the model back, with the new settings when they won
             let mut env = base_env;
             if apply {
@@ -922,9 +979,25 @@ impl CompanionApp {
             }
             coli.env = env;
             let _ = coli.start_server();
+            finished.store(true, Ordering::SeqCst);
             let _ = tx.send(Event::AutoTuneDone(r));
             ui_ctx.request_repaint();
         });
+    }
+
+    /// The window is closing: a running search is told to stop, and given a moment to put the
+    /// model back, so no trial server is left running with experimental settings.
+    pub fn tools_on_exit(&mut self) {
+        if !self.tools.tune.is_running() {
+            return;
+        }
+        self.tools.cancel.store(true, Ordering::SeqCst);
+        let t = Instant::now();
+        while !self.tools.worker_done.load(Ordering::SeqCst)
+            && t.elapsed() < Duration::from_secs(45)
+        {
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     pub fn autotune_progress(&mut self, done: usize, max: usize, best: Option<f64>) {
@@ -940,6 +1013,7 @@ impl CompanionApp {
     }
 
     pub fn autotune_done(&mut self, r: Result<TuneSummary, String>) {
+        self.tools.tuned_cache = None;
         self.plan = None;
         self.plan_asked = None;
         self.tools.tune = match r {
@@ -1079,7 +1153,7 @@ impl CompanionApp {
         );
         ui.checkbox(&mut self.tools.apply_tuned, label);
         if self.tools.apply_tuned {
-            if let Some(k) = self.tuned_knobs() {
+            if let Some(k) = self.tuned_knobs_cached() {
                 muted(
                     ui,
                     &p,
@@ -1095,11 +1169,14 @@ impl CompanionApp {
         let p = self.p;
         match &self.tools.tune {
             TuneUi::Failed(e) => {
-                ui.label(RichText::new(e).color(p.bad));
+                ui.label(RichText::new(crate::i18n::engine_text(self.s.lang, e)).color(p.bad));
             }
             TuneUi::Done(s) => {
                 if s.ok_trials == 0 {
-                    let why = s.first_error.clone().unwrap_or_default();
+                    let why = crate::i18n::engine_text(
+                        self.s.lang,
+                        &s.first_error.clone().unwrap_or_default(),
+                    );
                     ui.label(
                         RichText::new(
                             self.t(
@@ -1192,7 +1269,7 @@ fn run_search(
             break;
         }
         if t.elapsed() > Duration::from_secs(40) {
-            return Err("The model did not stop, so the search was not started.".into());
+            return Err(MSG_NOT_STOPPED.into());
         }
         std::thread::sleep(Duration::from_millis(500));
     }
@@ -1205,14 +1282,6 @@ fn run_search(
         best: 0.0,
     };
     let outcome = autotune::search(space, Knobs::default(), &mut runner, cfg, cancel);
-    // the search never changes the context here, but if it did, the user's own value comes back
-    if runner.inner.ctx_now() != 0 {
-        runner
-            .inner
-            .restore_ctx(user_ctx.unwrap_or(0))
-            .map_err(|e| format!("Could not restore the context length: {e}"))?;
-    }
-    drop(runner);
     let saved = outcome.best_score > 0.0
         && autotune::save_profile(
             &autotune::profiles_file(),
@@ -1221,6 +1290,14 @@ fn run_search(
             outcome.best_score,
         )
         .is_ok();
+    // the search never changes the context here, but if it did, the user's own value comes back
+    if runner.inner.ctx_now() != 0 {
+        runner
+            .inner
+            .restore_ctx(user_ctx.unwrap_or(0))
+            .map_err(|e| MSG_CTX_PREFIX.replacen("{}", &e.to_string(), 1))?;
+    }
+    drop(runner);
     Ok(summarize_outcome(&outcome, saved))
 }
 
@@ -1290,6 +1367,20 @@ mod tests {
     }
 
     #[test]
+    fn no_memory_reading_means_no_estimate_not_too_slow() {
+        let m = ModelInfo {
+            download_gb: 128.0,
+            ..Default::default()
+        };
+        for ram in [0.0, -4.0, f64::NAN, f64::INFINITY] {
+            assert!(estimate_at(ram, Drive::Unknown, &m).is_none(), "{ram}");
+        }
+        let e = estimate_at(16.0, Drive::Unknown, &m).expect("a real reading gives an estimate");
+        assert!(matches!(e.speed, Speed::Slow | Speed::TooSlow));
+        assert!(e.tok_s_low <= e.tok_s_high);
+    }
+
+    #[test]
     fn the_drive_is_measured_only_after_a_good_test() {
         assert_eq!(drive_of(None), Drive::Unknown);
         assert_eq!(drive_of(Some(&Err("x".into()))), Drive::Unknown);
@@ -1303,33 +1394,47 @@ mod tests {
         let cap = 100;
         // armed: nothing until the file appears
         assert_eq!(
-            capture_step(&CaptureState::Armed, None, cap),
+            capture_step(&CaptureState::Armed, None, cap, false),
             CaptureStep::Stay
         );
         assert_eq!(
-            capture_step(&CaptureState::Armed, Some(0), cap),
+            capture_step(&CaptureState::Armed, Some(0), cap, false),
             CaptureStep::Begin
         );
         assert_eq!(
-            capture_step(&CaptureState::Armed, Some(99), cap),
+            capture_step(&CaptureState::Armed, Some(99), cap, false),
             CaptureStep::Begin
         );
         // full beats begin, at exactly the cap
         assert_eq!(
-            capture_step(&CaptureState::Armed, Some(100), cap),
+            capture_step(&CaptureState::Armed, Some(100), cap, false),
             CaptureStep::Full
         );
         assert_eq!(
-            capture_step(&CaptureState::Recording, Some(99), cap),
+            capture_step(&CaptureState::Recording, Some(99), cap, false),
             CaptureStep::Stay
         );
         assert_eq!(
-            capture_step(&CaptureState::Recording, Some(100), cap),
+            capture_step(&CaptureState::Recording, Some(100), cap, false),
             CaptureStep::Full
         );
         assert_eq!(
-            capture_step(&CaptureState::Recording, None, cap),
+            capture_step(&CaptureState::Recording, None, cap, false),
             CaptureStep::Stay
+        );
+        // a file left from before (the model still holds it open) is never the new recording,
+        // however big it is, until the model has restarted
+        for len in [Some(0), Some(50), Some(100), Some(10_000)] {
+            assert_eq!(
+                capture_step(&CaptureState::Armed, len, cap, true),
+                CaptureStep::Stay,
+                "{len:?}"
+            );
+        }
+        // once recording has really begun the flag no longer matters
+        assert_eq!(
+            capture_step(&CaptureState::Recording, Some(100), cap, true),
+            CaptureStep::Full
         );
         // nothing to do in the other states
         for st in [
@@ -1337,7 +1442,7 @@ mod tests {
             CaptureState::Analysing,
             CaptureState::Failed("x".into()),
         ] {
-            assert_eq!(capture_step(&st, Some(1000), cap), CaptureStep::Stay);
+            assert_eq!(capture_step(&st, Some(1000), cap, false), CaptureStep::Stay);
         }
         assert!(CaptureState::Armed.is_on() && CaptureState::Recording.is_on());
         assert!(!CaptureState::Idle.is_on() && !CaptureState::Analysing.is_on());
@@ -1496,6 +1601,9 @@ mod tests {
             "The capture uses expert 300 but 256 experts per layer were given: 512 were assumed instead.",
             "3 line(s) were not valid routing rows and were ignored.",
             "Only the first 6000 of 9000 tokens were analysed.",
+            MSG_NOT_STOPPED,
+            MSG_PANIC,
+            "Could not restore the context length: disk full",
         ];
         for lang in [
             Lang::Ro,
@@ -1518,5 +1626,224 @@ mod tests {
         assert!(!s.capture.is_on() && !s.writing && !s.tune.is_running());
         assert!(s.apply_tuned);
         assert!(!s.cancel.load(Ordering::Relaxed));
+    }
+
+    /// Draws the three screens in every interface language, at phone to wide-screen widths and
+    /// in every state, headless: it must not panic, loop or ask for an endless repaint.
+    #[test]
+    fn the_screens_draw_without_panic_in_every_language_width_and_state() {
+        use companion_core::Lang;
+        let ctx = egui::Context::default();
+        let mut app = CompanionApp::new(
+            ctx.clone(),
+            companion_core::store::Settings::default(),
+            Some("http://127.0.0.1:1".into()),
+            false,
+        );
+        let long = "x".repeat(4000);
+        let captures = [
+            CaptureState::Idle,
+            CaptureState::Armed,
+            CaptureState::Recording,
+            CaptureState::Analysing,
+            CaptureState::Done(Box::new(report())),
+            CaptureState::Failed(long.clone()),
+        ];
+        let best = Knobs::default();
+        let summary = |ok: usize, gain: f64, err: Option<String>| TuneSummary {
+            best: best.clone(),
+            gain,
+            best_tok_s: 1.5,
+            trials: 4,
+            ok_trials: ok,
+            aborted: true,
+            timed_out: true,
+            saved: true,
+            first_error: err,
+        };
+        let tunes = [
+            TuneUi::Idle,
+            TuneUi::Confirm,
+            TuneUi::Running {
+                done: 99,
+                max: 0,
+                best: Some(f64::NAN),
+                cancelling: false,
+            },
+            TuneUi::Running {
+                done: 0,
+                max: 8,
+                best: None,
+                cancelling: true,
+            },
+            TuneUi::Done(summary(3, 0.25, None)),
+            TuneUi::Done(summary(0, 0.0, Some(long.clone()))),
+            TuneUi::Done(summary(2, f64::NAN, None)),
+            TuneUi::Failed(long.clone()),
+        ];
+        let langs = [
+            Lang::Ro,
+            Lang::En,
+            Lang::Fr,
+            Lang::It,
+            Lang::Es,
+            Lang::Pt,
+            Lang::De,
+            Lang::Hu,
+        ];
+        // the first frames of a new context always ask for a repaint (fonts, layout): let them pass
+        for _ in 0..4 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| app.speed_tools(ui));
+            out.textures_delta.clear();
+        }
+        for lang in langs {
+            app.s.lang = lang;
+            for width in [320.0_f32, 480.0, 800.0, 1600.0] {
+                // every capture state beside an idle search, and every search state beside an
+                // idle capture (the two sections do not depend on each other's layout)
+                let pairs = captures
+                    .iter()
+                    .enumerate()
+                    .map(|(ci, c)| (ci, c, 0usize, &tunes[0]))
+                    .chain(
+                        tunes
+                            .iter()
+                            .enumerate()
+                            .map(|(ti, t)| (0usize, &captures[0], ti, t)),
+                    );
+                {
+                    for (ci, cap, ti, tune) in pairs {
+                        app.tools.capture = cap.clone();
+                        app.tools.tune = tune.clone();
+                        app.tools.bytes_now = u64::MAX;
+                        let raw = |t: usize| egui::RawInput {
+                            time: Some(t as f64 * 0.1),
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 900.0),
+                            )),
+                            ..Default::default()
+                        };
+                        // egui needs a few frames to settle a new layout; it must then rest
+                        let mut out = None;
+                        for t in 0..12 {
+                            let mut f = ctx.run_ui(raw(t), |ui| {
+                                egui::ScrollArea::vertical().show(ui, |ui| app.speed_tools(ui));
+                            });
+                            f.textures_delta.clear();
+                            let settled = f
+                                .viewport_output
+                                .get(&egui::ViewportId::ROOT)
+                                .is_some_and(|v| v.repaint_delay != Duration::ZERO);
+                            out = Some(f);
+                            if settled {
+                                break;
+                            }
+                        }
+                        let out = out.expect("at least one frame");
+                        // a screen at rest (no spinner) never asks for an endless repaint
+                        let spinning = matches!(cap, CaptureState::Analysing)
+                            || matches!(tune, TuneUi::Running { .. });
+                        let delay = out
+                            .viewport_output
+                            .get(&egui::ViewportId::ROOT)
+                            .map(|v| v.repaint_delay);
+                        if !spinning {
+                            assert_ne!(
+                                delay,
+                                Some(Duration::ZERO),
+                                "{lang:?} {width} capture#{ci} tune#{ti}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn headless_app() -> CompanionApp {
+        CompanionApp::new(
+            egui::Context::default(),
+            companion_core::store::Settings::default(),
+            Some("http://127.0.0.1:1".into()),
+            false,
+        )
+    }
+
+    #[test]
+    fn while_a_search_runs_the_model_belongs_to_it() {
+        let mut app = headless_app();
+        assert!(!app.tune_blocks_server());
+        assert!(app.toasts.is_empty());
+        app.tools.tune = TuneUi::Running {
+            done: 1,
+            max: 8,
+            best: None,
+            cancelling: false,
+        };
+        assert!(app.tune_blocks_server());
+        assert_eq!(app.toasts.len(), 1, "the user is told why nothing happened");
+        // closing the window asks the search to stop and does not wait for a finished worker
+        app.tools.worker_done.store(true, Ordering::SeqCst);
+        let t = Instant::now();
+        app.tools_on_exit();
+        assert!(app.tools.cancel.load(Ordering::SeqCst));
+        assert!(t.elapsed() < Duration::from_secs(2));
+        // with no search running, closing does nothing at all
+        app.tools.tune = TuneUi::Idle;
+        app.tools.cancel.store(false, Ordering::SeqCst);
+        app.tools.worker_done.store(false, Ordering::SeqCst);
+        let t = Instant::now();
+        app.tools_on_exit();
+        assert!(!app.tools.cancel.load(Ordering::SeqCst));
+        assert!(t.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_recording_asked_for_again_ignores_a_file_the_model_still_holds() {
+        let mut app = headless_app();
+        app.tools.stale_file = true;
+        app.tools.capture = CaptureState::Armed;
+        assert_eq!(
+            capture_step(
+                &app.tools.capture,
+                Some(CAP_BYTES),
+                CAP_BYTES,
+                app.tools.stale_file
+            ),
+            CaptureStep::Stay
+        );
+        // the model restarting makes it write the file afresh
+        app.tools_server_changed();
+        assert!(!app.tools.stale_file);
+        assert_eq!(
+            capture_step(
+                &app.tools.capture,
+                Some(10),
+                CAP_BYTES,
+                app.tools.stale_file
+            ),
+            CaptureStep::Begin
+        );
+    }
+
+    #[test]
+    fn the_error_texts_the_search_thread_can_write_are_translated() {
+        use companion_core::Lang;
+        let ctx_msg = MSG_CTX_PREFIX.replacen("{}", "disk full", 1);
+        for lang in [
+            Lang::Ro,
+            Lang::Fr,
+            Lang::It,
+            Lang::Es,
+            Lang::Pt,
+            Lang::De,
+            Lang::Hu,
+        ] {
+            for m in [MSG_NOT_STOPPED, MSG_PANIC, ctx_msg.as_str()] {
+                assert_ne!(crate::i18n::engine_text(lang, m), m, "{lang:?}: {m}");
+            }
+        }
+        assert!(crate::i18n::engine_text(Lang::De, &ctx_msg).contains("disk full"));
     }
 }

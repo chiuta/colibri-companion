@@ -114,6 +114,7 @@ impl CompanionApp {
                                 && ui
                                     .button(self.t("Oprește modelul", "Stop the model"))
                                     .clicked()
+                                && !self.tune_blocks_server()
                             {
                                 self.stop_server();
                             }

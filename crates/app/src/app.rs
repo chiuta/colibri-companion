@@ -913,6 +913,9 @@ impl CompanionApp {
     /// Switch to a model that is already on this computer: stop the running one, set colibri up for
     /// the other (quick, nothing to download), start it.
     pub fn switch_model(&mut self, id: &str) {
+        if self.tune_blocks_server() {
+            return;
+        }
         if self.coli.is_none() || self.phase() == Phase::Installing || self.install_spawning {
             return;
         }
@@ -934,6 +937,9 @@ impl CompanionApp {
     /// Download one more model and use it as soon as it is there. The model that runs now stays
     /// installed; it is only stopped while the new one downloads.
     pub fn install_additional(&mut self, model: &ModelInfo) {
+        if self.tune_blocks_server() {
+            return;
+        }
         if self.phase() == Phase::Installing || self.install_spawning {
             return;
         }
@@ -1106,6 +1112,9 @@ impl CompanionApp {
     /// Bring colibri up to date: `git pull` for a git checkout, otherwise a fresh ZIP that
     /// replaces the folder (the old one is kept next to it, renamed). The model must be stopped.
     pub fn update_colibri(&mut self) {
+        if self.tune_blocks_server() {
+            return;
+        }
         let Some(coli) = self.coli.clone() else {
             return;
         };
@@ -1276,7 +1285,8 @@ impl CompanionApp {
 
     /// A few seconds of random reads on the drive that holds the models.
     pub fn measure_disk(&mut self) {
-        if self.disk_busy {
+        // the search measures the model's speed: the drive must not be shared with another test
+        if self.disk_busy || self.tools.tune.is_running() {
             return;
         }
         let dir = self
@@ -1299,7 +1309,7 @@ impl CompanionApp {
         let (Some(dir), Some(mut coli)) = (self.active_model_dir(), self.coli.clone()) else {
             return;
         };
-        if self.ctx_busy {
+        if self.ctx_busy || self.tools.tune.is_running() {
             return;
         }
         coli.env = self.accel_env();
@@ -1319,7 +1329,7 @@ impl CompanionApp {
         let (Some(dir), Some(mut coli)) = (self.active_model_dir(), self.coli.clone()) else {
             return;
         };
-        if self.ctx_busy || self.tuning {
+        if self.ctx_busy || self.tuning || self.tune_blocks_server() {
             return;
         }
         coli.env = self.accel_env();
@@ -1347,7 +1357,7 @@ impl CompanionApp {
         let (Some(dir), Some(mut coli)) = (self.active_model_dir(), self.coli.clone()) else {
             return;
         };
-        if self.tuning {
+        if self.tuning || self.tune_blocks_server() {
             return;
         }
         coli.env = self.accel_env();
@@ -1374,6 +1384,9 @@ impl CompanionApp {
         let Some(mut coli) = self.coli.clone() else {
             return;
         };
+        if self.tune_blocks_server() {
+            return;
+        }
         coli.env = self.accel_env();
         if self.starting_since.is_some() {
             return;
