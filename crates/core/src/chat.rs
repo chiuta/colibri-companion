@@ -793,4 +793,40 @@ mod tests {
             "data:image/png;base64,AAAA"
         );
     }
+
+    /// Speed of the client side alone: 200 000 tiny pieces from a local server, measured in
+    /// debug mode, so a real build is faster still. Fails if the client cannot keep up with a
+    /// model far quicker than any that runs on a home computer.
+    #[test]
+    fn the_client_keeps_up_with_a_very_fast_model() {
+        let n = 200_000usize;
+        let chunks: Vec<String> = (0..n)
+            .map(|i| sse(json!({"choices":[{"delta":{"content":format!("w{} ", i % 10)}}]})))
+            .chain(std::iter::once("data: [DONE]\n\n".to_string()))
+            .collect();
+        let (addr, h) = serve_once(chunks, 200);
+        let client = ChatClient::new(&addr, None);
+        let req = ChatRequest {
+            model: "m".into(),
+            messages: vec![ChatMessage::new("user", "x")],
+            temperature: 0.7,
+            top_p: 0.95,
+            max_tokens: None,
+            thinking: Thinking::Off,
+        };
+        let start = std::time::Instant::now();
+        let mut got = 0usize;
+        client
+            .stream_chat(&req, &CancelToken::new(), |e| {
+                if matches!(e, StreamEvent::Content(_)) {
+                    got += 1;
+                }
+            })
+            .unwrap();
+        h.join().unwrap();
+        let rate = got as f64 / start.elapsed().as_secs_f64();
+        eprintln!("client throughput: {rate:.0} pieces/s");
+        assert_eq!(got, n);
+        assert!(rate > 20_000.0, "too slow: {rate:.0}/s");
+    }
 }

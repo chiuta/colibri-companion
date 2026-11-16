@@ -104,8 +104,10 @@ impl Env for Dry<'_> {
         Ok(())
     }
     fn notify(&mut self, _text: &str) {}
+    /// Said yes on purpose: sending does nothing in a test, so a flow with a "Send" step can be
+    /// tried to the end without anything leaving the computer.
     fn approve(&mut self, _what: &str) -> bool {
-        false
+        true
     }
     fn log(&mut self, _line: &str) {}
     fn cancelled(&self) -> bool {
@@ -161,6 +163,7 @@ mod tests {
     struct Mock {
         calls: usize,
         saved: bool,
+        sent: bool,
     }
     impl Env for Mock {
         fn fetch(&mut self, _: &str) -> Result<String, String> {
@@ -189,11 +192,12 @@ mod tests {
             Ok("x".into())
         }
         fn webhook(&mut self, _: &str, _: &str) -> Result<(), String> {
+            self.sent = true;
             Ok(())
         }
         fn notify(&mut self, _: &str) {}
         fn approve(&mut self, _: &str) -> bool {
-            true
+            false
         }
         fn log(&mut self, _: &str) {}
         fn cancelled(&self) -> bool {
@@ -246,6 +250,7 @@ mod tests {
         let mut env = Mock {
             calls: 0,
             saved: false,
+            sent: false,
         };
         let cases = parse_cases("world ::: hello");
         let r = evaluate(&flow(), &cases, 4, &mut env, |_, _| {});
@@ -253,6 +258,7 @@ mod tests {
         assert_eq!(r.passed, 2);
         assert_eq!(r.per_case, vec![(2, 4)]);
         assert!(!env.saved, "tests must not write files");
+        assert!(!env.sent, "tests must not send anything");
         assert!(r.low < 0.5 && r.high > 0.5);
     }
 }

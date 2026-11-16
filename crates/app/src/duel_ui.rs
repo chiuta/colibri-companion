@@ -18,8 +18,8 @@ pub enum Tab {
 
 pub struct Round {
     pub id: u64,
-    /// Indices into `book.combatants`; side A and side B.
-    pub who: [usize; 2],
+    /// Names of side A and side B, kept here so removing a model mid-round cannot break the reveal.
+    pub names: [String; 2],
     pub text: [String; 2],
     pub done: [bool; 2],
     pub err: [Option<String>; 2],
@@ -71,6 +71,9 @@ impl Default for DuelState {
     }
 }
 
+/// The most text one side of a duel may grow to (about 100 000 characters).
+const MAX_ANSWER_BYTES: usize = 400_000;
+
 fn book_path() -> std::path::PathBuf {
     companion_core::paths::data_dir().join("duels.json")
 }
@@ -118,7 +121,7 @@ impl CompanionApp {
             .combatants
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.active)
+            .filter(|(_, c)| c.active && local_or_lan(&c.base))
             .map(|(i, _)| i)
             .collect()
     }
@@ -152,10 +155,14 @@ impl CompanionApp {
         self.duel.next_id += 1;
         let (i, j) = duel::pick_two(active.len(), id);
         let who = [active[i], active[j]];
+        let names = [
+            self.duel.book.combatants[who[0]].name.clone(),
+            self.duel.book.combatants[who[1]].name.clone(),
+        ];
         let cancel = CancelToken::new();
         self.duel.round = Some(Round {
             id,
-            who,
+            names,
             text: [String::new(), String::new()],
             done: [false, false],
             err: [None, None],
@@ -168,6 +175,9 @@ impl CompanionApp {
         for (side, &idx) in who.iter().enumerate() {
             let c = self.duel.book.combatants[idx].clone();
             let (q, cancel, ctx) = (q.clone(), cancel.clone(), self.ctx.clone());
+            let stopped = self
+                .t("Oprit înainte de final", "Stopped before the end")
+                .to_string();
             self.spawn(move |tx| {
                 let req = ChatRequest {
                     model: c.model.clone(),
@@ -184,10 +194,13 @@ impl CompanionApp {
                             side,
                             piece,
                         });
-                        ctx.request_repaint();
+                        ctx.request_repaint_after(crate::app::STREAM_REPAINT);
                     }
                 });
-                let err = res.err().map(|e| e.message);
+                let mut err = res.err().map(|e| e.message);
+                if err.is_none() && cancel.is_cancelled() {
+                    err = Some(stopped);
+                }
                 let _ = tx.send(Event::DuelEnd {
                     round: id,
                     side,
@@ -198,12 +211,24 @@ impl CompanionApp {
     }
 
     pub fn duel_piece(&mut self, round: u64, side: usize, piece: String) {
+        let too_long = self
+            .t(
+                "Răspunsul e prea lung: l-am oprit",
+                "The answer is too long: stopped",
+            )
+            .to_string();
         if let Some(r) = self
             .duel
             .round
             .as_mut()
             .filter(|r| r.id == round && side < 2)
         {
+            // A server that ignores the length limit cannot fill the memory.
+            if r.text[side].len() + piece.len() > MAX_ANSWER_BYTES {
+                r.err[side] = Some(too_long);
+                r.cancel.cancel();
+                return;
+            }
             r.text[side].push_str(&piece);
         }
     }
@@ -216,7 +241,9 @@ impl CompanionApp {
             .filter(|r| r.id == round && side < 2)
         {
             r.done[side] = true;
-            r.err[side] = err;
+            if err.is_some() {
+                r.err[side] = err;
+            }
         }
     }
 
@@ -224,14 +251,16 @@ impl CompanionApp {
         let Some(r) = self.duel.round.as_mut() else {
             return;
         };
-        if r.voted.is_some() || !(r.done[0] && r.done[1]) {
+        // A vote only counts when both models really answered.
+        if r.voted.is_some()
+            || !(r.done[0] && r.done[1])
+            || r.err.iter().any(Option::is_some)
+            || r.text.iter().any(|t| t.trim().is_empty())
+        {
             return;
         }
         r.voted = Some(v);
-        let names = [
-            self.duel.book.combatants[r.who[0]].name.clone(),
-            self.duel.book.combatants[r.who[1]].name.clone(),
-        ];
+        let names = r.names.clone();
         let at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -271,6 +300,12 @@ impl CompanionApp {
 
     pub fn duel_window(&mut self, ctx: &egui::Context) {
         if !self.duel.open {
+            // Closed with Esc or from the menu: a duel still streaming stops with it.
+            if let Some(r) = &self.duel.round {
+                if !(r.done[0] && r.done[1]) {
+                    r.cancel.cancel();
+                }
+            }
             return;
         }
         let p = self.p;
@@ -410,7 +445,7 @@ impl CompanionApp {
             return;
         };
         let (texts, done, errs, voted) = (r.text.clone(), r.done, r.err.clone(), r.voted);
-        let who = r.who;
+        let names = r.names.clone();
         let l_wait = self.t("Se gândește…", "Thinking…");
         ui.columns(2, |cols| {
             for (side, ui) in cols.iter_mut().enumerate() {
@@ -452,10 +487,7 @@ impl CompanionApp {
             });
         }
         if let Some(v) = voted {
-            let (na, nb) = (
-                self.duel.book.combatants[who[0]].name.clone(),
-                self.duel.book.combatants[who[1]].name.clone(),
-            );
+            let (na, nb) = (names[0].clone(), names[1].clone());
             let l_a = self.t("Ai ales", "You chose");
             let verdict = match v {
                 Vote::A => format!("{l_a}: A"),

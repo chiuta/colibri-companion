@@ -10391,6 +10391,28 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Ez a szűrő a modell leírásának szavai alapján működik; egy modell hiányozhat, ha a leírása nem szól erről.",
         ],
     ),
+    (
+        "Stopped before the end",
+        [
+            "Arrêté avant la fin",
+            "Fermato prima della fine",
+            "Detenido antes del final",
+            "Parado antes do fim",
+            "Vor dem Ende gestoppt",
+            "A vége előtt leállítva",
+        ],
+    ),
+    (
+        "The answer is too long: stopped",
+        [
+            "La réponse est trop longue : arrêtée",
+            "La risposta è troppo lunga: interrotta",
+            "La respuesta es demasiado larga: detenida",
+            "A resposta é demasiado longa: interrompida",
+            "Die Antwort ist zu lang: gestoppt",
+            "A válasz túl hosszú: leállítva",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

@@ -236,6 +236,9 @@ pub struct Toast {
     pub until: Instant,
 }
 
+/// The longest the screen waits to show newly streamed text (about 30 frames a second).
+pub const STREAM_REPAINT: Duration = Duration::from_millis(33);
+
 pub struct CompanionApp {
     pub perf_log: bool,
     pub ctx: egui::Context,
@@ -1723,7 +1726,9 @@ impl CompanionApp {
         thread::spawn(move || {
             let result = client.stream_chat(&req, &cancel, |ev| {
                 let _ = tx.send(Event::ChatDelta { turn, ev });
-                ctx.request_repaint();
+                // At most about 30 redraws a second while text streams in: a fast model sends
+                // hundreds of pieces a second and nobody can read faster than the screen refreshes.
+                ctx.request_repaint_after(STREAM_REPAINT);
             });
             let _ = tx.send(Event::ChatDone { turn, result });
             ctx.request_repaint();

@@ -130,7 +130,19 @@ impl CompanionApp {
 
     /// Escape closes the open tool windows, one at a time (when no text box has the keyboard).
     pub fn close_one_window(&mut self) {
-        let flags: [&mut bool; 9] = [
+        // The welcome tour is closed by Esc too, and counts as seen.
+        if self.guide.tour.take().is_some() {
+            let _ = self.s.save();
+            return;
+        }
+        let flags: [&mut bool; 16] = [
+            &mut self.guide.tips,
+            &mut self.guide.explore,
+            &mut self.guide.legal,
+            &mut self.guide.shortcuts,
+            &mut self.show_about,
+            &mut self.sheets.local,
+            &mut self.sheets.compare,
             &mut self.flows.open,
             &mut self.memory.open,
             &mut self.studio.open,
