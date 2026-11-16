@@ -114,6 +114,13 @@ impl eframe::App for CompanionApp {
             eprintln!("ui {:.2} ms", started.elapsed().as_secs_f64() * 1000.0);
         }
     }
+
+    /// Never leave a tool server running after the window is closed.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        for c in self.mcp.clients.values() {
+            c.shutdown();
+        }
+    }
 }
 
 impl CompanionApp {

@@ -133,7 +133,7 @@ pub struct Tool {
 type Pending = Arc<Mutex<HashMap<u64, Sender<Result<Value, String>>>>>;
 
 pub struct Client {
-    child: Child,
+    child: Mutex<Child>,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Pending,
     closed: Arc<AtomicBool>,
@@ -143,8 +143,7 @@ pub struct Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.shutdown();
     }
 }
 
@@ -163,6 +162,14 @@ fn read_line_capped<R: BufRead>(r: &mut R, buf: &mut Vec<u8>) -> std::io::Result
 }
 
 impl Client {
+    /// Stops the server process now, even while other handles to this client still exist.
+    pub fn shutdown(&self) {
+        if let Ok(mut c) = self.child.lock() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
     /// Starts the server and completes the MCP handshake.
     pub fn start(cfg: &ServerConfig) -> Result<(Client, Vec<Tool>), String> {
         let mut cmd = Command::new(&cfg.command);
@@ -180,7 +187,7 @@ impl Client {
         let writer_pending = pending.clone();
         let stdin = Arc::new(Mutex::new(stdin));
         let client = Client {
-            child,
+            child: Mutex::new(child),
             stdin,
             pending,
             closed: Arc::new(AtomicBool::new(false)),

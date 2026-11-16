@@ -84,6 +84,16 @@ fn a_server_that_dies_mid_call_gives_an_error_not_a_hang() {
 }
 
 #[test]
+fn shutdown_stops_the_server_and_later_calls_fail_fast() {
+    let Some((c, _)) = start() else { return };
+    c.shutdown();
+    let started = std::time::Instant::now();
+    assert!(c.call("echo", json!({})).is_err());
+    assert!(started.elapsed().as_secs() < 20);
+    c.shutdown(); // a second call is harmless
+}
+
+#[test]
 fn a_program_that_does_not_exist_is_a_clear_error() {
     let cfg = ServerConfig {
         name: "x".into(),
