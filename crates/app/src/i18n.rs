@@ -14239,4 +14239,42 @@ mod tests {
             }
         }
     }
+
+    /// Every document in `docs/` exists in all eight languages, with the same headings, table
+    /// rows and code blocks (so a translation cannot silently lose a section).
+    #[test]
+    fn every_document_exists_in_eight_languages() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+        let shape = |p: &std::path::Path| {
+            let t = std::fs::read_to_string(p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            let n = |f: &dyn Fn(&str) -> bool| t.lines().filter(|l| f(l)).count();
+            (
+                n(&|l| l.starts_with("## ")),
+                n(&|l| l.starts_with('|')),
+                n(&|l| l.starts_with("```")),
+            )
+        };
+        let mut found = 0;
+        for e in std::fs::read_dir(&dir).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(stem) = name.strip_suffix(".md") else {
+                continue;
+            };
+            if stem.rsplit_once('.').is_some_and(|(_, l)| l.len() == 2) {
+                continue; // a translation, checked from its English original
+            }
+            found += 1;
+            let want = shape(&e.path());
+            for l in ["ro", "fr", "it", "es", "pt", "de", "hu"] {
+                let p = dir.join(format!("{stem}.{l}.md"));
+                assert_eq!(
+                    shape(&p),
+                    want,
+                    "{} differs in structure from {name}",
+                    p.display()
+                );
+            }
+        }
+        assert!(found >= 4, "only {found} documents found");
+    }
 }
