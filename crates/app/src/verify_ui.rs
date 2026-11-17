@@ -443,18 +443,21 @@ mod tests {
             ..options()
         };
         let text = hostile_text(150);
+        // how long the real work takes on this machine, so the limit scales with the runner
+        let t = Instant::now();
+        let direct = check_with(col, &text, &opts);
+        let work = t.elapsed();
         let t = Instant::now();
         let rx = start_check(col, &text, opts.clone(), || {});
         let started_in = t.elapsed();
         assert!(
-            started_in < Duration::from_millis(150),
-            "starting took {started_in:?}"
+            started_in * 4 < work,
+            "starting took {started_in:?}, the work {work:?}"
         );
         let report = rx
             .recv_timeout(Duration::from_secs(120))
             .expect("the report arrives");
         // same answer as the direct call
-        let direct = check_with(col, &text, &opts);
         assert_eq!(report.findings.len(), direct.findings.len());
         assert_eq!(report.truncated(), direct.truncated());
         assert!(
