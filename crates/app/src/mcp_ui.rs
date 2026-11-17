@@ -402,7 +402,7 @@ impl CompanionApp {
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .collapsible(false)
-            .default_width(520.0)
+            .default_width(fit(ctx, 520.0, 0.0).x)
             .show(ctx, |ui| {
                 ui.label(
                     self.t(

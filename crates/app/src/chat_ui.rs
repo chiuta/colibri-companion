@@ -25,18 +25,32 @@ enum MsgAction {
     Usage(Box<companion_core::meter::AnswerStats>),
 }
 
+/// Width of the conversation list for a window `w` wide, and whether the usage panel still leaves
+/// the conversation at least 420 px.
+pub fn chat_panel_widths(w: f32) -> (f32, bool) {
+    let side = (w * 0.24).clamp(200.0, 270.0);
+    (side, w - side - 220.0 >= 420.0)
+}
+
 impl CompanionApp {
     pub fn show_chat(&mut self, ui: &mut Ui) {
         let p = self.p;
+        // The side panels share the window with the conversation: they get narrower with it, and
+        // the usage panel steps aside when the conversation would be left with under ~420 px.
+        let w = ui.available_width();
+        let (side, room_for_meter) = chat_panel_widths(w);
+        let show_meter = self.show_meter() && room_for_meter;
         Panel::left("sidebar")
-            .default_size(270.0)
-            .min_size(200.0)
+            .default_size(side)
+            .min_size(180.0)
+            .max_size((w * 0.4).max(200.0))
             .frame(Frame::new().fill(p.panel).inner_margin(Margin::same(10)))
             .show(ui, |ui| self.sidebar(ui));
-        if self.show_meter() {
+        if show_meter {
             Panel::right("meter")
-                .default_size(290.0)
-                .min_size(220.0)
+                .default_size((w * 0.26).clamp(220.0, 290.0))
+                .min_size(200.0)
+                .max_size((w * 0.4).max(220.0))
                 .frame(Frame::new().fill(p.panel).inner_margin(Margin::same(10)))
                 .show(ui, |ui| self.meter_panel(ui));
         }
@@ -1109,6 +1123,28 @@ mod perf {
         println!(
             "perf_sidebar 2000 chats: median {:.2} ms, p90 {:.2} ms",
             v[15], v[27]
+        );
+    }
+
+    #[test]
+    fn side_panels_leave_the_conversation_room_at_every_width() {
+        for w in [760.0_f32, 820.0, 900.0, 1120.0, 1600.0, 2560.0] {
+            let (side, meter) = chat_panel_widths(w);
+            let used = side
+                + if meter {
+                    (w * 0.26).clamp(220.0, 290.0)
+                } else {
+                    0.0
+                };
+            assert!(w - used >= 420.0, "{w}: only {} px left", w - used);
+        }
+        assert!(
+            !chat_panel_widths(760.0).1,
+            "the usage panel steps aside on a small window"
+        );
+        assert!(
+            chat_panel_widths(1120.0).1,
+            "and is there on the default size"
         );
     }
 }

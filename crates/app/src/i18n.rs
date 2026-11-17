@@ -349,6 +349,50 @@ static TABLE: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "First steps",
+        [
+            "Premiers pas",
+            "Primi passi",
+            "Primeros pasos",
+            "Primeiros passos",
+            "Erste Schritte",
+            "Első lépések",
+        ],
+    ),
+    (
+        "Your work",
+        [
+            "Ton travail",
+            "Il tuo lavoro",
+            "Tu trabajo",
+            "O teu trabalho",
+            "Deine Arbeit",
+            "A munkád",
+        ],
+    ),
+    (
+        "Connections",
+        [
+            "Connexions",
+            "Connessioni",
+            "Conexiones",
+            "Ligações",
+            "Verbindungen",
+            "Kapcsolatok",
+        ],
+    ),
+    (
+        "Information",
+        [
+            "Informations",
+            "Informazioni",
+            "Información",
+            "Informações",
+            "Informationen",
+            "Tudnivalók",
+        ],
+    ),
+    (
         "Check citations",
         [
             "Vérifier les citations",

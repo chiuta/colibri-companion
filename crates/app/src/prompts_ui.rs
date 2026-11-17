@@ -315,7 +315,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Prompt propriu", "My own prompt"))
             .open(&mut keep_open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_width(480.0)
+            .default_width(fit(ctx, 480.0, 0.0).x)
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.label(self.t("Titlu", "Title"));

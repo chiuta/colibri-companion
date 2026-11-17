@@ -9,6 +9,11 @@ use egui::{Align2, CornerRadius, Frame, Margin, Panel, RichText, Ui, vec2};
 
 const THIRD_PARTY: &str = include_str!("../../../THIRD_PARTY_LICENSES.md");
 
+/// A menu entry: Romanian label, English label, which tool it opens.
+type MenuItem = (&'static str, &'static str, u8);
+/// A titled group of menu entries.
+type MenuGroup = (&'static str, &'static str, &'static [MenuItem]);
+
 impl CompanionApp {
     pub fn top_bar(&mut self, ui: &mut Ui) {
         let p = self.p;
@@ -99,53 +104,96 @@ impl CompanionApp {
                                     }
                                     ui.separator();
                                 }
-                                for (label, which) in [
-                                    (self.t("Programe locale", "Local programs"), 0),
-                                    (self.t("Compară modele", "Compare models"), 1),
-                                    (self.t("Explorează", "Explore"), 2),
-                                    (self.t("Sfaturi", "Tips"), 3),
-                                    (self.t("Legal", "Legal"), 4),
-                                    (self.t("Prompturi", "Prompts"), 5),
-                                    (self.t("Conexiuni online", "Online connections"), 6),
-                                    (self.t("Catalog de platforme", "Platform catalogue"), 7),
-                                    (self.t("Modele creative", "Creative models"), 8),
-                                    (self.t("Automatizări", "Automations"), 9),
+                                // grouped by what the person is doing; a heading and a line
+                                // between groups, the most used entries first
+                                let groups: [MenuGroup; 5] = [
                                     (
-                                        self.t(
-                                            "Memorie și constelație",
-                                            "Memory and constellation",
-                                        ),
-                                        10,
+                                        "Primii pași",
+                                        "First steps",
+                                        &[
+                                            ("Ghid de început", "Getting started", 12),
+                                            ("Explorează", "Explore", 2),
+                                            ("Sfaturi", "Tips", 3),
+                                        ],
                                     ),
-                                    (self.t("Dueluri între modele", "Model duels"), 11),
-                                    (self.t("Ghid de început", "Getting started"), 12),
-                                    (self.t("Documente", "Documents"), 13),
-                                    (self.t("Unelte MCP", "MCP tools"), 14),
-                                ] {
-                                    if self.s.access.simple_menus
-                                        && matches!(which, 0 | 1 | 6 | 7 | 8 | 9 | 11 | 14)
-                                    {
+                                    (
+                                        "Munca ta",
+                                        "Your work",
+                                        &[
+                                            ("Documente", "Documents", 13),
+                                            ("Prompturi", "Prompts", 5),
+                                            ("Unelte MCP", "MCP tools", 14),
+                                            ("Automatizări", "Automations", 9),
+                                            (
+                                                "Memorie și constelație",
+                                                "Memory and constellation",
+                                                10,
+                                            ),
+                                        ],
+                                    ),
+                                    (
+                                        "Modele",
+                                        "Models",
+                                        &[
+                                            ("Compară modele", "Compare models", 1),
+                                            ("Dueluri între modele", "Model duels", 11),
+                                            ("Modele creative", "Creative models", 8),
+                                            ("Catalog de platforme", "Platform catalogue", 7),
+                                        ],
+                                    ),
+                                    (
+                                        "Conexiuni",
+                                        "Connections",
+                                        &[
+                                            ("Conexiuni online", "Online connections", 6),
+                                            ("Programe locale", "Local programs", 0),
+                                        ],
+                                    ),
+                                    ("Informații", "Information", &[("Legal", "Legal", 4)]),
+                                ];
+                                let mut first_group = true;
+                                for (g_ro, g_en, items) in groups {
+                                    let shown: Vec<_> = items
+                                        .iter()
+                                        .filter(|(_, _, which)| {
+                                            !(self.s.access.simple_menus
+                                                && matches!(which, 0 | 1 | 6 | 7 | 8 | 9 | 11 | 14))
+                                        })
+                                        .collect();
+                                    if shown.is_empty() {
                                         continue;
                                     }
-                                    if ui.button(label).clicked() {
-                                        match which {
-                                            0 => self.sheets.local = true,
-                                            1 => self.sheets.compare = true,
-                                            2 => self.guide.explore = true,
-                                            3 => self.guide.tips = true,
-                                            5 => self.open_prompts(),
-                                            6 => self.open_online(),
-                                            7 => self.open_catalog(),
-                                            8 => self.open_studio(),
-                                            9 => self.open_flows(),
-                                            10 => self.open_memory(),
-                                            11 => self.open_duel(),
-                                            12 => self.guide.tour = Some(0),
-                                            13 => self.open_docs(),
-                                            14 => self.open_mcp(),
-                                            _ => self.guide.legal = true,
+                                    if !first_group {
+                                        ui.separator();
+                                    }
+                                    first_group = false;
+                                    ui.label(
+                                        RichText::new(self.t(g_ro, g_en))
+                                            .small()
+                                            .color(self.p.muted),
+                                    );
+                                    for (l_ro, l_en, which) in shown {
+                                        let label = self.t(l_ro, l_en);
+                                        if ui.button(label).clicked() {
+                                            match which {
+                                                0 => self.sheets.local = true,
+                                                1 => self.sheets.compare = true,
+                                                2 => self.guide.explore = true,
+                                                3 => self.guide.tips = true,
+                                                5 => self.open_prompts(),
+                                                6 => self.open_online(),
+                                                7 => self.open_catalog(),
+                                                8 => self.open_studio(),
+                                                9 => self.open_flows(),
+                                                10 => self.open_memory(),
+                                                11 => self.open_duel(),
+                                                12 => self.guide.tour = Some(0),
+                                                13 => self.open_docs(),
+                                                14 => self.open_mcp(),
+                                                _ => self.guide.legal = true,
+                                            }
+                                            ui.close();
                                         }
-                                        ui.close();
                                     }
                                 }
                             });
@@ -355,7 +403,7 @@ impl CompanionApp {
         }
         let mut open = true;
         let before = self.s.clone();
-        egui::Window::new(self.t("Setări", "Settings")).open(&mut open).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).default_width(600.0).default_height(560.0).collapsible(false).vscroll(true).show(ctx, |ui| {
+        egui::Window::new(self.t("Setări", "Settings")).open(&mut open).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).default_width(fit(ctx, 600.0, 0.0).x).default_height(fit(ctx, 0.0, 560.0).y).collapsible(false).vscroll(true).show(ctx, |ui| {
             let p = self.p;
             ui.label(RichText::new(self.t("Limbă", "Language")).semibold());
             ui.horizontal_wrapped(|ui| {
@@ -466,7 +514,7 @@ impl CompanionApp {
             return;
         }
         let mut open = true;
-        egui::Window::new(self.t("Despre Colibri Companion", "About Colibri Companion")).open(&mut open).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).default_width(620.0).collapsible(false).vscroll(true).show(ctx, |ui| {
+        egui::Window::new(self.t("Despre Colibri Companion", "About Colibri Companion")).open(&mut open).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).default_width(fit(ctx, 620.0, 0.0).x).collapsible(false).vscroll(true).show(ctx, |ui| {
             let p = self.p;
             ui.label(RichText::new(format!("Colibri Companion {}", env!("CARGO_PKG_VERSION"))).size(20.0).semibold());
             ui.label(self.t(
@@ -507,7 +555,7 @@ impl CompanionApp {
         let mut open = true;
         egui::Window::new(self.t("Jurnal", "Log"))
             .open(&mut open)
-            .default_width(640.0)
+            .default_width(fit(ctx, 640.0, 0.0).x)
             .show(ctx, |ui| {
                 if ui.button(self.t("Copiază", "Copy")).clicked() {
                     ui.ctx().copy_text(text.clone());

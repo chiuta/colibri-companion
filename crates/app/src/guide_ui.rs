@@ -210,7 +210,7 @@ impl CompanionApp {
             egui::Window::new(self.t("Sfaturi", "Tips"))
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-                .default_width(520.0)
+                .default_width(fit(ctx, 520.0, 0.0).x)
                 .collapsible(false)
                 .vscroll(true)
                 .show(ctx, |ui| {
@@ -237,7 +237,7 @@ impl CompanionApp {
             egui::Window::new(self.t("Explorează", "Explore"))
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-                .default_width(520.0)
+                .default_width(fit(ctx, 520.0, 0.0).x)
                 .collapsible(false)
                 .vscroll(true)
                 .show(ctx, |ui| {
@@ -283,7 +283,7 @@ impl CompanionApp {
             egui::Window::new(self.t("Confidențialitate și condiții", "Privacy and terms"))
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-                .default_width(560.0)
+                .default_width(fit(ctx, 560.0, 0.0).x)
                 .collapsible(false)
                 .vscroll(true)
                 .show(ctx, |ui| {
@@ -368,7 +368,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Ghid de început", "Getting started"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_width(560.0)
+            .default_width(fit(ctx, 560.0, 0.0).x)
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.label(RichText::new(self.t(ro, en)).heading().semibold());

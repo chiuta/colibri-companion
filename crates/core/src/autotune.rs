@@ -527,7 +527,7 @@ fn write_atomic_unique(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Runs `f` holding a lock file next to `path`, so two programs do not both read the book, add
 /// their winner and write it back, losing one of them. A lock older than half a minute is a
-/// leftover from a crash and is taken over; after two seconds of waiting `f` runs anyway (a lost
+/// leftover from a crash and is taken over; after ten seconds of waiting `f` runs anyway (a lost
 /// update is better than a save that never happens).
 fn with_lock<T>(path: &Path, f: impl FnOnce() -> T) -> T {
     let name = path.file_name().map_or_else(
@@ -540,7 +540,7 @@ fn with_lock<T>(path: &Path, f: impl FnOnce() -> T) -> T {
     }
     let started = Instant::now();
     let mut held = false;
-    while started.elapsed() < Duration::from_secs(2) {
+    while started.elapsed() < Duration::from_secs(10) {
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -550,7 +550,14 @@ fn with_lock<T>(path: &Path, f: impl FnOnce() -> T) -> T {
                 held = true;
                 break;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Windows answers "access denied" while another thread's lock file is still being
+            // deleted: that is a busy lock, not a folder we cannot write to
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+                ) && (e.kind() == std::io::ErrorKind::AlreadyExists || lock.exists()) =>
+            {
                 let stale = std::fs::metadata(&lock)
                     .and_then(|m| m.modified())
                     .ok()

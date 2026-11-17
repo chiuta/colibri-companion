@@ -20,7 +20,7 @@ impl CompanionApp {
         egui::Window::new(self.t("Modelele mele", "My models"))
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .default_width(640.0)
+            .default_width(fit(ctx, 640.0, 0.0).x)
             .default_height(600.0)
             .collapsible(false)
             .vscroll(true)
