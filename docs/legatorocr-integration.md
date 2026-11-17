@@ -1,4 +1,4 @@
-# LegatorOCR integration (library only)
+# LegatorOCR integration
 
 Status: library in `crates/core/src/legatorocr.rs`, wired into the Documents window by
 `crates/app/src/ocr_ui.rs` (section "Scanned files (LegatorOCR)"). Tested against a real `legatorocr 0.2.0-pre.65` binary on one generated page of
