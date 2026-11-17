@@ -23,6 +23,7 @@ pub struct DocsState {
     pub busy: usize,
     pub message: String,
     pub verify: crate::verify_ui::VerifyState,
+    pub bib: crate::bib_ui::BibState,
     pub ocr: crate::ocr_ui::OcrState,
     searcher: Option<(String, u64, Searcher)>,
 }
@@ -326,6 +327,8 @@ impl CompanionApp {
                 self.verify_section(ui, &id);
                 ui.add_space(6.0);
                 self.ocr_section(ui, &id);
+                ui.add_space(6.0);
+                self.bib_section(ui);
                 ui.add_space(6.0);
                 if ui
                     .button(self.t("Șterge această colecție", "Delete this collection"))

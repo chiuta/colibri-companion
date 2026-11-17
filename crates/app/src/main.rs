@@ -4,6 +4,7 @@
 mod access_ui;
 mod advice_ui;
 mod app;
+mod bib_ui;
 mod chat_ui;
 mod demo;
 mod docs_ui;

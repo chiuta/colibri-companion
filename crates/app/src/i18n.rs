@@ -283,6 +283,72 @@ static TABLE: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Bibliography",
+        [
+            "Bibliographie",
+            "Bibliografia",
+            "Bibliografía",
+            "Bibliografia",
+            "Literaturverzeichnis",
+            "Irodalomjegyzék",
+        ],
+    ),
+    (
+        "Paste a bibliography (BibTeX, RIS or CSL JSON) to convert it or print it as a reference list. Nothing leaves your computer. Fields it does not understand are counted, not guessed.",
+        [
+            "Colle une bibliographie (BibTeX, RIS ou CSL JSON) pour la convertir ou l'afficher comme liste de références. Rien ne quitte ton ordinateur. Les champs qu'il ne comprend pas sont comptés, pas devinés.",
+            "Incolla una bibliografia (BibTeX, RIS o CSL JSON) per convertirla o stamparla come elenco di riferimenti. Niente lascia il tuo computer. I campi che non capisce vengono contati, non indovinati.",
+            "Pega una bibliografía (BibTeX, RIS o CSL JSON) para convertirla o imprimirla como lista de referencias. Nada sale de tu ordenador. Los campos que no entiende se cuentan, no se adivinan.",
+            "Cola uma bibliografia (BibTeX, RIS ou CSL JSON) para a converter ou a imprimir como lista de referências. Nada sai do teu computador. Os campos que não percebe são contados, não adivinhados.",
+            "Füge ein Literaturverzeichnis (BibTeX, RIS oder CSL JSON) ein, um es umzuwandeln oder als Literaturliste auszugeben. Nichts verlässt deinen Rechner. Felder, die es nicht versteht, werden gezählt, nicht geraten.",
+            "Illessz be egy irodalomjegyzéket (BibTeX, RIS vagy CSL JSON), hogy átalakítsd, vagy hivatkozási listaként kiírd. Semmi sem hagyja el a gépedet. Amit nem ért meg, azt megszámolja, nem találgatja.",
+        ],
+    ),
+    (
+        "Paste the bibliography here",
+        [
+            "Colle la bibliographie ici",
+            "Incolla qui la bibliografia",
+            "Pega aquí la bibliografía",
+            "Cola aqui a bibliografia",
+            "Füge das Literaturverzeichnis hier ein",
+            "Illeszd be ide az irodalomjegyzéket",
+        ],
+    ),
+    (
+        "Read entries",
+        [
+            "Lire les entrées",
+            "Leggi le voci",
+            "Leer las entradas",
+            "Ler as entradas",
+            "Einträge lesen",
+            "Bejegyzések beolvasása",
+        ],
+    ),
+    (
+        "Entries read: {}; warnings: {}",
+        [
+            "Entrées lues : {} ; avertissements : {}",
+            "Voci lette: {}; avvisi: {}",
+            "Entradas leídas: {}; avisos: {}",
+            "Entradas lidas: {}; avisos: {}",
+            "Gelesene Einträge: {}; Warnungen: {}",
+            "Beolvasott bejegyzés: {}; figyelmeztetés: {}",
+        ],
+    ),
+    (
+        "Copy as {}",
+        [
+            "Copier en {}",
+            "Copia come {}",
+            "Copiar como {}",
+            "Copiar como {}",
+            "Als {} kopieren",
+            "Másolás {} formátumban",
+        ],
+    ),
+    (
         "Check citations",
         [
             "Vérifier les citations",
