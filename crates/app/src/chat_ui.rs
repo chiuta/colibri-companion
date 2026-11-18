@@ -487,8 +487,13 @@ impl CompanionApp {
                                 });
                         }
                         if !m.content.is_empty() {
-                            egui_commonmark::CommonMarkViewer::new()
-                                .show(ui, &mut cache, &m.content);
+                            if too_nested(&m.content) {
+                                // the markdown renderer needs time that grows steeply with nesting
+                                ui.add(egui::Label::new(&m.content).selectable(true));
+                            } else {
+                                egui_commonmark::CommonMarkViewer::new()
+                                    .show(ui, &mut cache, &m.content);
+                            }
                         } else if streaming && m.reasoning.is_empty() {
                             ui.horizontal(|ui| {
                                 crate::widgets::spinner(ui);
@@ -1146,5 +1151,65 @@ mod perf {
             chat_panel_widths(1120.0).1,
             "and is there on the default size"
         );
+    }
+}
+
+/// How deep a markdown list or quote may nest before the answer is shown as plain text: the
+/// renderer's time grows steeply with depth (3000 nested items froze the window for half a
+/// minute), and a real answer never nests more than a handful of levels.
+const MAX_MARKDOWN_DEPTH: usize = 24;
+
+/// True when some line nests lists or quotes deeper than [`MAX_MARKDOWN_DEPTH`], by markers
+/// (`> > - 1. 1.`) or by indentation in front of a marker.
+pub(crate) fn too_nested(md: &str) -> bool {
+    md.lines().any(|line| {
+        let indent = line.chars().take_while(|c| *c == ' ').count() / 4;
+        let mut rest = line.trim_start();
+        let mut depth = indent;
+        while depth <= MAX_MARKDOWN_DEPTH {
+            let next = if let Some(r) = rest.strip_prefix('>') {
+                r
+            } else if let Some(r) = ["- ", "* ", "+ "].iter().find_map(|m| rest.strip_prefix(m)) {
+                r
+            } else {
+                let digits = rest.chars().take_while(char::is_ascii_digit).count();
+                match rest.get(digits..) {
+                    Some(r)
+                        if (1..=9).contains(&digits)
+                            && (r.starts_with(". ") || r.starts_with(") ")) =>
+                    {
+                        &r[2..]
+                    }
+                    _ => break,
+                }
+            };
+            depth += 1;
+            rest = next.trim_start();
+        }
+        depth > MAX_MARKDOWN_DEPTH
+    })
+}
+
+#[cfg(test)]
+mod nesting_tests {
+    use super::too_nested;
+
+    #[test]
+    fn ordinary_answers_are_not_flagged() {
+        assert!(!too_nested(
+            "# T\n\n- a\n  - b\n    - c\n\n1. x\n2. y\n\n> quote\n> > inner\n\n```\n- - - - -\n```"
+        ));
+        assert!(!too_nested(&format!("{}x", "    ".repeat(5) + "- ")));
+        assert!(!too_nested("3.14 is pi. 1.5 liters - ok"));
+    }
+
+    #[test]
+    fn deep_nesting_is_flagged_however_it_is_built() {
+        assert!(too_nested(&("1. ".repeat(30) + "x")));
+        assert!(too_nested(&("> ".repeat(30) + "x")));
+        assert!(too_nested(&("- ".repeat(30) + "x")));
+        assert!(too_nested(&("> >".repeat(30) + "x")));
+        assert!(too_nested(&("    ".repeat(40) + "- x")));
+        assert!(too_nested(&("1. ".repeat(3_000) + "n")));
     }
 }
