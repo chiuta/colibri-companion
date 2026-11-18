@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "colibri-companion"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "companion-core",
  "companion-scholar",
@@ -694,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "companion-core"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "expert-streamer",
  "libc",
@@ -706,7 +706,7 @@ dependencies = [
 
 [[package]]
 name = "companion-scholar"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "lopdf",
  "serde",
@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "expert-streamer"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "serde_json",
 ]

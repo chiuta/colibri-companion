@@ -10,7 +10,7 @@ Colibri Companion vrea să poată fi folosit de cât mai mulți oameni. Tot ce u
 | Nevăzători | Interfața este expusă cititoarelor de ecran prin AccessKit; orice răspuns poate fi citit cu voce tare cu vocea calculatorului (buton, `Ctrl+Shift+S` sau automat) |
 | Daltonism | O paletă albastru/portocaliu în locul celei verde/roșu, în toate cele trei aspecte |
 | Mâini și mișcare | Butoane de până la 64 de puncte înălțime; toată aplicația merge doar cu tastatura; nu se cere niciodată tragere sau mișcare fină |
-| Auz | Aplicația nu scoate niciun sunet și nu îți cere să asculți; bara de activități poate clipi când un răspuns e gata |
+| Auz | Aplicația nu scoate niciun sunet și nu îți cere să asculți; bara de activități poate clipi când un răspuns e gata Esc închide fereastra deschisă, chiar și dintr-o casetă de text, iar nicio fereastră nu depășește ecranul. |
 | Dislexie, atenție, încărcare cognitivă | Font ușor de citit, rânduri mai aerisite, fără animații, meniuri simple și un stil de răspuns în *limbaj simplu* (propoziții scurte, cuvinte de zi cu zi) |
 
 Șapte presetări (vedere slabă, nevăzători, mișcări greu de controlat, dislexie, citire mai ușoară, daltonism, auz) pun la punct pachete rezonabile dintr-un clic; apoi fiecare opțiune poate fi schimbată separat.

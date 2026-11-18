@@ -10,7 +10,7 @@ Colibri Companion vuole essere utilizzabile da quante più persone possibile. Tu
 | Cecità | L'interfaccia è esposta agli screen reader tramite AccessKit; ogni risposta può essere letta ad alta voce con la voce del computer (pulsante, `Ctrl+Maiusc+S` o in automatico) |
 | Daltonismo | Una tavolozza blu/arancione al posto di verde/rosso in tutti e tre gli aspetti |
 | Mani e movimento | Pulsanti alti fino a 64 punti; tutta l'app funziona solo con la tastiera; non servono mai trascinamenti o movimenti fini |
-| Udito | L'app non emette mai suoni e non ti chiede mai di ascoltare; la barra delle applicazioni può lampeggiare quando una risposta è pronta |
+| Udito | L'app non emette mai suoni e non ti chiede mai di ascoltare; la barra delle applicazioni può lampeggiare quando una risposta è pronta Esc chiude la finestra aperta, anche da una casella di testo, e nessuna finestra supera lo schermo. |
 | Dislessia, attenzione, carico cognitivo | Carattere leggibile, righe più distanziate, nessuna animazione, menu semplici e uno stile di risposta in *linguaggio semplice* (frasi brevi, parole di ogni giorno) |
 
 Sette preset (ipovisione, cecità, movimenti difficili da controllare, dislessia, lettura più facile, daltonismo, udito) impostano insiemi sensati con un clic; poi ogni opzione si può cambiare da sola.

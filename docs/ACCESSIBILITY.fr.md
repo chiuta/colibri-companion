@@ -10,7 +10,7 @@ Colibri Companion veut être utilisable par le plus grand nombre. Tout ce qui su
 | Cécité | L'interface est exposée aux lecteurs d'écran via AccessKit ; chaque réponse peut être lue à voix haute avec la voix de l'ordinateur (bouton, `Ctrl+Maj+S`, ou automatiquement) |
 | Daltonisme | Une palette bleu/orange à la place du vert/rouge dans les trois aspects |
 | Mains et mouvement | Boutons jusqu'à 64 points de haut ; toute l'application fonctionne au clavier seul ; aucun glisser ni geste précis n'est jamais exigé |
-| Audition | L'application ne fait jamais de bruit et ne te demande jamais d'écouter ; la barre des tâches peut clignoter quand une réponse est prête |
+| Audition | L'application ne fait jamais de bruit et ne te demande jamais d'écouter ; la barre des tâches peut clignoter quand une réponse est prête Échap ferme la fenêtre ouverte, même depuis une zone de texte, et aucune fenêtre ne dépasse l'écran. |
 | Dyslexie, attention, charge cognitive | Police lisible, lignes plus aérées, aucune animation, menus simples et un style de réponse en *langage simple* (phrases courtes, mots de tous les jours) |
 
 Sept préréglages (basse vision, cécité, mouvements difficiles à contrôler, dyslexie, lecture plus facile, daltonisme, audition) règlent des ensembles raisonnables en un clic ; chaque option peut ensuite être changée séparément.

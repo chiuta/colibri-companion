@@ -10,7 +10,7 @@ A Colibri Companion azt akarja, hogy minél többen használhassák. Minden, ami
 | Vakság | A felület az AccessKiten keresztül elérhető a képernyőolvasóknak; minden válasz felolvasható a számítógép saját hangján (gomb, `Ctrl+Shift+S`, vagy automatikusan) |
 | Színtévesztés | Kék/narancs paletta a zöld/piros helyett mind a három megjelenésben |
 | Kéz és mozgás | Legfeljebb 64 pont magas gombok; az egész alkalmazás csak billentyűzettel is működik; soha nem kell húzni vagy finom mozdulatokat tenni |
-| Hallás | Az alkalmazás soha nem ad hangot, és soha nem kéri, hogy hallgass; a tálca villoghat, ha kész a válasz |
+| Hallás | Az alkalmazás soha nem ad hangot, és soha nem kéri, hogy hallgass; a tálca villoghat, ha kész a válasz Az Esc a szövegmezőből is bezárja a nyitott ablakot, és egyetlen ablak sem lóg ki a képernyőről. |
 | Diszlexia, figyelem, kognitív terhelés | Jól olvasható betűtípus, szellősebb sorok, nincs animáció, egyszerű menük és *könnyű nyelvű* válaszstílus (rövid mondatok, hétköznapi szavak) |
 
 Hét előbeállítás (gyengénlátás, vakság, nehezen irányítható mozgás, diszlexia, könnyebb olvasás, színtévesztés, hallás) egy kattintással állít be észszerű csomagokat; utána minden beállítás külön is módosítható.

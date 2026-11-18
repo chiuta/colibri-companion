@@ -1102,7 +1102,8 @@ cargo run --release -p colibri-companion</code></pre></div>
     <details><summary data-i="q7">Something is wrong. Where do I get help?</summary><p data-i="a7">The app explains problems in plain words and shows what to do next. In Settings you can open the log. If you are still stuck, open an issue on GitHub and attach the log — we will gladly help.</p></details>
     <details><summary data-i="q8">Does it ever go online?</summary><p data-i="a8">Only for platforms you connect and use yourself. Pages and repositories are read only when you ask. Tokens are kept on your computer only if you tick “remember”, in a file readable by you alone, not encrypted. Every request is logged, host names only.</p></details>
     <details><summary data-i="q9">Is there a guide for beginners?</summary><p data-i="a9">Yes. A short tour opens the first time you start the app, and you can reopen it from the More menu. The model list has a search box and quick filters (ready now, recommended, fast, code, creative, math, multilingual).</p></details>
-    <details><summary data-i="q10">Can it read my documents and use tools?</summary><p data-i="a10">Yes. Document chat searches your files locally (keyword-based, not meaning-based) and cites the passages. MCP tools work only with servers you add and start; each call asks for your approval. Early feature: tool use depends on how well the model follows the format, and it has not yet been tested with many real models.</p></details>
+    <details><summary data-i="q10">Can it read my documents and use tools?</summary><p data-i="a10">Yes. Document chat searches your files locally (keyword-based, not meaning-based) and cites the passages. MCP tools work only with servers you add and start; each call asks for your approval. Early feature: tool use depends on how well the model follows the format, and it has not yet been tested with many real models. Each document can also be listed as a citable source and the list exported as BibTeX, RIS or CSL JSON.</p></details>
+    <details><summary data-i="q11">A window is bigger than my screen. How do I close it?</summary><p data-i="a11">Press Esc: it closes the open window, even from a text box. Since alpha.7 every window stays inside the screen and its content scrolls, so the title bar with the close button is always reachable.</p></details>
   </div>
   <p class="help-links"><a class="btn solid" href="https://github.com/chiuta/colibri-companion/issues/new" rel="noopener" data-i="issue">Report a problem</a></p>
 </div></section>
@@ -1122,7 +1123,7 @@ cargo run --release -p colibri-companion</code></pre></div>
 <script>
 (function(){
 "use strict";
-var TAG="v0.1.0-alpha.6", REPO="https://github.com/chiuta/colibri-companion";
+var TAG="v0.1.0-alpha.7", REPO="https://github.com/chiuta/colibri-companion";
 var LANGS=["en","ro","fr","it","es","pt","de","hu"];
 var LABEL={en:"English",ro:"Română",fr:"Français",it:"Italiano",es:"Español",pt:"Português",de:"Deutsch",hu:"Magyar"};
 var PLAT=[

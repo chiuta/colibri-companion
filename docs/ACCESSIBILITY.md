@@ -10,7 +10,7 @@ reachable from **Accessibility** in the top bar (or `Ctrl+Shift+A`).
 | Low vision | Text size from 80% to 300%; a high-contrast look; the Atkinson Hyperlegible typeface (SIL OFL); more space between lines and buttons; a thick outline around the item the keyboard is on |
 | Blindness | The interface is exposed to screen readers through AccessKit; every answer can be read aloud with the computer's own voice (button, `Ctrl+Shift+S`, or automatically) |
 | Colour blindness | A blue/orange palette in place of green/red in all three looks |
-| Hands and movement | Buttons up to 64 points tall; the whole app works with the keyboard alone; no dragging or fine movement is ever required |
+| Hands and movement | Buttons up to 64 points tall; the whole app works with the keyboard alone; no dragging or fine movement is ever required Esc closes the open window, even from a text box, and no window ever grows past the screen. |
 | Hearing | The app never makes a sound and never asks you to listen; the taskbar can flash when an answer is ready |
 | Dyslexia, attention, cognitive load | Readable typeface, looser lines, no animation, simple menus, and a *plain language* answer style (short sentences, everyday words) |
 

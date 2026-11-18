@@ -756,4 +756,81 @@ mod tests {
             }
         }
     }
+
+    /// A conversation full of hostile text (broken markdown, a million-character line, control and
+    /// right-to-left characters, fake data URLs, absurd nesting) must draw on every screen without
+    /// a panic, and each frame must stay quick.
+    #[test]
+    fn hostile_conversation_draws_everywhere() {
+        use companion_core::store::StoredMessage;
+        let nasty: Vec<String> = vec![
+            "x".repeat(1_000_000),
+            "word ".repeat(100_000),
+            "# ".repeat(5_000) + "title",
+            "> ".repeat(3_000) + "quote",
+            "- ".repeat(3_000) + "item",
+            "1. ".repeat(3_000) + "n",
+            "```\n".repeat(2_000),
+            "```rust\nfn main() {".to_string(),
+            "**".repeat(20_000),
+            "[a](".repeat(5_000),
+            "![img](data:image/png;base64,AAAA)".repeat(200),
+            "| a | b |\n|---|---|\n".to_string() + &"| 1 | 2 | 3 | 4 |\n".repeat(5_000),
+            "\u{202e}\u{200b}\u{0}\u{1b}[31m\u{feff}e\u{301}\u{301}\u{301}😀👨\u{200d}👩\u{200d}👧"
+                .repeat(2_000),
+            "$$ ".repeat(5_000),
+            "<script>alert(1)</script><img src=x onerror=1>".repeat(500),
+            "\n".repeat(50_000),
+            String::new(),
+            "ا".repeat(30_000),
+            "漢字かな".repeat(30_000),
+        ];
+        for lang in [Lang::Ro, Lang::Hu] {
+            for (w, h) in [(1920.0, 1080.0), (1024.0, 600.0), (390.0, 740.0)] {
+                let mut a = busy_app(lang);
+                a.busy = None;
+                for (i, t) in nasty.iter().enumerate() {
+                    a.chat.conv.messages.push(StoredMessage {
+                        role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+                        content: t.clone(),
+                        reasoning: t.chars().take(5_000).collect(),
+                        display: if i % 3 == 0 {
+                            t.chars().take(10_000).collect()
+                        } else {
+                            String::new()
+                        },
+                        sources: vec![t.chars().take(300).collect(); 40],
+                        images: vec![
+                            "data:image/png;base64,####".into(),
+                            "data:,".into(),
+                            String::new(),
+                        ],
+                        ..StoredMessage::default()
+                    });
+                }
+                assert_eq!(
+                    a.phase(),
+                    crate::app::Phase::Chat,
+                    "the test must draw the chat"
+                );
+                a.chat.input = nasty[0].chars().take(100_000).collect();
+                let ctx = egui::Context::default();
+                let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(w, h));
+                for frame in 0..3 {
+                    let t = std::time::Instant::now();
+                    let raw = egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    };
+                    let mut out = ctx.run_ui(raw, |ui| a.build_ui(ui));
+                    out.textures_delta.clear();
+                    assert!(
+                        t.elapsed() < std::time::Duration::from_secs(20),
+                        "frame {frame} on {w}x{h} ({lang:?}) took {:?}",
+                        t.elapsed()
+                    );
+                }
+            }
+        }
+    }
 }
