@@ -6,6 +6,7 @@ mod advice_ui;
 mod app;
 mod bib_ui;
 mod chat_ui;
+mod cite_ui;
 mod demo;
 mod docs_ui;
 mod duel_ui;

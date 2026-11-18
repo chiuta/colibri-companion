@@ -10,7 +10,7 @@ use companion_scholar::csljson;
 use companion_scholar::export::{self, Style};
 use egui::{RichText, Ui};
 
-type Maker = Box<dyn Fn(&[Entry]) -> String>;
+pub(crate) type Maker = Box<dyn Fn(&[Entry]) -> String>;
 
 #[derive(Default)]
 pub struct BibState {
@@ -38,6 +38,24 @@ pub fn as_ris(entries: &[Entry]) -> String {
         .map(|e| e.to_ris())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The six ways a list of entries can be copied out.
+pub(crate) fn formats() -> [(&'static str, Maker); 6] {
+    [
+        ("BibTeX", Box::new(as_bibtex)),
+        ("RIS", Box::new(as_ris)),
+        ("CSL JSON", Box::new(csljson::to_json)),
+        ("APA", Box::new(|e| export::bibliography(e, Style::Apa))),
+        (
+            "Harvard",
+            Box::new(|e| export::bibliography(e, Style::AuthorYear)),
+        ),
+        (
+            "IEEE",
+            Box::new(|e| export::bibliography(e, Style::Numeric)),
+        ),
+    ]
 }
 
 impl BibState {
@@ -109,20 +127,7 @@ impl CompanionApp {
             return;
         }
         let copy_t = self.t("Copiază ca {}", "Copy as {}");
-        let outputs: [(&str, Maker); 6] = [
-            ("BibTeX", Box::new(as_bibtex)),
-            ("RIS", Box::new(as_ris)),
-            ("CSL JSON", Box::new(csljson::to_json)),
-            ("APA", Box::new(|e| export::bibliography(e, Style::Apa))),
-            (
-                "Harvard",
-                Box::new(|e| export::bibliography(e, Style::AuthorYear)),
-            ),
-            (
-                "IEEE",
-                Box::new(|e| export::bibliography(e, Style::Numeric)),
-            ),
-        ];
+        let outputs = formats();
         ui.horizontal_wrapped(|ui| {
             for (name, make) in &outputs {
                 if secondary_button(ui, &copy_t.replacen("{}", name, 1)).clicked() {

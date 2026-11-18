@@ -13108,6 +13108,61 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Megmutatja ennek a válasznak a tokenjeit, sebességét és a gép terhelését",
         ],
     ),
+    (
+        "Citations",
+        [
+            "Citations",
+            "Citazioni",
+            "Citas",
+            "Citações",
+            "Zitate",
+            "Hivatkozások",
+        ],
+    ),
+    (
+        "The collection's documents as citable sources. Copy the citation ([@name]) into your text or export the whole list. The check below recognises exactly these citations.",
+        [
+            "Les documents de la collection comme sources citables. Copie la citation ([@nom]) dans ton texte ou exporte toute la liste. La vérification ci-dessous reconnaît exactement ces citations.",
+            "I documenti della raccolta come fonti citabili. Copia la citazione ([@nome]) nel tuo testo o esporta l'intero elenco. La verifica qui sotto riconosce esattamente queste citazioni.",
+            "Los documentos de la colección como fuentes citables. Copia la cita ([@nombre]) en tu texto o exporta toda la lista. La comprobación de abajo reconoce exactamente estas citas.",
+            "Os documentos da coleção como fontes citáveis. Copia a citação ([@nome]) para o teu texto ou exporta a lista toda. A verificação abaixo reconhece exatamente estas citações.",
+            "Die Dokumente der Sammlung als zitierbare Quellen. Kopiere die Zitierung ([@name]) in deinen Text oder exportiere die ganze Liste. Die Prüfung unten erkennt genau diese Zitate.",
+            "A gyűjtemény dokumentumai hivatkozható forrásként. Másold a hivatkozást ([@név]) a szövegedbe, vagy exportáld az egész listát. Az alábbi ellenőrzés pontosan ezeket a hivatkozásokat ismeri fel.",
+        ],
+    ),
+    (
+        "The collection has no documents yet.",
+        [
+            "La collection n'a pas encore de documents.",
+            "La raccolta non ha ancora documenti.",
+            "La colección aún no tiene documentos.",
+            "A coleção ainda não tem documentos.",
+            "Die Sammlung hat noch keine Dokumente.",
+            "A gyűjteményben még nincs dokumentum.",
+        ],
+    ),
+    (
+        "Entries from the pasted bibliography used: {}",
+        [
+            "Entrées de la bibliographie collée utilisées : {}",
+            "Voci della bibliografia incollata usate: {}",
+            "Entradas de la bibliografía pegada usadas: {}",
+            "Entradas da bibliografia colada usadas: {}",
+            "Verwendete Einträge der eingefügten Bibliografie: {}",
+            "Felhasznált bejegyzések a beillesztett bibliográfiából: {}",
+        ],
+    ),
+    (
+        "Copy citation",
+        [
+            "Copier la citation",
+            "Copia la citazione",
+            "Copiar la cita",
+            "Copiar a citação",
+            "Zitierung kopieren",
+            "Hivatkozás másolása",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

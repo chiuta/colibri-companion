@@ -324,6 +324,8 @@ impl CompanionApp {
                         }
                     });
                 ui.add_space(6.0);
+                self.cite_section(ui, &doc_list);
+                ui.add_space(6.0);
                 self.verify_section(ui, &id);
                 ui.add_space(6.0);
                 self.ocr_section(ui, &id);

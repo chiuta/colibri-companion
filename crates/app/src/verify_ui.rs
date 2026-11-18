@@ -50,7 +50,7 @@ impl<'a> CollectionSources<'a> {
 
 /// `report.pdf` is cited as `report` (and as `report.pdf`). A dot followed by a number is part of
 /// the name, not an extension: "Chapter 2.5" and "Chapter 2" are two different documents.
-fn stem(name: &str) -> String {
+pub(crate) fn stem(name: &str) -> String {
     match name.rsplit_once('.') {
         Some((s, ext))
             if !s.is_empty()
