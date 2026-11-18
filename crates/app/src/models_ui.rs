@@ -18,6 +18,7 @@ impl CompanionApp {
         self.refresh_installed_if_stale();
         let mut open = true;
         egui::Window::new(self.t("Modelele mele", "My models"))
+            .bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_width(fit(ctx, 640.0, 0.0).x)

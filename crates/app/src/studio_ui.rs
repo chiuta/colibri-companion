@@ -153,7 +153,7 @@ impl CompanionApp {
             "Only what can be used commercially",
         );
         let h_prompt = self.t("Descrie imaginea…", "Describe the picture…");
-        egui::Window::new(self.t("Modele creative", "Creative models"))
+        egui::Window::new(self.t("Modele creative", "Creative models")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 780.0, 600.0))

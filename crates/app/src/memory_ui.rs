@@ -299,7 +299,7 @@ impl CompanionApp {
         let mut open = true;
         let mut open_conv: Option<String> = None;
         let mut pins_changed = false;
-        egui::Window::new(self.t("Memorie și constelație", "Memory and constellation"))
+        egui::Window::new(self.t("Memorie și constelație", "Memory and constellation")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 860.0, 700.0))

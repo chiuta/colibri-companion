@@ -182,7 +182,7 @@ impl CompanionApp {
         let p = self.p;
         let mut open = true;
         let before = self.s.clone();
-        egui::Window::new(self.t("Accesibilitate", "Accessibility"))
+        egui::Window::new(self.t("Accesibilitate", "Accessibility")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 680.0, 640.0))

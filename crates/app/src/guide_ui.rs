@@ -207,7 +207,7 @@ impl CompanionApp {
         self.tour_window(ctx);
         if self.guide.tips {
             let mut open = true;
-            egui::Window::new(self.t("Sfaturi", "Tips"))
+            egui::Window::new(self.t("Sfaturi", "Tips")).bounded(ctx)
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .default_width(fit(ctx, 520.0, 0.0).x)
@@ -234,7 +234,7 @@ impl CompanionApp {
         }
         if self.guide.explore {
             let mut open = true;
-            egui::Window::new(self.t("Explorează", "Explore"))
+            egui::Window::new(self.t("Explorează", "Explore")).bounded(ctx)
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .default_width(fit(ctx, 520.0, 0.0).x)
@@ -260,6 +260,7 @@ impl CompanionApp {
         if self.guide.shortcuts {
             let mut open = true;
             egui::Window::new(self.t("Scurtături", "Shortcuts"))
+                .bounded(ctx)
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .collapsible(false)
@@ -280,7 +281,7 @@ impl CompanionApp {
         }
         if self.guide.legal {
             let mut open = true;
-            egui::Window::new(self.t("Confidențialitate și condiții", "Privacy and terms"))
+            egui::Window::new(self.t("Confidențialitate și condiții", "Privacy and terms")).bounded(ctx)
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .default_width(fit(ctx, 560.0, 0.0).x)
@@ -366,6 +367,7 @@ impl CompanionApp {
         );
         let (ro, en, tro, ten) = TOUR[step];
         egui::Window::new(self.t("Ghid de început", "Getting started"))
+            .bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_width(fit(ctx, 560.0, 0.0).x)

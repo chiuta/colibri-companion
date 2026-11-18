@@ -236,6 +236,32 @@ impl CompanionApp {
     }
 
     /// Escape closes the open tool windows, one at a time (when no text box has the keyboard).
+    /// Whether Esc has a window to close.
+    pub fn has_open_window(&self) -> bool {
+        self.guide.tour.is_some()
+            || [
+                self.guide.tips,
+                self.guide.explore,
+                self.guide.legal,
+                self.guide.shortcuts,
+                self.show_about,
+                self.sheets.local,
+                self.sheets.compare,
+                self.flows.open,
+                self.memory.open,
+                self.docs.open,
+                self.mcp.open,
+                self.studio.open,
+                self.duel.open,
+                self.access.open,
+                self.prompts.open,
+                self.online.open_catalog,
+                self.online.open_conn,
+                self.show_settings,
+            ]
+            .contains(&true)
+    }
+
     pub fn close_one_window(&mut self) {
         // The welcome tour is closed by Esc too, and counts as seen.
         if self.guide.tour.take().is_some() {
@@ -403,7 +429,7 @@ impl CompanionApp {
         }
         let mut open = true;
         let before = self.s.clone();
-        egui::Window::new(self.t("Setări", "Settings")).open(&mut open).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).default_width(fit(ctx, 600.0, 0.0).x).default_height(fit(ctx, 0.0, 560.0).y).collapsible(false).vscroll(true).show(ctx, |ui| {
+        egui::Window::new(self.t("Setări", "Settings")).bounded(ctx).open(&mut open).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).default_width(fit(ctx, 600.0, 0.0).x).default_height(fit(ctx, 0.0, 560.0).y).collapsible(false).vscroll(true).show(ctx, |ui| {
             let p = self.p;
             ui.label(RichText::new(self.t("Limbă", "Language")).semibold());
             ui.horizontal_wrapped(|ui| {
@@ -514,7 +540,7 @@ impl CompanionApp {
             return;
         }
         let mut open = true;
-        egui::Window::new(self.t("Despre Colibri Companion", "About Colibri Companion")).open(&mut open).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).default_width(fit(ctx, 620.0, 0.0).x).collapsible(false).vscroll(true).show(ctx, |ui| {
+        egui::Window::new(self.t("Despre Colibri Companion", "About Colibri Companion")).bounded(ctx).open(&mut open).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).default_width(fit(ctx, 620.0, 0.0).x).collapsible(false).vscroll(true).show(ctx, |ui| {
             let p = self.p;
             ui.label(RichText::new(format!("Colibri Companion {}", env!("CARGO_PKG_VERSION"))).size(20.0).semibold());
             ui.label(self.t(
@@ -554,6 +580,7 @@ impl CompanionApp {
         };
         let mut open = true;
         egui::Window::new(self.t("Jurnal", "Log"))
+            .bounded(ctx)
             .open(&mut open)
             .default_width(fit(ctx, 640.0, 0.0).x)
             .show(ctx, |ui| {
@@ -654,5 +681,79 @@ mod tests {
             }
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    /// Every window, opened alone, on screens from a phone to a desktop, in two languages: it
+    /// must lie wholly inside the screen, so its title bar and close button can always be reached.
+    #[test]
+    fn every_window_fits_every_screen() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let d = std::env::temp_dir().join(format!("cc-win-home-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&d);
+            // SAFETY: set once, before any test of this module reads it, always to this value.
+            unsafe { std::env::set_var("COLIBRI_COMPANION_HOME", d) };
+        });
+        let open = |a: &mut CompanionApp, i: usize| match i {
+            0 => a.guide.tips = true,
+            1 => a.guide.explore = true,
+            2 => a.guide.legal = true,
+            3 => a.guide.shortcuts = true,
+            4 => a.show_about = true,
+            5 => a.sheets.local = true,
+            6 => a.sheets.compare = true,
+            7 => a.flows.open = true,
+            8 => a.memory.open = true,
+            9 => a.docs.open = true,
+            10 => a.mcp.open = true,
+            11 => a.studio.open = true,
+            12 => a.duel.open = true,
+            13 => a.access.open = true,
+            14 => a.prompts.open = true,
+            15 => a.online.open_catalog = true,
+            16 => a.online.open_conn = true,
+            _ => a.show_settings = true,
+        };
+        for lang in [Lang::Ro, Lang::De] {
+            for (w, h) in [
+                (1920.0, 1080.0),
+                (1366.0, 768.0),
+                (1024.0, 600.0),
+                (800.0, 480.0),
+                (390.0, 740.0),
+            ] {
+                for i in 0..18 {
+                    let mut a = busy_app(lang);
+                    open(&mut a, i);
+                    let ctx = egui::Context::default();
+                    let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(w, h));
+                    for _ in 0..3 {
+                        let raw = egui::RawInput {
+                            screen_rect: Some(screen),
+                            ..Default::default()
+                        };
+                        let mut out = ctx.run_ui(raw, |ui| a.windows(ui.ctx()));
+                        out.textures_delta.clear();
+                    }
+                    let areas: Vec<_> =
+                        ctx.memory(|m| m.areas().visible_layer_ids().into_iter().collect());
+                    for layer in areas {
+                        if layer.order != egui::Order::Middle {
+                            continue;
+                        }
+                        let Some(r) = ctx.memory(|m| m.area_rect(layer.id)) else {
+                            continue;
+                        };
+                        assert!(
+                            r.min.x >= -1.0
+                                && r.min.y >= -1.0
+                                && r.max.x <= w + 1.0
+                                && r.max.y <= h + 1.0,
+                            "window {i} ({lang:?}) on {w}x{h} lies at {r:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

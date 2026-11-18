@@ -482,7 +482,7 @@ impl CompanionApp {
         let mut changed = false;
         let t_new = self.t("Nouă", "New");
         let t_tpl = self.t("Adaugă modelele de pornire", "Add the starter templates");
-        egui::Window::new(self.t("Automatizări", "Automations"))
+        egui::Window::new(self.t("Automatizări", "Automations")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 820.0, 640.0))

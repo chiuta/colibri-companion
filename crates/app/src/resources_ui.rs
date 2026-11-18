@@ -42,6 +42,7 @@ impl CompanionApp {
         }
         let mut open = true;
         egui::Window::new(self.t("Resurse și confidențialitate", "Resources and privacy"))
+            .bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_width(fit(ctx, 680.0, 0.0).x)

@@ -134,7 +134,7 @@ impl CompanionApp {
         let p = self.p;
         if self.sheets.compare {
             let mut open = true;
-            egui::Window::new(self.t("Comparație: modele locale și AI-uri online", "Comparison: local models and online AIs"))
+            egui::Window::new(self.t("Comparație: modele locale și AI-uri online", "Comparison: local models and online AIs")).bounded(ctx)
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .default_width(fit(ctx, 760.0, 0.0).x)
@@ -207,6 +207,7 @@ impl CompanionApp {
         if self.sheets.local {
             let mut open = true;
             egui::Window::new(self.t("Programe locale", "Local programs"))
+                .bounded(ctx)
                 .open(&mut open)
                 .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
                 .default_width(fit(ctx, 660.0, 0.0).x)

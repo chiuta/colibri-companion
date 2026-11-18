@@ -335,6 +335,22 @@ pub fn fit(ctx: &egui::Context, w: f32, h: f32) -> egui::Vec2 {
     egui::vec2(w.min(r.width() - 24.0), h.min(r.height() - 56.0))
 }
 
+/// Windows that can never be taller or wider than the screen: past that the content scrolls, so
+/// the title bar and its close button stay reachable on a phone, a tablet or a small laptop.
+pub trait Bounded {
+    fn bounded(self, ctx: &egui::Context) -> Self;
+}
+
+impl Bounded for egui::Window<'_> {
+    fn bounded(self, ctx: &egui::Context) -> Self {
+        let r = ctx.content_rect();
+        self.constrain(true)
+            .max_width((r.width() - 16.0).max(240.0))
+            .max_height((r.height() - 40.0).max(240.0))
+            .scroll([true, true])
+    }
+}
+
 /// Helpers for tests that draw a window headless and look at what was drawn.
 #[cfg(test)]
 pub(crate) mod testkit {

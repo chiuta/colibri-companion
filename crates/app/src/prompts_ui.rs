@@ -125,7 +125,7 @@ impl CompanionApp {
         let mut fav_toggle: Option<String> = None;
         let mut delete: Option<String> = None;
         let mut edit_new: Option<Prompt> = None;
-        egui::Window::new(self.t("Biblioteca de prompturi", "Prompt library"))
+        egui::Window::new(self.t("Biblioteca de prompturi", "Prompt library")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 760.0, 520.0))
@@ -313,6 +313,7 @@ impl CompanionApp {
         let mut keep_open = true;
         let mut save = false;
         egui::Window::new(self.t("Prompt propriu", "My own prompt"))
+            .bounded(ctx)
             .open(&mut keep_open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_width(fit(ctx, 480.0, 0.0).x)

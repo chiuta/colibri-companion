@@ -261,7 +261,7 @@ impl CompanionApp {
             "https://… adresa unei pagini",
             "https://… address of a page",
         );
-        egui::Window::new(self.t("Conexiuni online", "Online connections"))
+        egui::Window::new(self.t("Conexiuni online", "Online connections")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 680.0, 560.0))
@@ -471,7 +471,7 @@ impl CompanionApp {
         let p = self.p;
         let mut open = true;
         let l_ready = self.t("Doar ce merge acum", "Only what works now");
-        egui::Window::new(self.t("Catalog de platforme", "Platform catalogue"))
+        egui::Window::new(self.t("Catalog de platforme", "Platform catalogue")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 760.0, 560.0))

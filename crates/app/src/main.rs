@@ -226,7 +226,7 @@ impl CompanionApp {
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
             self.stop_generation();
-        } else if !ctx.egui_wants_keyboard_input()
+        } else if (!ctx.egui_wants_keyboard_input() || self.has_open_window())
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
             self.close_one_window();

@@ -328,7 +328,7 @@ impl CompanionApp {
             (Tab::Board, self.t("Clasament", "Leaderboard")),
             (Tab::Models, self.t("Modele", "Models")),
         ];
-        egui::Window::new(self.t("Dueluri între modele", "Model duels"))
+        egui::Window::new(self.t("Dueluri între modele", "Model duels")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 860.0, 680.0))

@@ -214,7 +214,7 @@ impl CompanionApp {
             "Calea către un fișier sau un dosar (poți și trage fișiere aici)",
             "Path to a file or folder (you can also drop files here)",
         );
-        egui::Window::new(self.t("Documente", "Documents"))
+        egui::Window::new(self.t("Documente", "Documents")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 760.0, 620.0))

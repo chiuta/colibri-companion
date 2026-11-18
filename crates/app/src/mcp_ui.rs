@@ -198,7 +198,7 @@ impl CompanionApp {
         let mut stop: Option<String> = None;
         let mut remove: Option<String> = None;
         let mut run_manual = false;
-        egui::Window::new(self.t("Unelte MCP", "MCP tools"))
+        egui::Window::new(self.t("Unelte MCP", "MCP tools")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(fit(ctx, 760.0, 640.0))
@@ -398,7 +398,7 @@ impl CompanionApp {
         let p = self.p;
         let mut decision: Option<u8> = None; // 1 allow, 2 allow for this chat, 0 deny
         let mut open = true;
-        egui::Window::new(self.t("Permiți această unealtă?", "Allow this tool?"))
+        egui::Window::new(self.t("Permiți această unealtă?", "Allow this tool?")).bounded(ctx)
             .open(&mut open)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .collapsible(false)
