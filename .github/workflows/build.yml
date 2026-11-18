@@ -172,6 +172,9 @@ jobs:
         run: |
           # values arrive through the environment, never pasted into the script text
           case "$TAG" in v[0-9]*) ;; *) echo "not a version tag: $TAG" >&2; exit 1 ;; esac
+          # the program reports the version in Cargo.toml: it must be the one being released
+          want=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "v$want" = "$TAG" ] || { echo "Cargo.toml says $want but the tag is $TAG" >&2; exit 1; }
           gh release create "$TAG" dist/* --repo "$REPO" --target "$SHA" \
             --draft --prerelease --title "Colibri Companion $TAG" \
-            --notes "First public alpha. Friendly desktop interface for colibri in 8 languages: guided setup, chat with Markdown and reasoning, conversation search / rename / export, text-file drop. Windows and macOS builds come from CI and are not yet tested by hand. Apache-2.0. Does not bundle colibri."
+            --notes "Early alpha of the friendly desktop interface for colibri, in 8 languages. See the README and docs/ for what works today and what is still only a library. Windows and macOS builds come from CI and are not yet tested by hand. Apache-2.0. Does not bundle colibri."
