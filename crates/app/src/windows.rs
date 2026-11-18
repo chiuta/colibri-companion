@@ -785,11 +785,14 @@ mod tests {
             "ا".repeat(30_000),
             "漢字かな".repeat(30_000),
         ];
+        // Each message alone, so a slow one is named in the failure; the first frame lays out
+        // everything, the second reuses what was measured.
+        let mut slow: Vec<String> = Vec::new();
         for lang in [Lang::Ro, Lang::Hu] {
             for (w, h) in [(1920.0, 1080.0), (1024.0, 600.0), (390.0, 740.0)] {
-                let mut a = busy_app(lang);
-                a.busy = None;
                 for (i, t) in nasty.iter().enumerate() {
+                    let mut a = busy_app(lang);
+                    a.busy = None;
                     a.chat.conv.messages.push(StoredMessage {
                         role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
                         content: t.clone(),
@@ -807,30 +810,32 @@ mod tests {
                         ],
                         ..StoredMessage::default()
                     });
-                }
-                assert_eq!(
-                    a.phase(),
-                    crate::app::Phase::Chat,
-                    "the test must draw the chat"
-                );
-                a.chat.input = nasty[0].chars().take(100_000).collect();
-                let ctx = egui::Context::default();
-                let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(w, h));
-                for frame in 0..3 {
-                    let t = std::time::Instant::now();
-                    let raw = egui::RawInput {
-                        screen_rect: Some(screen),
-                        ..Default::default()
-                    };
-                    let mut out = ctx.run_ui(raw, |ui| a.build_ui(ui));
-                    out.textures_delta.clear();
-                    assert!(
-                        t.elapsed() < std::time::Duration::from_secs(20),
-                        "frame {frame} on {w}x{h} ({lang:?}) took {:?}",
-                        t.elapsed()
+                    assert_eq!(
+                        a.phase(),
+                        crate::app::Phase::Chat,
+                        "the test must draw the chat"
                     );
+                    a.chat.input = t.chars().take(100_000).collect();
+                    let ctx = egui::Context::default();
+                    let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(w, h));
+                    for frame in 0..2 {
+                        let t0 = std::time::Instant::now();
+                        let raw = egui::RawInput {
+                            screen_rect: Some(screen),
+                            ..Default::default()
+                        };
+                        let mut out = ctx.run_ui(raw, |ui| a.build_ui(ui));
+                        out.textures_delta.clear();
+                        let took = t0.elapsed();
+                        if took > std::time::Duration::from_secs(10) {
+                            let head: String = t.chars().take(12).collect();
+                            slow.push(format!("message {i} ({} chars, {head:?}) frame {frame} on {w}x{h} ({lang:?}): {took:?}", t.chars().count()));
+                            break;
+                        }
+                    }
                 }
             }
         }
+        assert!(slow.is_empty(), "slow frames:\n{}", slow.join("\n"));
     }
 }

@@ -415,7 +415,9 @@ mod tests {
         };
         // Doubling the work must not much more than double the time (a quadratic scan would
         // quadruple it); a ratio does not depend on how slow the machine is.
-        let (small, big) = (run(15_000), run(30_000));
+        // best of three each: one noisy run on a busy machine must not decide
+        let best = |n: usize| (0..3).map(|_| run(n)).min().unwrap_or_default();
+        let (small, big) = (best(15_000), best(30_000));
         assert!(
             big.as_secs_f64() < small.as_secs_f64() * 3.2 + 0.05,
             "not linear: {small:?} then {big:?}"
