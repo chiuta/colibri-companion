@@ -790,8 +790,112 @@ impl CompanionApp {
         self.technical_details(ui);
     }
 
+    /// Plain advice for a failure the install log shows, in the current language.
+    pub fn trouble_text(&self, trouble: coli::Trouble) -> (&'static str, &'static str) {
+        match trouble {
+            coli::Trouble::StorePython => (
+                self.t("Python nu este instalat cu adevărat", "Python is not really installed"),
+                self.t(
+                    "„python” din Windows este doar o scurtătură spre Microsoft Store. Instalează Python de pe python.org (bifează «Add python.exe to PATH») sau rulează într-un terminal: winget install Python.Python.3.12, apoi repornește programul.",
+                    "The “python” in Windows is only a shortcut to the Microsoft Store. Install Python from python.org (tick “Add python.exe to PATH”) or run in a terminal: winget install Python.Python.3.12, then restart this program.",
+                ),
+            ),
+            coli::Trouble::AppControl => (
+                self.t("Windows a blocat motorul", "Windows blocked the engine"),
+                self.t(
+                    "Smart App Control (Windows 11) blochează programele necunoscute. Oprește-l din Windows Security → App & browser control → Smart App Control settings, repornește calculatorul, apoi apasă «Reia». Repornirea lui ulterioară cere resetarea Windows.",
+                    "Smart App Control (Windows 11) blocks programs it does not know. Turn it off in Windows Security → App & browser control → Smart App Control settings, restart the computer, then press “Resume”. Turning it back on later requires resetting Windows.",
+                ),
+            ),
+            coli::Trouble::DiskFull => (
+                self.t("Nu este destul loc liber", "Not enough free space"),
+                self.t(
+                    "Modelul cere mai mult loc decât are discul. Alege alt disc la «Folderul modelelor» sau eliberează spațiu, apoi apasă «Reia».",
+                    "The model needs more room than the disk has. Choose another disk under “Models folder”, or free some space, then press “Resume”.",
+                ),
+            ),
+            coli::Trouble::PathTooLong => (
+                self.t("O cale este prea lungă pentru Windows", "A path is too long for Windows"),
+                self.t(
+                    "Alege un folder mai scurt pentru modele, de exemplu C:\\colibri, apoi apasă «Reia».",
+                    "Choose a shorter models folder, for example C:\\colibri, then press “Resume”.",
+                ),
+            ),
+            coli::Trouble::FileLocked => (
+                self.t("Un fișier este ținut de alt program", "A file is held by another program"),
+                self.t(
+                    "Antivirusul sau un program de sincronizare (OneDrive) ține un fișier pe care instalarea vrea să-l înlocuiască. Pune folderul modelelor în afara OneDrive, așteaptă un minut, apoi apasă «Reia».",
+                    "Antivirus or a sync program (OneDrive) is holding a file the setup wants to replace. Put the models folder outside OneDrive, wait a minute, then press “Resume”.",
+                ),
+            ),
+            coli::Trouble::OldCpu => (
+                self.t("Procesorul este prea vechi pentru motorul gata compilat", "This processor is too old for the prebuilt engine"),
+                self.t(
+                    "Motoarele gata compilate cer un procesor cu AVX2 (aproximativ din 2015). Instalează un compilator (pe Windows: MSYS2, vezi ghidul Windows al colibri) ca instalarea să construiască motorul pentru acest calculator, apoi apasă «Reia».",
+                    "The prebuilt engines need a processor with AVX2 (roughly 2015 or newer). Install a compiler (on Windows: MSYS2, see colibri's Windows guide) so the setup builds the engine for this computer, then press “Resume”.",
+                ),
+            ),
+            coli::Trouble::NoPrebuilt => (
+                self.t("Nu există motor gata compilat pentru acest sistem", "No prebuilt engine exists for this system"),
+                self.t(
+                    "Instalează un compilator (pe Windows: MSYS2) ca instalarea să construiască motorul din sursă, apoi apasă «Reia».",
+                    "Install a compiler (on Windows: MSYS2) so the setup can build the engine from source, then press “Resume”.",
+                ),
+            ),
+            coli::Trouble::RateLimit => (
+                self.t("GitHub limitează cererile din rețeaua ta", "GitHub is limiting requests from your network"),
+                self.t(
+                    "Prea multe cereri au venit de la adresa ta. Așteaptă aproximativ o oră sau încearcă din altă rețea (un hotspot de telefon merge), apoi apasă «Reia».",
+                    "Too many requests came from your address. Wait about an hour, or try from another network (a phone hotspot works), then press “Resume”.",
+                ),
+            ),
+            coli::Trouble::Tls => (
+                self.t("O conexiune sigură nu a putut fi verificată", "A secure connection could not be verified"),
+                self.t(
+                    "Protecția web a antivirusului, un proxy de firmă sau o dată greșită pe calculator strică verificarea certificatului. Verifică data și ora, oprește pentru instalare scanarea HTTPS a antivirusului sau încearcă din altă rețea, apoi apasă «Reia».",
+                    "An antivirus “web shield”, a company proxy or a wrong date on the computer breaks the certificate check. Check the date and time, pause the antivirus's HTTPS scanning for the setup, or try another network, then press “Resume”.",
+                ),
+            ),
+            coli::Trouble::GithubUnreachable => (
+                self.t("Motorul nu a putut fi descărcat de pe GitHub", "The engine could not be downloaded from GitHub"),
+                self.t(
+                    "Instalarea are nevoie de github.com (motorul gata compilat vine de acolo). Verifică conexiunea la internet, un VPN, un firewall sau un proxy; deschide în browser https://github.com/JustVugg/colibri/releases ca să vezi dacă se încarcă, apoi apasă «Reia».",
+                    "The setup needs github.com (the prebuilt engine comes from there). Check the internet connection, a VPN, a firewall or a proxy; open https://github.com/JustVugg/colibri/releases in your browser to see whether it loads, then press “Resume”.",
+                ),
+            ),
+            coli::Trouble::Connection => (
+                self.t("Conexiunea s-a întrerupt", "The connection was interrupted"),
+                self.t(
+                    "O rețea Wi-Fi slabă, un VPN sau un firewall a tăiat descărcarea. Nu s-a pierdut nimic: apasă «Reia», iar dacă se repetă, folosește un cablu sau altă rețea.",
+                    "A weak Wi-Fi, a VPN or a firewall cut the download. Nothing is lost: press “Resume”, and if it repeats, use a cable or another network.",
+                ),
+            ),
+        }
+    }
+
+    /// A notice naming the likely cause of a stopped install, when the log makes it recognisable.
+    fn trouble_notice(&mut self, ui: &mut Ui) {
+        let p = self.p;
+        let msg = self
+            .status
+            .as_ref()
+            .and_then(|s| s.install.as_ref())
+            .and_then(|i| i.message.clone())
+            .unwrap_or_default();
+        let Some(trouble) = coli::diagnose(&format!("{msg}\n{}", self.install_log)) else {
+            return;
+        };
+        let (title, advice) = self.trouble_text(trouble);
+        ui.add_space(8.0);
+        tinted(ui, p.warn_soft, p.warn, |ui| {
+            ui.label(RichText::new(title).semibold().color(p.warn));
+            ui.label(advice);
+        });
+    }
+
     fn technical_details(&mut self, ui: &mut Ui) {
         let p = self.p;
+        self.trouble_notice(ui);
         if let Some(cmd) = coli::find_package_hint(&self.install_log) {
             ui.add_space(8.0);
             tinted(ui, p.warn_soft, p.warn, |ui| {
@@ -834,6 +938,14 @@ impl CompanionApp {
                             .size(12.0),
                         );
                     });
+                if !self.install_log.is_empty()
+                    && ui
+                        .small_button(self.t("Copiază jurnalul", "Copy the log"))
+                        .clicked()
+                {
+                    ui.ctx().copy_text(self.install_log.clone());
+                    self.toast(self.t("Jurnal copiat", "Log copied"));
+                }
             },
         );
     }

@@ -596,6 +596,119 @@ pub fn find_package_hint(log: &str) -> Option<String> {
     None
 }
 
+/// What most often stops an install on a normal computer, recognised from the words colibri's
+/// setup (or Python under it) wrote. The app turns each into plain advice in the person's language.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trouble {
+    /// `python` is only the Microsoft Store shortcut.
+    StorePython,
+    /// Windows Smart App Control refused an unsigned program.
+    AppControl,
+    DiskFull,
+    PathTooLong,
+    /// Antivirus or a sync program holds a file.
+    FileLocked,
+    /// The processor lacks what the prebuilt engines need.
+    OldCpu,
+    NoPrebuilt,
+    /// GitHub's unauthenticated request limit.
+    RateLimit,
+    /// Certificate check failed (antivirus web shield, company proxy, wrong clock).
+    Tls,
+    GithubUnreachable,
+    /// Timeouts, resets, name resolution.
+    Connection,
+}
+
+/// The likeliest [`Trouble`] behind `text` (a failure message and the end of the install log).
+pub fn diagnose(text: &str) -> Option<Trouble> {
+    let t = text.to_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| t.contains(n));
+    use Trouble::*;
+    let found = [
+        (
+            StorePython,
+            has(&[
+                "microsoft store",
+                "python was not found",
+                "windowsapps\\python",
+            ]),
+        ),
+        (AppControl, has(&["application control policy"])),
+        (
+            DiskFull,
+            has(&[
+                "no space left",
+                "winerror 112",
+                "gb free for the download",
+                "not enough space on the disk",
+            ]),
+        ),
+        (
+            PathTooLong,
+            has(&[
+                "winerror 206",
+                "filename or extension is too long",
+                "path too long",
+                "path is too long",
+            ]),
+        ),
+        (
+            FileLocked,
+            has(&[
+                "winerror 32]",
+                "winerror 5]",
+                "used by another process",
+                "permissionerror",
+                "permission denied",
+            ]),
+        ),
+        (OldCpu, has(&["x86-64-v3", "the prebuilt engines need"])),
+        (
+            NoPrebuilt,
+            has(&[
+                "no prebuilt release exists",
+                "no prebuilt engine is published",
+            ]),
+        ),
+        (
+            RateLimit,
+            has(&["rate limit", "http error 429"])
+                || (t.contains("http error 403") && t.contains("api.github.com")),
+        ),
+        (
+            Tls,
+            has(&[
+                "certificate verify failed",
+                "sslerror",
+                "ssl:",
+                "self-signed certificate",
+                "certificate has expired",
+            ]),
+        ),
+        (GithubUnreachable, has(&["cannot reach the github"])),
+        (
+            Connection,
+            has(&[
+                "winerror 10060",
+                "winerror 10061",
+                "winerror 10054",
+                "winerror 10053",
+                "timed out",
+                "getaddrinfo failed",
+                "name or service not known",
+                "temporary failure in name resolution",
+                "connection reset",
+                "connection aborted",
+                "remote end closed",
+                "urlopen error",
+                "network is unreachable",
+            ]),
+        ),
+    ];
+    found.into_iter().find(|(_, hit)| *hit).map(|(k, _)| k)
+}
+
 /// A path as an argument for colibri: absolute, because colibri runs in its own folder, where a
 /// relative path would mean something else; and so it can never start with `-` and be read as an option.
 fn arg_path(p: &Path) -> PathBuf {
@@ -1256,5 +1369,65 @@ mod hardening_tests {
         }
         assert!(check_word("model id", "org/model.v2").is_ok());
         assert!(check_word("model id", "a..b").is_ok());
+    }
+
+    #[test]
+    fn the_usual_install_failures_are_recognised() {
+        use Trouble::*;
+        let cases = [
+            (
+                "Python was not found; run without arguments to install from the Microsoft Store",
+                StorePython,
+            ),
+            (
+                "Program 'colibri.exe' failed to run: An Application Control policy has blocked this file",
+                AppControl,
+            ),
+            ("OSError: [Errno 28] No space left on device", DiskFull),
+            ("needs 412 GB free for the download", DiskFull),
+            (
+                "FileNotFoundError: [WinError 206] The filename or extension is too long",
+                PathTooLong,
+            ),
+            (
+                "PermissionError: [WinError 32] The process cannot access the file because it is being used by another process",
+                FileLocked,
+            ),
+            (
+                "the prebuilt engines need x86-64-v3: this processor lacks avx2",
+                OldCpu,
+            ),
+            (
+                "setup error: no prebuilt release exists for this system; build from source",
+                NoPrebuilt,
+            ),
+            (
+                "urllib.error.HTTPError: HTTP Error 403: rate limit exceeded",
+                RateLimit,
+            ),
+            (
+                "URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed>",
+                Tls,
+            ),
+            (
+                "setup error: cannot reach the GitHub releases to fetch a prebuilt engine",
+                GithubUnreachable,
+            ),
+            (
+                "URLError: <urlopen error [WinError 10060] A connection attempt failed>",
+                Connection,
+            ),
+            ("TimeoutError: timed out", Connection),
+        ];
+        for (text, want) in cases {
+            assert_eq!(diagnose(text), Some(want), "{text}");
+        }
+        assert_eq!(diagnose(""), None);
+        assert_eq!(diagnose("downloading model.safetensors 41%"), None);
+        // a TLS failure behind a generic network error is reported as the more precise TLS one
+        assert_eq!(
+            diagnose("URLError <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]>"),
+            Some(Tls)
+        );
     }
 }
