@@ -84,11 +84,6 @@ impl<T: Read> R<T> {
         self.pos += n;
         Ok(String::from_utf8_lossy(&v).into_owned())
     }
-    fn skip(&mut self, n: u64) -> Result<(), GgufError> {
-        let got = std::io::copy(&mut (&mut self.r).take(n), &mut std::io::sink())?;
-        self.pos += got;
-        if got < n { Err(GgufError::Truncated) } else { Ok(()) }
-    }
     fn value(&mut self, ty: u32, depth: u32) -> Result<Value, GgufError> {
         Ok(match ty {
             0 => Value::U64(self.bytes::<1>()?[0] as u64),
