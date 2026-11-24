@@ -45,7 +45,7 @@ fn main() {
     }
     let model = model.unwrap_or_else(|| die("give a model file or folder"));
     let t0 = Instant::now();
-    let opts = LoadOptions { prefer_quantized: quant, mmap };
+    let opts = LoadOptions { prefer_quantized: quant, mmap, ..Default::default() };
     let (m, tok) = if model.is_dir() {
         let cfg = std::fs::read_to_string(model.join("config.json")).unwrap_or_else(|e| die(format!("config.json: {e}")));
         let spec = from_hf_config(&cfg).unwrap_or_else(|e| die(e));

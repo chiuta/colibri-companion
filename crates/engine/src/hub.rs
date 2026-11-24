@@ -84,7 +84,7 @@ fn http_status_in(stderr: &str) -> Option<u16> {
     for marker in ["returned error: ", "ERROR "] {
         if let Some(i) = stderr.find(marker) {
             let digits: String = stderr[i + marker.len()..].chars().take_while(char::is_ascii_digit).collect();
-            if let Ok(n) = digits.parse::<u16>() { if (100..600).contains(&n) { return Some(n); } }
+            if let Ok(n) = digits.parse::<u16>() && (100..600).contains(&n) { return Some(n); }
         }
     }
     None
@@ -364,12 +364,11 @@ fn quant_in(upper_path: &str, tag: &str) -> bool {
 fn gguf_split(path: &str) -> (String, u32, u32) {
     let stem = &path[..path.len() - 5];
     let b = stem.as_bytes();
-    if b.len() >= 15 {
+    if b.len() >= 15 && stem.is_char_boundary(stem.len() - 15) {
         let t = &stem[stem.len() - 15..];
         let tb = t.as_bytes();
-        if tb[0] == b'-' && &t[6..10] == "-of-" && t[1..6].bytes().all(|c| c.is_ascii_digit()) && t[10..].bytes().all(|c| c.is_ascii_digit()) {
-            if let (Ok(i), Ok(n)) = (t[1..6].parse(), t[10..].parse()) { return (stem[..stem.len() - 15].to_string(), i, n); }
-        }
+        if tb[0] == b'-' && t.get(6..10) == Some("-of-") && tb[1..6].iter().all(|c| c.is_ascii_digit()) && t[10..].bytes().all(|c| c.is_ascii_digit())
+            && let (Ok(i), Ok(n)) = (t[1..6].parse(), t[10..].parse()) { return (stem[..stem.len() - 15].to_string(), i, n); }
     }
     (stem.to_string(), 1, 1)
 }
@@ -631,12 +630,11 @@ impl Downloader {
             let _ = fs::remove_file(&part);
             return Err(HubError::Integrity(format!("{}: got {got} bytes, expected {}", f.path, f.size)));
         }
-        if let Some(h) = &f.sha256 {
-            if sha256_file(&part)? != *h {
+        if let Some(h) = &f.sha256
+            && sha256_file(&part)? != *h {
                 let _ = fs::remove_file(&part);
                 return Err(HubError::Integrity(format!("{}: SHA-256 differs from the hub's", f.path)));
             }
-        }
         if cfg!(windows) { let _ = fs::remove_file(&final_path); }
         fs::rename(&part, &final_path)?;
         report(got);
@@ -656,9 +654,8 @@ impl Downloader {
                 have += fs::metadata(&p).or_else(|_| fs::metadata(&q)).map_or(0, |m| m.len().min(f.size));
             }
         }
-        if let Some(free) = free_space(dest) {
-            if total.saturating_sub(have) > free { return Err(HubError::DiskFull); }
-        }
+        if let Some(free) = free_space(dest)
+            && total.saturating_sub(have) > free { return Err(HubError::DiskFull); }
         let (mut base, mut out) = (0u64, vec![]);
         for f in files {
             if cancel.load(Ordering::Relaxed) { return Err(HubError::Cancelled); }

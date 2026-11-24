@@ -14,8 +14,10 @@
 //! reading a whole `[E, ffn, hidden]` tensor it should implement [`RangeSource::read_range`] by seeking to
 //! `offset + start_elem * bytes_per_elem` (for block-quantised types: whole blocks) and decoding only
 //! `len` elements. [`StackedFromTensors`] is the slow, always-correct adapter used until then.
-use crate::loader::TensorSource;
-use crate::ops::{matvec, silu, softmax};
+use crate::arch::Act;
+use crate::loader::{RawTensor, TensorSource};
+use crate::model::{activate, QWeight, Weight};
+use crate::ops::{matvec, softmax};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -48,28 +50,48 @@ impl std::error::Error for MoeError {}
 
 // ------------------------------------------------------------------ expert weights
 
-/// One expert: gate and up are `ffn × hidden`, down is `hidden × ffn` (row-major).
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExpertWeights { pub gate: Vec<f32>, pub up: Vec<f32>, pub down: Vec<f32> }
+/// One expert: gate and up are `ffn × hidden`, down is `hidden × ffn` (row-major). Each matrix is
+/// either dense f32 or kept quantised as stored, and multiplied without being expanded.
+#[derive(Clone)]
+pub struct ExpertWeights { pub gate: Weight, pub up: Weight, pub down: Weight }
+
+impl std::fmt::Debug for ExpertWeights {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ExpertWeights {{ gate: {}, up: {}, down: {} }}", self.gate.len(), self.up.len(), self.down.len())
+    }
+}
+impl PartialEq for ExpertWeights {
+    fn eq(&self, o: &Self) -> bool { self.gate.to_f32() == o.gate.to_f32() && self.up.to_f32() == o.up.to_f32() && self.down.to_f32() == o.down.to_f32() }
+}
+
+fn shape_err(e: crate::model::ModelError) -> MoeError { MoeError::Shape(e.to_string()) }
+
+#[derive(Default)]
+struct ExpertScratch { g: Vec<f32>, u: Vec<f32>, d: Vec<f32>, yt: Vec<f32> }
 
 impl ExpertWeights {
-    pub fn bytes(&self) -> u64 { 4 * (self.gate.len() + self.up.len() + self.down.len()) as u64 }
+    pub fn dense(gate: Vec<f32>, up: Vec<f32>, down: Vec<f32>) -> ExpertWeights {
+        ExpertWeights { gate: gate.into(), up: up.into(), down: down.into() }
+    }
+    /// Bytes held while this expert is resident (quantised experts count their stored size).
+    pub fn bytes(&self) -> u64 { (self.gate.stored_bytes() + self.up.stored_bytes() + self.down.stored_bytes()) as u64 }
     pub fn ffn(&self, hidden: usize) -> usize { self.gate.len().checked_div(hidden).unwrap_or(0) }
     pub fn validate(&self, hidden: usize, ffn: usize) -> Result<(), MoeError> {
         let n = hidden.checked_mul(ffn).ok_or_else(|| MoeError::Shape("size overflow".into()))?;
-        if self.gate.len() == n && self.up.len() == n && self.down.len() == n { return Ok(()); }
-        Err(MoeError::Shape(format!("expected {n} values per matrix, got gate {} up {} down {}",
+        let quant_ok = |w: &Weight, rows: usize, cols: usize| match w { Weight::Quant(q) => q.rows == rows && q.cols == cols, Weight::Dense(_) => true };
+        if self.gate.len() == n && self.up.len() == n && self.down.len() == n
+            && quant_ok(&self.gate, ffn, hidden) && quant_ok(&self.up, ffn, hidden) && quant_ok(&self.down, hidden, ffn) { return Ok(()); }
+        Err(MoeError::Shape(format!("expected {n} values per matrix ({ffn}x{hidden}), got gate {} up {} down {}",
             self.gate.len(), self.up.len(), self.down.len())))
     }
-    /// `down(silu(gate x) * up x)`, accumulated into `out` scaled by `scale`.
-    fn apply_into(&self, hidden: usize, x: &[f32], scale: f32, out: &mut [f32]) {
+    /// `down(act(gate x) * up x)` for `b` tokens at once; the result is left in `sc.d` (`b × hidden`).
+    fn run(&self, hidden: usize, act: Act, xs: &[f32], b: usize, sc: &mut ExpertScratch) -> Result<(), MoeError> {
         let ffn = self.ffn(hidden);
-        let (mut g, mut u, mut d) = (vec![0.0; ffn], vec![0.0; ffn], vec![0.0; hidden]);
-        matvec(&self.gate, hidden, x, &mut g);
-        matvec(&self.up, hidden, x, &mut u);
-        g.iter_mut().zip(&u).for_each(|(a, b)| *a = silu(*a) * b);
-        matvec(&self.down, ffn, &g, &mut d);
-        out.iter_mut().zip(&d).for_each(|(o, v)| *o += scale * v);
+        for (v, n) in [(&mut sc.g, b * ffn), (&mut sc.u, b * ffn), (&mut sc.d, b * hidden)] { v.clear(); v.resize(n, 0.0); }
+        self.gate.matmat(hidden, xs, b, &mut sc.g, &mut sc.yt).map_err(shape_err)?;
+        self.up.matmat(hidden, xs, b, &mut sc.u, &mut sc.yt).map_err(shape_err)?;
+        sc.g.iter_mut().zip(&sc.u).for_each(|(a, u)| *a = activate(act, *a) * u);
+        self.down.matmat(ffn, &sc.g, b, &mut sc.d, &mut sc.yt).map_err(shape_err)
     }
 }
 
@@ -99,6 +121,7 @@ impl RouterConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct Router { cfg: RouterConfig, weight: Vec<f32> }
 
 /// Indices of the `k` largest scores, best first; equal scores keep the lower index first.
@@ -118,14 +141,20 @@ impl Router {
         if weight.len() != cfg.experts.saturating_mul(cfg.hidden) {
             return Err(MoeError::Shape(format!("router has {} values, expected {}", weight.len(), cfg.experts * cfg.hidden)));
         }
-        if let Some(b) = &cfg.selection_bias { if b.len() != cfg.experts { return err("selection bias length differs from the number of experts"); } }
+        if let Some(b) = &cfg.selection_bias
+            && b.len() != cfg.experts
+        {
+            return err("selection bias length differs from the number of experts");
+        }
         if let Some((ng, tg)) = cfg.groups {
-            if ng == 0 || tg == 0 || tg > ng || cfg.experts % ng != 0 { return err("invalid expert groups"); }
+            if ng == 0 || tg == 0 || tg > ng || !cfg.experts.is_multiple_of(ng) { return err("invalid expert groups"); }
             if cfg.top_k > tg * (cfg.experts / ng) { return err("top_k is larger than the experts left after group selection"); }
         }
         Ok(Router { cfg, weight })
     }
     pub fn config(&self) -> &RouterConfig { &self.cfg }
+    /// The `experts × hidden` router matrix.
+    pub fn weights(&self) -> &[f32] { &self.weight }
 
     /// Chosen experts and their weights, in selection order.
     pub fn route(&self, x: &[f32]) -> Result<Vec<(usize, f32)>, MoeError> {
@@ -169,6 +198,10 @@ pub trait ExpertProvider: Send + Sync {
     fn expert(&self, layer: usize, id: usize) -> Result<Arc<ExpertWeights>, MoeError>;
     /// Hint that these experts will be needed soon. Default: ignore.
     fn prefetch(&self, _layer: usize, _ids: &[usize]) {}
+    /// Cache statistics, for providers that have a cache.
+    fn stats(&self) -> Option<Stats> { None }
+    /// Bytes of expert weights currently held in memory.
+    fn resident_bytes(&self) -> u64 { 0 }
 }
 
 pub struct InMemoryExperts { layers: Vec<Vec<Arc<ExpertWeights>>> }
@@ -181,6 +214,7 @@ impl ExpertProvider for InMemoryExperts {
     fn expert(&self, layer: usize, id: usize) -> Result<Arc<ExpertWeights>, MoeError> {
         self.layers.get(layer).and_then(|l| l.get(id)).cloned().ok_or_else(|| MoeError::Missing(format!("layer {layer} expert {id}")))
     }
+    fn resident_bytes(&self) -> u64 { self.layers.iter().flatten().map(|e| e.bytes()).sum() }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,6 +243,18 @@ pub mod names {
 /// Reads a run of elements out of a (stacked) tensor, in f32 elements, without the rest of it.
 pub trait RangeSource: Send + Sync {
     fn read_range(&self, name: &str, start: usize, len: usize) -> Result<Vec<f32>, MoeError>;
+    /// The same range as a `rows × cols` matrix in its stored (quantised or half-precision) form, or
+    /// `None` (the default) when it has to be decoded to f32. `start` is in elements.
+    fn read_range_raw(&self, _name: &str, _start: usize, _rows: usize, _cols: usize, _mmap: bool) -> Result<Option<RawTensor>, MoeError> { Ok(None) }
+}
+
+/// How streamed experts are held once read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReadMode {
+    /// Keep quantised / half-precision experts as stored instead of expanding them to f32.
+    pub quantized: bool,
+    /// Serve them as windows into the memory-mapped file when the source can.
+    pub mmap: bool,
 }
 
 /// Slow adapter: reads the whole stacked tensor and slices it. Correct for any [`TensorSource`].
@@ -239,7 +285,7 @@ const QUEUE_CAP: usize = 64;
 const MAX_WORKERS: usize = 2;
 
 struct Inner {
-    source: Source, hidden: usize, ffn: usize, budget: u64,
+    source: Source, hidden: usize, ffn: usize, budget: u64, mode: ReadMode,
     cache: Mutex<Cache>,
     hits: AtomicU64, misses: AtomicU64, evictions: AtomicU64, bytes_read: AtomicU64, prefetched: AtomicU64,
     queue: Mutex<VecDeque<(usize, usize)>>, workers: AtomicUsize,
@@ -247,15 +293,35 @@ struct Inner {
 
 impl Inner {
     fn read_expert(&self, layer: usize, id: usize) -> Result<ExpertWeights, MoeError> {
-        let n = self.hidden * self.ffn;
-        let get = |p: Part| -> Result<Vec<f32>, MoeError> {
+        let (h, f) = (self.hidden, self.ffn);
+        let n = h.checked_mul(f).ok_or_else(|| MoeError::Shape("size overflow".into()))?;
+        let quant = |r: RawTensor, rows: usize, cols: usize, nm: &str| -> Result<Weight, MoeError> {
+            if r.rows != rows || r.cols != cols { return Err(MoeError::Shape(format!("{nm}: stored as {}x{}, expected {rows}x{cols}", r.rows, r.cols))); }
+            QWeight::new(r.dtype, r.rows, r.cols, r.bytes).map(Weight::Quant).map_err(shape_err)
+        };
+        let get = |p: Part| -> Result<Weight, MoeError> {
+            let (rows, cols) = if p == Part::Down { (h, f) } else { (f, h) };
             match &self.source {
                 Source::PerExpert { src, name } => {
                     let nm = name(layer, id, p);
                     if !src.has(&nm) { return Err(MoeError::Missing(nm)); }
-                    src.read(&nm).map_err(|e| MoeError::Load(e.to_string()))
+                    if self.mode.quantized
+                        && let Some(r) = src.read_raw(&nm, self.mode.mmap).map_err(|e| MoeError::Load(e.to_string()))?
+                    {
+                        return quant(r, rows, cols, &nm);
+                    }
+                    src.read(&nm).map(Weight::Dense).map_err(|e| MoeError::Load(e.to_string()))
                 }
-                Source::Stacked { src, name } => src.read_range(&name(layer, p), id.checked_mul(n).ok_or_else(|| MoeError::Shape("overflow".into()))?, n),
+                Source::Stacked { src, name } => {
+                    let nm = name(layer, p);
+                    let start = id.checked_mul(n).ok_or_else(|| MoeError::Shape("overflow".into()))?;
+                    if self.mode.quantized
+                        && let Some(r) = src.read_range_raw(&nm, start, rows, cols, self.mode.mmap)?
+                    {
+                        return quant(r, rows, cols, &nm);
+                    }
+                    src.read_range(&nm, start, n).map(Weight::Dense)
+                }
             }
         };
         let w = ExpertWeights { gate: get(Part::Gate)?, up: get(Part::Up)?, down: get(Part::Down)? };
@@ -331,9 +397,9 @@ fn worker(inner: Arc<Inner>) {
 pub struct StreamedExperts { inner: Arc<Inner> }
 
 impl StreamedExperts {
-    fn make(source: Source, hidden: usize, ffn: usize, budget: u64) -> Self {
+    fn make(source: Source, hidden: usize, ffn: usize, budget: u64, mode: ReadMode) -> Self {
         StreamedExperts { inner: Arc::new(Inner {
-            source, hidden, ffn, budget, cache: Mutex::new(Cache::default()),
+            source, hidden, ffn, budget, mode, cache: Mutex::new(Cache::default()),
             hits: 0.into(), misses: 0.into(), evictions: 0.into(), bytes_read: 0.into(), prefetched: 0.into(),
             queue: Mutex::new(VecDeque::new()), workers: 0.into(),
         }) }
@@ -342,12 +408,27 @@ impl StreamedExperts {
     /// (use `Plan::expert_cache`).
     pub fn per_expert(src: Arc<dyn TensorSource + Send + Sync>, name: impl Fn(usize, usize, Part) -> String + Send + Sync + 'static,
         hidden: usize, ffn: usize, budget: u64) -> Self {
-        Self::make(Source::PerExpert { src, name: Box::new(name) }, hidden, ffn, budget)
+        Self::per_expert_with(src, name, hidden, ffn, budget, ReadMode::default())
+    }
+    /// [`StreamedExperts::per_expert`] with control over how experts are held ([`ReadMode`]).
+    pub fn per_expert_with(src: Arc<dyn TensorSource + Send + Sync>, name: impl Fn(usize, usize, Part) -> String + Send + Sync + 'static,
+        hidden: usize, ffn: usize, budget: u64, mode: ReadMode) -> Self {
+        Self::make(Source::PerExpert { src, name: Box::new(name) }, hidden, ffn, budget, mode)
     }
     /// One stacked tensor per part, experts contiguous (`names::gguf_stacked`).
     pub fn stacked(src: Arc<dyn RangeSource>, name: impl Fn(usize, Part) -> String + Send + Sync + 'static,
         hidden: usize, ffn: usize, budget: u64) -> Self {
-        Self::make(Source::Stacked { src, name: Box::new(name) }, hidden, ffn, budget)
+        Self::stacked_with(src, name, hidden, ffn, budget, ReadMode::default())
+    }
+    /// [`StreamedExperts::stacked`] with control over how experts are held ([`ReadMode`]).
+    pub fn stacked_with(src: Arc<dyn RangeSource>, name: impl Fn(usize, Part) -> String + Send + Sync + 'static,
+        hidden: usize, ffn: usize, budget: u64, mode: ReadMode) -> Self {
+        Self::make(Source::Stacked { src, name: Box::new(name) }, hidden, ffn, budget, mode)
+    }
+    /// Read every expert of the given layers now (used when the whole model fits in memory).
+    pub fn preload(&self, layers: impl IntoIterator<Item = usize>, experts: usize) -> Result<(), MoeError> {
+        for l in layers { for e in 0..experts { self.inner.load(l, e, false)?; } }
+        Ok(())
     }
     pub fn stats(&self) -> Stats {
         let i = &self.inner;
@@ -366,6 +447,8 @@ impl StreamedExperts {
 
 impl ExpertProvider for StreamedExperts {
     fn expert(&self, layer: usize, id: usize) -> Result<Arc<ExpertWeights>, MoeError> { self.inner.load(layer, id, true) }
+    fn stats(&self) -> Option<Stats> { Some(StreamedExperts::stats(self)) }
+    fn resident_bytes(&self) -> u64 { self.inner.lock_cache().bytes }
 
     fn prefetch(&self, layer: usize, ids: &[usize]) {
         let inner = &self.inner;
@@ -388,12 +471,24 @@ impl ExpertProvider for StreamedExperts {
 
 // ------------------------------------------------------------------------- block
 
+#[derive(Clone)]
 pub struct MoeBlock {
     pub layer: usize,
     pub hidden: usize,
     pub router: Router,
-    /// Always-on experts (any ffn width); their outputs are added unweighted.
+    /// Always-on experts (any ffn width); their outputs are added to the routed ones.
     pub shared: Vec<ExpertWeights>,
+    /// Qwen2-MoE: the shared experts' output is scaled by `sigmoid(gate · x)` per token.
+    pub shared_gate: Option<Vec<f32>>,
+}
+
+/// Which tokens go to which expert, with their routing weights. Experts are in ascending id order, so
+/// results never depend on batch composition.
+#[derive(Clone, Debug, Default)]
+pub struct Routing { groups: BTreeMap<usize, Vec<(usize, f32)>> }
+impl Routing {
+    /// The experts any token of the batch picked, ascending.
+    pub fn experts(&self) -> Vec<usize> { self.groups.keys().copied().collect() }
 }
 
 impl MoeBlock {
@@ -404,34 +499,70 @@ impl MoeBlock {
             if f == 0 { return Err(MoeError::Shape("empty shared expert".into())); }
             s.validate(hidden, f)?;
         }
-        Ok(MoeBlock { layer, hidden, router, shared })
+        Ok(MoeBlock { layer, hidden, router, shared, shared_gate: None })
+    }
+    /// Add the sigmoid gate on the shared experts (`hidden` values).
+    pub fn with_shared_gate(mut self, gate: Vec<f32>) -> Result<MoeBlock, MoeError> {
+        if gate.len() != self.hidden { return Err(MoeError::Shape(format!("shared gate has {} values, expected {}", gate.len(), self.hidden))); }
+        self.shared_gate = Some(gate);
+        Ok(self)
+    }
+    /// Bytes of the always-resident parts (router, shared experts).
+    pub fn stored_bytes(&self) -> usize {
+        4 * (self.router.weight.len() + self.shared_gate.as_ref().map_or(0, Vec::len)) + self.shared.iter().map(|e| e.bytes() as usize).sum::<usize>()
     }
 
     pub fn forward(&self, p: &dyn ExpertProvider, x: &[f32]) -> Result<Vec<f32>, MoeError> { self.forward_batch(p, x, 1) }
 
-    /// `xs` holds `n` tokens of `hidden` values. Tokens are grouped by expert (ascending expert id, so
-    /// results never depend on batch composition) and every expert is fetched once.
-    pub fn forward_batch(&self, p: &dyn ExpertProvider, xs: &[f32], n: usize) -> Result<Vec<f32>, MoeError> {
+    /// Routing for `n` tokens of `hidden` values.
+    pub fn route_batch(&self, xs: &[f32], n: usize) -> Result<Routing, MoeError> {
         let h = self.hidden;
         if n.checked_mul(h) != Some(xs.len()) { return Err(MoeError::Shape(format!("{} values for {n} tokens of {h}", xs.len()))); }
         let mut groups: BTreeMap<usize, Vec<(usize, f32)>> = BTreeMap::new();
         for (t, x) in xs.chunks_exact(h.max(1)).enumerate().take(n) {
             for (e, w) in self.router.route(x)? { groups.entry(e).or_default().push((t, w)); }
         }
-        let ids: Vec<usize> = groups.keys().copied().collect();
-        p.prefetch(self.layer, &ids);
+        Ok(Routing { groups })
+    }
+
+    /// Run the experts for an already computed [`Routing`]; every expert is fetched once.
+    pub fn apply(&self, p: &dyn ExpertProvider, act: Act, xs: &[f32], n: usize, routing: &Routing) -> Result<Vec<f32>, MoeError> {
+        let h = self.hidden;
+        if n.checked_mul(h) != Some(xs.len()) { return Err(MoeError::Shape(format!("{} values for {n} tokens of {h}", xs.len()))); }
+        p.prefetch(self.layer, &routing.experts());
         let mut out = vec![0.0; xs.len()];
+        let mut sc = ExpertScratch::default();
         for s in &self.shared {
-            for (x, o) in xs.chunks_exact(h).zip(out.chunks_exact_mut(h)) { s.apply_into(h, x, 1.0, o); }
+            s.run(h, act, xs, n, &mut sc)?;
+            for (t, (o, d)) in out.chunks_exact_mut(h).zip(sc.d.chunks_exact(h)).enumerate() {
+                let g = match &self.shared_gate {
+                    Some(g) => 1.0 / (1.0 + (-g.iter().zip(&xs[t * h..(t + 1) * h]).map(|(a, b)| a * b).sum::<f32>()).exp()),
+                    None => 1.0,
+                };
+                o.iter_mut().zip(d).for_each(|(o, v)| *o += g * v);
+            }
         }
-        for (e, toks) in groups {
+        let mut gathered = Vec::new();
+        for (&e, toks) in &routing.groups {
             let w = p.expert(self.layer, e)?;
             let ffn = w.ffn(h);
             w.validate(h, ffn).and_then(|_| if ffn == 0 { Err(MoeError::Shape("empty expert".into())) } else { Ok(()) })?;
-            for (t, wt) in toks { w.apply_into(h, &xs[t * h..(t + 1) * h], wt, &mut out[t * h..(t + 1) * h]); }
+            gathered.clear();
+            for &(t, _) in toks { gathered.extend_from_slice(xs.get(t * h..(t + 1) * h).ok_or_else(|| MoeError::Shape("routing names a token outside the batch".into()))?); }
+            w.run(h, act, &gathered, toks.len(), &mut sc)?;
+            for ((t, wt), d) in toks.iter().zip(sc.d.chunks_exact(h)) {
+                out[t * h..(t + 1) * h].iter_mut().zip(d).for_each(|(o, v)| *o += wt * v);
+            }
         }
         if out.iter().any(|v| !v.is_finite()) { return Err(MoeError::NonFinite); }
         Ok(out)
+    }
+
+    /// `xs` holds `n` tokens of `hidden` values (SiLU experts). Tokens are grouped by expert (ascending
+    /// expert id, so results never depend on batch composition) and every expert is fetched once.
+    pub fn forward_batch(&self, p: &dyn ExpertProvider, xs: &[f32], n: usize) -> Result<Vec<f32>, MoeError> {
+        let r = self.route_batch(xs, n)?;
+        self.apply(p, Act::Silu, xs, n, &r)
     }
 }
 
@@ -450,11 +581,11 @@ mod tests {
     const E: usize = 8;
 
     fn experts(r: &mut Rng, layers: usize) -> Vec<Vec<ExpertWeights>> {
-        (0..layers).map(|_| (0..E).map(|_| ExpertWeights { gate: r.v(H * F), up: r.v(H * F), down: r.v(H * F) }).collect()).collect()
+        (0..layers).map(|_| (0..E).map(|_| ExpertWeights::dense(r.v(H * F), r.v(H * F), r.v(H * F))).collect()).collect()
     }
     fn block(r: &mut Rng, k: usize, shared: bool) -> MoeBlock {
         let router = Router::new(RouterConfig::softmax(H, E, k), r.v(E * H)).unwrap();
-        let sh = if shared { vec![ExpertWeights { gate: r.v(H * 10), up: r.v(H * 10), down: r.v(H * 10) }] } else { vec![] };
+        let sh = if shared { vec![ExpertWeights::dense(r.v(H * 10), r.v(H * 10), r.v(H * 10))] } else { vec![] };
         MoeBlock::new(0, router, sh).unwrap()
     }
 
@@ -471,9 +602,9 @@ mod tests {
         let mut t = HashMap::new();
         for (l, es) in ex.iter().enumerate() {
             for (i, e) in es.iter().enumerate() {
-                t.insert(names::mixtral(l, i, Part::Gate), e.gate.clone());
-                t.insert(names::mixtral(l, i, Part::Up), e.up.clone());
-                t.insert(names::mixtral(l, i, Part::Down), e.down.clone());
+                t.insert(names::mixtral(l, i, Part::Gate), e.gate.to_f32());
+                t.insert(names::mixtral(l, i, Part::Up), e.up.to_f32());
+                t.insert(names::mixtral(l, i, Part::Down), e.down.to_f32());
             }
         }
         Fake { t, reads: 0.into() }
@@ -481,9 +612,9 @@ mod tests {
     fn stacked_fake(ex: &[Vec<ExpertWeights>]) -> Fake {
         let mut t = HashMap::new();
         for (l, es) in ex.iter().enumerate() {
-            t.insert(names::gguf_stacked(l, Part::Gate), es.iter().flat_map(|e| e.gate.clone()).collect());
-            t.insert(names::gguf_stacked(l, Part::Up), es.iter().flat_map(|e| e.up.clone()).collect());
-            t.insert(names::gguf_stacked(l, Part::Down), es.iter().flat_map(|e| e.down.clone()).collect());
+            t.insert(names::gguf_stacked(l, Part::Gate), es.iter().flat_map(|e| e.gate.to_f32()).collect());
+            t.insert(names::gguf_stacked(l, Part::Up), es.iter().flat_map(|e| e.up.to_f32()).collect());
+            t.insert(names::gguf_stacked(l, Part::Down), es.iter().flat_map(|e| e.down.to_f32()).collect());
         }
         Fake { t, reads: 0.into() }
     }
@@ -607,12 +738,13 @@ mod tests {
             let sel = &order[..3];
             let total: f32 = sel.iter().map(|e| logits[*e]).sum();
             let ffn_out = |w: &ExpertWeights, f: usize| -> Vec<f32> {
+                let (wg, wu, wd) = (w.gate.to_f32(), w.up.to_f32(), w.down.to_f32());
                 let a: Vec<f32> = (0..f).map(|j| {
-                    let g: f32 = (0..H).map(|i| w.gate[j * H + i] * x[i]).sum();
-                    let u: f32 = (0..H).map(|i| w.up[j * H + i] * x[i]).sum();
-                    silu(g) * u
+                    let g: f32 = (0..H).map(|i| wg[j * H + i] * x[i]).sum();
+                    let u: f32 = (0..H).map(|i| wu[j * H + i] * x[i]).sum();
+                    crate::ops::silu(g) * u
                 }).collect();
-                (0..H).map(|i| (0..f).map(|j| w.down[i * f + j] * a[j]).sum()).collect()
+                (0..H).map(|i| (0..f).map(|j| wd[i * f + j] * a[j]).sum()).collect()
             };
             let mut want = ffn_out(&b.shared[0], 10);
             for &e in sel { for (o, v) in want.iter_mut().zip(ffn_out(&ex[0][e], F)) { *o += logits[e] / total * v; } }

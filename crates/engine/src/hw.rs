@@ -133,9 +133,9 @@ pub fn parse_cpuinfo(text: &str) -> CpuInfo {
 
 /// `/proc/meminfo` → (total, available) in bytes.
 pub fn parse_meminfo(text: &str) -> (Option<u64>, Option<u64>) {
-    let get = |key: &str| text.lines().find_map(|l| { let (k, v) = l.split_once(':')?; (k == key).then(|| num(v.trim().trim_end_matches("kB"))).flatten().map(|kb| kb * 1024) });
+    let get = |key: &str| text.lines().find_map(|l| { let (k, v) = l.split_once(':')?; (k == key).then(|| num(v.trim().trim_end_matches("kB"))).flatten().map(|kb| kb.saturating_mul(1024)) });
     let total = get("MemTotal");
-    let avail = get("MemAvailable").or_else(|| Some(get("MemFree")? + get("Cached").unwrap_or(0) + get("Buffers").unwrap_or(0)));
+    let avail = get("MemAvailable").or_else(|| Some(get("MemFree")?.saturating_add(get("Cached").unwrap_or(0)).saturating_add(get("Buffers").unwrap_or(0))));
     (total, avail)
 }
 
@@ -256,9 +256,8 @@ pub fn parse_system_profiler(t: &str) -> Vec<Gpu> {
             let name = n.trim().to_string();
             let kind = if name.contains("Apple") { GpuKind::Apple } else if name.contains("NVIDIA") { GpuKind::Nvidia } else if name.contains("AMD") || name.contains("Radeon") { GpuKind::Amd } else if name.contains("Intel") { GpuKind::Intel } else { GpuKind::Other };
             gpus.push(Gpu { name, vram: None, kind });
-        } else if let Some(v) = l.strip_prefix("VRAM (Total):").or_else(|| l.strip_prefix("VRAM (Dynamic, Max):")) {
-            if let Some(g) = gpus.last_mut() { g.vram = parse_gb_mb(v); }
-        }
+        } else if let Some(v) = l.strip_prefix("VRAM (Total):").or_else(|| l.strip_prefix("VRAM (Dynamic, Max):"))
+            && let Some(g) = gpus.last_mut() { g.vram = parse_gb_mb(v); }
     }
     gpus
 }
@@ -321,7 +320,7 @@ pub fn block_base_name(dev: &str) -> Option<String> {
     if n.is_empty() || n.contains('/') { return None; }
     if n.starts_with("dm-") || n.starts_with("md") || n.starts_with("loop") { return Some(n.to_string()); }
     if n.starts_with("nvme") || n.starts_with("mmcblk") {
-        if let Some(p) = n.rfind('p') { if p > 0 && n[p + 1..].bytes().all(|b| b.is_ascii_digit()) && p + 1 < n.len() { return Some(n[..p].to_string()); } }
+        if let Some(p) = n.rfind('p') && p > 0 && n[p + 1..].bytes().all(|b| b.is_ascii_digit()) && p + 1 < n.len() { return Some(n[..p].to_string()); }
         return Some(n.to_string());
     }
     Some(n.trim_end_matches(|c: char| c.is_ascii_digit()).to_string()).filter(|s| !s.is_empty())
@@ -492,9 +491,8 @@ pub fn disk_kind_for(path: &Path) -> DiskKind {
         let k = read(&format!("/sys/block/{c}/queue/rotational")).map(|t| parse_rotational(&t)).unwrap_or(DiskKind::Unknown);
         if k != DiskKind::Unknown { return k; }
         // a partition sits below its disk: /sys/block/<disk>/<part>
-        if let Some(parent) = c.rfind(|ch: char| !ch.is_ascii_digit()).map(|i| c[..=i].trim_end_matches('p').to_string()) {
-            if let Some(t) = read(&format!("/sys/block/{parent}/queue/rotational")) { let k = parse_rotational(&t); if k != DiskKind::Unknown { return k; } }
-        }
+        if let Some(parent) = c.rfind(|ch: char| !ch.is_ascii_digit()).map(|i| c[..=i].trim_end_matches('p').to_string())
+            && let Some(t) = read(&format!("/sys/block/{parent}/queue/rotational")) { let k = parse_rotational(&t); if k != DiskKind::Unknown { return k; } }
     }
     DiskKind::Unknown
 }
@@ -574,7 +572,7 @@ impl Tuning {
         let (total_v, avail_v) = match (total, avail) {
             (Some(t), Some(a)) => (t, a.min(t)),
             (Some(t), None) => (t, t / 2),
-            (None, Some(a)) => (a * 2, a),
+            (None, Some(a)) => (a.saturating_mul(2), a),
             (None, None) => { notes.push("Memory size unknown: assuming 4 GiB.".into()); (4 * GIB, 2 * GIB) }
         };
         let (reserve, frac) = if total_v <= 4 * GIB { (512 * MIB, 0.6) } else if total_v <= 8 * GIB { (768 * MIB, 0.7) } else { (GIB, 0.8) };

@@ -6,13 +6,18 @@
 //! Weights are [`Weight`]s: plain f32, or quantised bytes (owned or memory-mapped) that are
 //! multiplied in place without ever being expanded to f32. The KV cache can be f32, f16 or
 //! int8, and sliding-window layers keep only their window in a ring buffer. One implementation
-//! serves both single-token decoding and batched prefill ([`Model::forward_batch`]).
+//! serves both single-token decoding and batched prefill ([`Model::forward_batch`]). A layer may
+//! carry a mixture-of-experts feed-forward ([`crate::moe`]) instead of the dense MLP.
 use crate::arch::{Act, NormKind, RopeScaling, Spec};
+use crate::backend::{AttnArgs, Backend, Buf, Kv, WeightHandle, WeightRef};
+use crate::moe::{ExpertProvider, MoeBlock, MoeError};
+use crate::pool;
 use crate::ops::softmax;
-use crate::qmatmul::qmatvec;
+use crate::qmatmul::qmatvec_threads;
 use crate::quant::{dequantize, DType, QuantError};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 /// Tokens processed per pass during prefill; bounds scratch memory for long prompts.
@@ -51,6 +56,7 @@ impl Bytes {
 /// A weight matrix kept in its stored (quantised or half-precision) form, row-major `rows × cols`.
 #[derive(Clone)]
 pub struct QWeight { pub dtype: DType, pub rows: usize, pub cols: usize, pub bytes: Bytes }
+fn moe_err(e: MoeError) -> ModelError { ModelError::Experts(e.to_string()) }
 fn qerr(e: QuantError) -> ModelError { ModelError::Shape(e.to_string()) }
 impl QWeight {
     pub fn new(dtype: DType, rows: usize, cols: usize, bytes: Bytes) -> Result<QWeight, ModelError> {
@@ -74,10 +80,14 @@ pub enum Weight { Dense(Vec<f32>), Quant(QWeight) }
 impl Default for Weight { fn default() -> Self { Weight::Dense(Vec::new()) } }
 impl From<Vec<f32>> for Weight { fn from(v: Vec<f32>) -> Self { Weight::Dense(v) } }
 
-fn threads() -> usize {
-    static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+/// Threads a call may use: the pool's size, or `nt` when the model was told to use fewer (`0` = all).
+fn par_threads(nt: usize) -> usize {
+    let p = pool::global().threads();
+    if nt == 0 { p } else { nt.min(p).max(1) }
 }
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> { m.lock().unwrap_or_else(|e| e.into_inner()) }
+/// Weight bytes below which a quantised product is not worth splitting across threads.
+const QTHREAD_MIN_BYTES: usize = 1 << 20;
 /// Dot product with eight independent accumulators, so the compiler can vectorise it.
 pub fn dot8(a: &[f32], b: &[f32]) -> f32 {
     let n = a.len().min(b.len());
@@ -93,14 +103,12 @@ pub fn dot8(a: &[f32], b: &[f32]) -> f32 {
 fn dense_rows(w: &[f32], cols: usize, x: &[f32], out: &mut [f32]) {
     for (o, row) in out.iter_mut().zip(w.chunks_exact(cols)) { *o = dot8(row, x); }
 }
-fn dense_matvec(w: &[f32], cols: usize, x: &[f32], out: &mut [f32]) {
+fn dense_matvec(w: &[f32], cols: usize, x: &[f32], out: &mut [f32], nt: usize) {
     if cols == 0 { out.fill(0.0); return; }
-    let nt = threads();
+    let nt = par_threads(nt);
     if w.len() < (1 << 18) || nt == 1 || out.len() < 2 * nt { return dense_rows(w, cols, x, out); }
-    let per = out.len().div_ceil(nt);
-    std::thread::scope(|s| {
-        for (o, wc) in out.chunks_mut(per).zip(w.chunks(per * cols)) { s.spawn(move || dense_rows(wc, cols, x, o)); }
-    });
+    let min_rows = out.len().div_ceil(nt);
+    pool::global().parallel_chunks_mut(out, min_rows, |start, o| dense_rows(&w[start * cols..(start + o.len()) * cols], cols, x, o));
 }
 
 impl Weight {
@@ -121,14 +129,17 @@ impl Weight {
         match self { Weight::Dense(v) => v.len().checked_div(cols).unwrap_or(0), Weight::Quant(q) => q.rows }
     }
     /// `out = W · x`, `W` being `out.len() × cols`.
-    pub fn matvec(&self, cols: usize, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
+    pub fn matvec(&self, cols: usize, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> { self.matvec_nt(cols, x, out, 0) }
+    /// Like [`Weight::matvec`] with an explicit thread limit (`0` = every pool thread).
+    pub fn matvec_nt(&self, cols: usize, x: &[f32], out: &mut [f32], nt: usize) -> Result<(), ModelError> {
         let bad = || ModelError::Shape(format!("matvec {}x{} with a vector of {}", out.len(), cols, x.len()));
         if x.len() != cols { return Err(bad()); }
         match self {
-            Weight::Dense(w) => { if w.len() != out.len() * cols { return Err(bad()); } dense_matvec(w, cols, x, out); Ok(()) }
+            Weight::Dense(w) => { if w.len() != out.len() * cols { return Err(bad()); } dense_matvec(w, cols, x, out, nt); Ok(()) }
             Weight::Quant(q) => {
                 if q.cols != cols || q.rows != out.len() { return Err(bad()); }
-                qmatvec(q.dtype, q.bytes.as_slice(), q.rows, q.cols, x, out).map_err(qerr)
+                let n = if q.bytes.len() < QTHREAD_MIN_BYTES { 1 } else { par_threads(nt).min(q.rows / 4).max(1) };
+                qmatvec_threads(q.dtype, q.bytes.as_slice(), q.rows, q.cols, x, out, n).map_err(qerr)
             }
         }
     }
@@ -148,25 +159,32 @@ impl Weight {
     /// `out[t] = W · x[t]` for `b` token vectors at once. Each weight row is read once for the whole
     /// batch (quantised rows are decoded once), which is what makes prefill faster than `b` matvecs.
     pub fn matmat(&self, cols: usize, x: &[f32], b: usize, out: &mut [f32], yt: &mut Vec<f32>) -> Result<(), ModelError> {
+        self.matmat_nt(cols, x, b, out, yt, 0)
+    }
+    /// Like [`Weight::matmat`] with an explicit thread limit (`0` = every pool thread).
+    pub fn matmat_nt(&self, cols: usize, x: &[f32], b: usize, out: &mut [f32], yt: &mut Vec<f32>, nt: usize) -> Result<(), ModelError> {
         let rows = self.rows_of(cols);
         if b == 0 || x.len() != b * cols || out.len() != b * rows { return Err(ModelError::Shape("matmat sizes disagree".into())); }
         if b == 1 || (b < 4 && matches!(self, Weight::Quant(_))) {
-            for t in 0..b { self.matvec(cols, &x[t * cols..(t + 1) * cols], &mut out[t * rows..(t + 1) * rows])?; }
+            for t in 0..b { self.matvec_nt(cols, &x[t * cols..(t + 1) * cols], &mut out[t * rows..(t + 1) * rows], nt)?; }
             return Ok(());
         }
         yt.clear();
         yt.resize(rows * b, 0.0);
-        let nt = threads();
+        let nt = par_threads(nt);
         if rows * cols * b < (1 << 18) || nt == 1 || rows < 2 * nt {
             self.tile(0, rows, cols, x, b, yt)?;
         } else {
-            let per = rows.div_ceil(nt);
-            let res: Vec<Result<(), ModelError>> = std::thread::scope(|s| {
-                let hs: Vec<_> = yt.chunks_mut(per * b).enumerate()
-                    .map(|(i, c)| s.spawn(move || self.tile(i * per, c.len() / b, cols, x, b, c))).collect();
-                hs.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(ModelError::Shape("worker panicked".into())))).collect()
+            // each chunk computes its rows privately, then copies them under a short lock
+            let (dst, err): (Mutex<&mut [f32]>, Mutex<Option<ModelError>>) = (Mutex::new(yt.as_mut_slice()), Mutex::new(None));
+            pool::global().parallel_for(rows, rows.div_ceil(nt), |r| {
+                let mut loc = vec![0.0; r.len() * b];
+                match self.tile(r.start, r.len(), cols, x, b, &mut loc) {
+                    Ok(()) => lock(&dst)[r.start * b..r.end * b].copy_from_slice(&loc),
+                    Err(e) => { lock(&err).get_or_insert(e); }
+                }
             });
-            for r in res { r?; }
+            if let Some(e) = lock(&err).take() { return Err(e); }
         }
         for r in 0..rows { for t in 0..b { out[t * rows + r] = yt[r * b + t]; } }
         Ok(())
@@ -201,28 +219,45 @@ pub struct Layer {
     pub w_up: Weight, pub b_up: Option<Vec<f32>>,
     pub w_down: Weight, pub b_down: Option<Vec<f32>>,
     pub post_ffn_norm: Option<Vec<f32>>,
+    /// Mixture-of-experts feed-forward in place of the dense MLP above (which is then empty).
+    pub moe: Option<Arc<MoeBlock>>,
+}
+/// Where routed experts come from, plus whether to read ahead.
+#[derive(Clone)]
+pub struct Experts {
+    pub provider: Arc<dyn ExpertProvider>,
+    /// Ask the provider for the experts the previous token used in the next MoE layer, while this one computes.
+    pub prefetch: bool,
 }
 #[derive(Default, Clone)]
 pub struct Weights {
     pub embed: Weight, pub layers: Vec<Layer>, pub final_norm: Vec<f32>, pub final_norm_b: Option<Vec<f32>>,
     /// `None` = tied to `embed`.
     pub lm_head: Option<Weight>, pub lm_head_b: Option<Vec<f32>>,
+    /// Routed experts of every MoE layer; required when any layer has `moe`.
+    pub experts: Option<Experts>,
 }
 impl Weights {
-    /// Bytes taken by the big matrices as stored.
+    /// Bytes taken by the big matrices as stored (for MoE models: routers, shared experts and the
+    /// routed experts currently held in memory).
     pub fn stored_bytes(&self) -> usize {
         self.embed.stored_bytes() + self.lm_head.as_ref().map_or(0, Weight::stored_bytes)
-            + self.layers.iter().map(|l| [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down].iter().map(|w| w.stored_bytes()).sum::<usize>()).sum::<usize>()
+            + self.layers.iter().map(|l| [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down].iter().map(|w| w.stored_bytes()).sum::<usize>()
+                + l.moe.as_ref().map_or(0, |m| m.stored_bytes())).sum::<usize>()
+            + self.experts.as_ref().map_or(0, |e| e.provider.resident_bytes() as usize)
     }
 }
 pub struct Model {
     pub spec: Spec, pub w: Weights,
     rope_global: (Vec<f64>, f64),
     rope_local: (Vec<f64>, f64),
+    /// Thread limit for the heavy products (`0` = every thread of the pool).
+    threads: usize,
+    accel: Option<Accel>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ModelError { Shape(String), Token(usize), ContextFull(usize), NoTokens }
+pub enum ModelError { Shape(String), Token(usize), ContextFull(usize), NoTokens, Experts(String), Backend(String) }
 impl std::fmt::Display for ModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -230,6 +265,8 @@ impl std::fmt::Display for ModelError {
             ModelError::Token(t) => write!(f, "token {t} is outside the vocabulary"),
             ModelError::ContextFull(n) => write!(f, "the context window of {n} tokens is full"),
             ModelError::NoTokens => write!(f, "no tokens were given"),
+            ModelError::Experts(s) => write!(f, "mixture-of-experts layer: {s}"),
+            ModelError::Backend(s) => write!(f, "compute backend: {s}"),
         }
     }
 }
@@ -262,13 +299,13 @@ pub fn norm(spec: &Spec, x: &[f32], w: &[f32], b: Option<&[f32]>, out: &mut [f32
 fn erf(x: f32) -> f32 {
     // Abramowitz & Stegun 7.1.26, |error| < 1.5e-7
     let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
-    let y = 1.0 - (((((1.061_405_4 * t - 1.453_152_1) * t) + 1.421_413_8) * t - 0.284_496_72) * t + 0.254_829_6) * t * (-x * x).exp();
+    let y = 1.0 - (((((1.061_405_4 * t - 1.453_152_1) * t) + 1.421_413_8) * t - 0.284_496_72) * t + 0.254_829_6) * t * crate::simd::rmath::exp(-x * x);
     y.copysign(x)
 }
 pub fn activate(a: Act, x: f32) -> f32 {
     match a {
-        Act::Silu => x / (1.0 + (-x).exp()),
-        Act::GeluTanh => 0.5 * x * (1.0 + (0.797_884_6 * (x + 0.044_715 * x * x * x)).tanh()),
+        Act::Silu => x / (1.0 + crate::simd::rmath::exp(-x)),
+        Act::GeluTanh => 0.5 * x * (1.0 + crate::simd::rmath::tanh(0.797_884_6 * (x + 0.044_715 * x * x * x))),
         Act::Gelu => 0.5 * x * (1.0 + erf(x * std::f32::consts::FRAC_1_SQRT_2)),
     }
 }
@@ -276,7 +313,7 @@ pub fn activate(a: Act, x: f32) -> f32 {
 /// Inverse frequencies (one per rotated pair) and the cos/sin magnitude factor for a RoPE setup.
 pub fn rope_inv_freq(theta: f64, rotary_dim: usize, scaling: RopeScaling) -> (Vec<f64>, f64) {
     let half = rotary_dim / 2;
-    let base: Vec<f64> = (0..half).map(|i| theta.powf(-(2.0 * i as f64) / rotary_dim as f64)).collect();
+    let base: Vec<f64> = (0..half).map(|i| crate::simd::rmath::powf64(theta, -(2.0 * i as f64) / rotary_dim as f64)).collect();
     match scaling {
         RopeScaling::None => (base, 1.0),
         RopeScaling::Linear { factor } => (base.into_iter().map(|f| f / factor).collect(), 1.0),
@@ -293,7 +330,7 @@ pub fn rope_inv_freq(theta: f64, rotary_dim: usize, scaling: RopeScaling) -> (Ve
         }
         RopeScaling::Yarn { factor, original_max, beta_fast, beta_slow, mscale } => {
             let d = rotary_dim as f64;
-            let corr = |rot: f64| d * (original_max / (rot * 2.0 * std::f64::consts::PI)).ln() / (2.0 * theta.ln());
+            let corr = |rot: f64| d * crate::simd::rmath::ln64(original_max / (rot * 2.0 * std::f64::consts::PI)) / (2.0 * crate::simd::rmath::ln64(theta));
             let lo = corr(beta_fast).floor().max(0.0);
             let hi = corr(beta_slow).ceil().min(d - 1.0);
             let hi = if hi == lo { hi + 0.001 } else { hi };
@@ -310,7 +347,7 @@ pub fn rope_inv_freq(theta: f64, rotary_dim: usize, scaling: RopeScaling) -> (Ve
 pub fn rope_apply(head: &mut [f32], pos: usize, (inv, mscale): &(Vec<f64>, f64)) {
     let half = inv.len();
     for (i, f) in inv.iter().enumerate() {
-        let (s, c) = (pos as f64 * f).sin_cos();
+        let (s, c) = crate::simd::rmath::sin_cos64(pos as f64 * f);
         let (s, c) = (s * mscale, c * mscale);
         let (a, b) = (head[i] as f64, head[i + half] as f64);
         head[i] = (a * c - b * s) as f32;
@@ -319,11 +356,11 @@ pub fn rope_apply(head: &mut [f32], pos: usize, (inv, mscale): &(Vec<f64>, f64))
 }
 
 fn add_bias(v: &mut [f32], b: &Option<Vec<f32>>) { if let Some(b) = b { v.iter_mut().zip(b).for_each(|(a, b)| *a += b); } }
-fn softcap(v: f32, cap: f64) -> f32 { if cap > 0.0 { (cap as f32) * (v / cap as f32).tanh() } else { v } }
+fn softcap(v: f32, cap: f64) -> f32 { if cap > 0.0 { (cap as f32) * crate::simd::rmath::tanh(v / cap as f32) } else { v } }
 
 fn rope_table(pos: usize, (inv, ms): &(Vec<f64>, f64), cos: &mut [f64], sin: &mut [f64]) {
     for (i, f) in inv.iter().enumerate() {
-        let (s, c) = (pos as f64 * f).sin_cos();
+        let (s, c) = crate::simd::rmath::sin_cos64(pos as f64 * f);
         cos[i] = c * ms;
         sin[i] = s * ms;
     }
@@ -422,11 +459,20 @@ impl Plane {
     fn bytes(&self) -> usize {
         match self { Plane::F32(v) => v.len() * 4, Plane::F16(v) => v.len() * 2, Plane::Q8 { q, s } => q.len() + s.len() * 4 }
     }
+    /// Forget every position from `slots` on.
+    fn truncate(&mut self, slots: usize, kd: usize, kvh: usize) {
+        match self {
+            Plane::F32(v) => v.truncate(slots * kd),
+            Plane::F16(v) => v.truncate(slots * kd),
+            Plane::Q8 { q, s } => { q.truncate(slots * kd); s.truncate(slots * kvh); }
+        }
+    }
 }
 
 #[derive(Clone, Default)]
 struct LayerKv { k: Plane, v: Plane, /// ring capacity; 0 = keep everything
-    cap: usize }
+    cap: usize, /// values per position (`kv_heads × head_dim`) and kv heads
+    kd: usize, kvh: usize }
 impl LayerKv { fn slot(&self, pos: usize) -> usize { if self.cap > 0 { pos % self.cap } else { pos } } }
 
 /// Reusable work buffers, so decoding allocates nothing per token.
@@ -437,17 +483,62 @@ struct Scratch {
 }
 fn fit(v: &mut Vec<f32>, n: usize) { v.clear(); v.resize(n, 0.0); }
 
-/// Per-conversation state: the KV cache (grows, or wraps for sliding-window layers) and scratch buffers.
+/// Per-conversation state: the KV cache (grows, or wraps for sliding-window layers), scratch
+/// buffers, and the tokens fed so far (so a server can reuse a common prefix, see
+/// [`Model::prefill_cached`]).
 #[derive(Default)]
-pub struct State { kv: Vec<LayerKv>, pub pos: usize, sc: Scratch }
+pub struct State {
+    kv: Vec<LayerKv>, pub pos: usize, sc: Scratch, moe_last: Vec<Vec<usize>>,
+    tokens: Vec<usize>, last: Option<Vec<f32>>, reused: usize, dev: Option<DevState>,
+    /// Eviction bookkeeping (see the "KV-cache surgery" block below).
+    kvx: KvExtra,
+}
 impl State {
     /// Bytes currently held by the KV cache.
     pub fn kv_bytes(&self) -> usize { self.kv.iter().map(|l| l.k.bytes() + l.v.bytes()).sum() }
+    /// The tokens this state has consumed, in order.
+    pub fn tokens(&self) -> &[usize] { &self.tokens }
+    /// How many leading tokens the last [`Model::prefill_cached`] call did not have to recompute.
+    pub fn reused(&self) -> usize { self.reused }
+    /// Can the state be rewound to `pos` tokens? Always, unless a sliding-window layer has already
+    /// wrapped its ring buffer (the positions it would need again were overwritten).
+    pub fn can_truncate(&self, pos: usize) -> bool {
+        pos <= self.pos && (pos == self.pos || (self.kvx.identity_prefix(pos) && self.kv.iter().all(|l| l.cap == 0 || self.pos <= l.cap)))
+    }
+    /// Rewind to `pos` tokens, dropping everything after them.
+    pub fn truncate(&mut self, pos: usize) -> Result<(), ModelError> {
+        if pos > self.pos { return Err(ModelError::Shape(format!("cannot rewind to {pos}: the state holds {} tokens", self.pos))); }
+        if pos == self.pos { return Ok(()); }
+        if !self.can_truncate(pos) { return Err(ModelError::Shape("cannot rewind a sliding-window cache that has already wrapped".into())); }
+        for l in &mut self.kv { let (kd, kvh) = (l.kd, l.kvh); l.k.truncate(pos, kd, kvh); l.v.truncate(pos, kd, kvh); }
+        self.pos = pos;
+        self.tokens.truncate(pos);
+        self.last = None;
+        self.kvx.after_truncate(pos);
+        Ok(())
+    }
+    /// Back to an empty conversation (keeps the cache precision and the buffers).
+    pub fn reset(&mut self) {
+        for l in &mut self.kv { let (kd, kvh) = (l.kd, l.kvh); l.k.truncate(0, kd, kvh); l.v.truncate(0, kd, kvh); }
+        self.pos = 0;
+        self.tokens.clear();
+        self.last = None;
+        self.kvx.after_truncate(0);
+        for m in &mut self.moe_last { m.clear(); }
+    }
+    /// An independent copy to continue a different branch of the conversation. Sliding-window layers
+    /// are small ring buffers, so the copy costs little there; full layers copy their cache.
+    /// A state whose cache lives on an accelerator cannot be copied.
+    pub fn fork(&self) -> Result<State, ModelError> {
+        if self.dev.is_some() { return Err(ModelError::Backend("a state with an accelerator-side cache cannot be forked".into())); }
+        Ok(State { kv: self.kv.clone(), pos: self.pos, sc: Scratch::default(), moe_last: self.moe_last.clone(),
+            tokens: self.tokens.clone(), last: self.last.clone(), reused: 0, dev: None, kvx: self.kvx.clone() })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn attend(kv: &LayerKv, kd: usize, hd: usize, nh: usize, group: usize, first: usize, n: usize, scale: f32, cap: f64,
-          q: &[f32], att: &mut [f32], scores: &mut [f32]) {
+          q: &[f32], att: &mut [f32], scores: &mut [f32], nt: usize) {
     let head = |h: usize, out: &mut [f32], sc: &mut [f32]| {
         let (kvh, qh) = (h / group, &q[h * hd..(h + 1) * hd]);
         for (i, s) in sc.iter_mut().enumerate() { *s = softcap(kv.k.dot(kv.slot(first + i), kd, hd, kvh, qh) * scale, cap); }
@@ -455,16 +546,16 @@ fn attend(kv: &LayerKv, kd: usize, hd: usize, nh: usize, group: usize, first: us
         out.fill(0.0);
         for (i, p) in sc.iter().enumerate() { kv.v.axpy(kv.slot(first + i), kd, hd, kvh, *p, out); }
     };
-    let nt = threads().min(nh);
+    let nt = par_threads(nt).min(nh);
     if nt <= 1 || nh * n * hd < (1 << 19) {
         for (h, (o, sc)) in att.chunks_mut(hd).zip(scores.chunks_mut(n)).enumerate() { head(h, o, sc); }
     } else {
-        let per = nh.div_ceil(nt);
+        let dst = Mutex::new(&mut *att);
         let head = &head;
-        std::thread::scope(|s| {
-            for (gi, (oa, sa)) in att.chunks_mut(per * hd).zip(scores.chunks_mut(per * n)).enumerate() {
-                s.spawn(move || { for (j, (o, sc)) in oa.chunks_mut(hd).zip(sa.chunks_mut(n)).enumerate() { head(gi * per + j, o, sc); } });
-            }
+        pool::global().parallel_for(nh, nh.div_ceil(nt), |r| {
+            let (mut loc, mut sc) = (vec![0.0; r.len() * hd], vec![0.0; n]);
+            for (j, h) in r.clone().enumerate() { head(h, &mut loc[j * hd..(j + 1) * hd], &mut sc); }
+            lock(&dst)[r.start * hd..r.end * hd].copy_from_slice(&loc);
         });
     }
 }
@@ -473,15 +564,16 @@ impl Model {
     pub fn new(spec: Spec, w: Weights) -> Result<Model, ModelError> {
         let (h, ff, v) = (spec.hidden as usize, spec.ffn as usize, spec.vocab as usize);
         let (hd, rd) = (spec.head_dim as usize, spec.rotary_dim as usize);
-        let (qd, kd) = ((spec.heads * spec.head_dim) as usize, (spec.kv_heads * spec.head_dim) as usize);
-        if spec.heads % spec.kv_heads != 0 { return Err(ModelError::Shape("heads not divisible by kv heads".into())); }
+        let (qd, kd) = (spec.heads.saturating_mul(spec.head_dim) as usize, spec.kv_heads.saturating_mul(spec.head_dim) as usize);
+        if spec.kv_heads == 0 || !spec.heads.is_multiple_of(spec.kv_heads) { return Err(ModelError::Shape("heads not divisible by kv heads".into())); }
         if rd == 0 || rd % 2 != 0 || rd > hd { return Err(ModelError::Shape(format!("rotary_dim {rd} must be even and within head_dim {hd}"))); }
         let chk = |name: &str, got: usize, want: usize| {
             if got == want { Ok(()) } else { Err(ModelError::Shape(format!("{name}: {got} values, expected {want}"))) }
         };
         let chk_w = |name: &str, w: &Weight, rows: usize, cols: usize| match w {
+            _ if rows.checked_mul(cols).is_none() => Err(ModelError::Shape(format!("{name}: dimensions {rows}x{cols} are absurd"))),
             Weight::Dense(x) => chk(name, x.len(), rows * cols),
-            Weight::Quant(q) if rows * cols == 0 => chk(name, q.rows * q.cols, 0),
+            Weight::Quant(q) if rows * cols == 0 => chk(name, q.rows.saturating_mul(q.cols), 0),
             Weight::Quant(q) if q.rows == rows && q.cols == cols => Ok(()),
             Weight::Quant(q) => Err(ModelError::Shape(format!("{name}: stored as {}x{}, expected {rows}x{cols}", q.rows, q.cols))),
         };
@@ -498,9 +590,22 @@ impl Model {
         chk("layers", w.layers.len(), spec.layers as usize)?;
         for (i, l) in w.layers.iter().enumerate() {
             let gate = if spec.gated_mlp { ff } else { 0 };
-            for (n, wt, rows, cols) in [("wq", &l.wq, qd, h), ("wk", &l.wk, kd, h), ("wv", &l.wv, kd, h), ("wo", &l.wo, h, qd),
-                ("w_gate", &l.w_gate, gate, h), ("w_up", &l.w_up, ff, h), ("w_down", &l.w_down, h, ff)] {
+            for (n, wt, rows, cols) in [("wq", &l.wq, qd, h), ("wk", &l.wk, kd, h), ("wv", &l.wv, kd, h), ("wo", &l.wo, h, qd)] {
                 chk_w(&format!("layer {i} {n}"), wt, rows, cols)?;
+            }
+            if let Some(m) = &l.moe {
+                let bad = |what: String| ModelError::Experts(format!("layer {i}: {what}"));
+                if w.experts.is_none() { return Err(bad("the model has no expert provider".into())); }
+                if m.hidden != h { return Err(bad(format!("router expects hidden {}, the model has {h}", m.hidden))); }
+                if m.layer != i { return Err(bad(format!("the block was built for layer {}", m.layer))); }
+                if !spec.gated_mlp { return Err(bad("experts are gated MLPs, the architecture's MLP is not".into())); }
+                let rc = m.router.config();
+                if spec.experts > 0 && rc.experts as u64 != spec.experts { return Err(bad(format!("router has {} experts, the architecture {}", rc.experts, spec.experts))); }
+                for s in &m.shared { s.validate(h, s.ffn(h)).map_err(|e| bad(e.to_string()))?; }
+            } else {
+                for (n, wt, rows, cols) in [("w_gate", &l.w_gate, gate, h), ("w_up", &l.w_up, ff, h), ("w_down", &l.w_down, h, ff)] {
+                    chk_w(&format!("layer {i} {n}"), wt, rows, cols)?;
+                }
             }
             chk(&format!("layer {i} attn_norm"), l.attn_norm.len(), h)?;
             chk(&format!("layer {i} ffn_norm"), l.ffn_norm.len(), h)?;
@@ -515,7 +620,7 @@ impl Model {
         if spec.norm == NormKind::Layer { chk_opt("final_norm bias", &w.final_norm_b, h, true)?; }
         let rope_global = rope_inv_freq(spec.rope_theta, rd, spec.rope_scaling);
         let rope_local = if spec.rope_theta_local > 0.0 { rope_inv_freq(spec.rope_theta_local, rd, RopeScaling::None) } else { rope_global.clone() };
-        Ok(Model { spec, w, rope_global, rope_local })
+        Ok(Model { spec, w, rope_global, rope_local, threads: 0, accel: None })
     }
 
     /// Bytes taken by the big weight matrices as stored (a memory-mapped model counts its file size).
@@ -524,12 +629,19 @@ impl Model {
     pub fn new_state(&self) -> State { self.new_state_with(KvKind::F32) }
     /// State with the chosen KV precision. Sliding-window layers keep a ring of `sliding_window` positions.
     pub fn new_state_with(&self, kind: KvKind) -> State {
+        let (kvh, hd) = (self.spec.kv_heads as usize, self.spec.head_dim as usize);
         let kv = (0..self.spec.layers as usize).map(|i| LayerKv {
             k: Plane::new(kind), v: Plane::new(kind),
             cap: if self.spec.is_sliding(i) { self.spec.sliding_window as usize } else { 0 },
+            kd: kvh * hd, kvh,
         }).collect();
-        State { kv, pos: 0, sc: Scratch::default() }
+        State { kv, pos: 0, sc: Scratch::default(), moe_last: vec![vec![]; self.spec.layers as usize], ..Default::default() }
     }
+
+    /// Limit the threads used for the heavy products (`0` = every thread of the global pool).
+    pub fn set_threads(&mut self, n: usize) { self.threads = n; }
+    /// The thread limit in force (`0` = unlimited).
+    pub fn threads(&self) -> usize { self.threads }
 
     /// Feed one token, return the logits for the next one.
     pub fn forward(&self, st: &mut State, token: usize) -> Result<Vec<f32>, ModelError> { self.forward_batch(st, &[token]) }
@@ -542,38 +654,192 @@ impl Model {
         if let Some(&t) = tokens.iter().find(|&&t| t >= s.vocab as usize) { return Err(ModelError::Token(t)); }
         if st.kv.len() != s.layers as usize { return Err(ModelError::Shape("the state was not made by new_state".into())); }
         if st.pos + tokens.len() > s.context as usize { return Err(ModelError::ContextFull(s.context as usize)); }
+        if let Some(a) = &self.accel {
+            if st.dev.as_ref().is_some_and(|d| d.owner != a.id) { return Err(ModelError::Backend("the state belongs to another backend".into())); }
+            if st.pos + tokens.len() > a.kv_capacity { return Err(ModelError::ContextFull(a.kv_capacity)); }
+            if st.dev.is_none() {
+                if st.pos > 0 { return Err(ModelError::Backend("this state already holds a host-side cache; make it with the model that owns the backend".into())); }
+                st.dev = Some(self.new_dev_state(a)?);
+            }
+        }
         let chunks = tokens.len().div_ceil(PREFILL_CHUNK);
         let mut last = vec![];
-        for (i, c) in tokens.chunks(PREFILL_CHUNK).enumerate() { last = self.run_chunk(st, c, i + 1 == chunks)?; }
+        st.last = None;
+        for (i, c) in tokens.chunks(PREFILL_CHUNK).enumerate() {
+            last = self.run_chunk(st, c, i + 1 == chunks)?;
+            st.tokens.extend_from_slice(c);
+        }
         Ok(last)
     }
 
+    /// Like [`Model::forward_batch`] for a whole prompt, but keeps what `st` already knows: the
+    /// longest common prefix of `tokens` and the tokens the state has consumed is not recomputed
+    /// (a chat server calls this with the full conversation every turn). The state is rewound when
+    /// it is ahead of the prefix; if it cannot be (a wrapped sliding-window ring) it starts over.
+    /// Always feeds at least the last token unless its logits are still cached. See [`State::reused`].
+    pub fn prefill_cached(&self, st: &mut State, tokens: &[usize]) -> Result<Vec<f32>, ModelError> {
+        if tokens.is_empty() { return Err(ModelError::NoTokens); }
+        if st.tokens.len() != st.pos { st.reset(); }
+        let common = st.reusable_prefix(tokens);
+        if common == tokens.len() && st.pos == common
+            && let Some(l) = &st.last
+        {
+            st.reused = common;
+            return Ok(l.clone());
+        }
+        let mut keep = common.min(tokens.len() - 1);
+        if st.pos > keep || st.is_compacted() {
+            if st.can_truncate(keep) { st.truncate(keep)?; st.rebase_to_prefix(); } else { st.reset(); keep = 0; }
+        }
+        st.reused = keep;
+        let logits = self.forward_batch(st, &tokens[keep..])?;
+        st.last = Some(logits.clone());
+        Ok(logits)
+    }
+
     fn run_chunk(&self, st: &mut State, tokens: &[usize], want_logits: bool) -> Result<Vec<f32>, ModelError> {
+        let (h, b, pos0) = (self.spec.hidden as usize, tokens.len(), st.pos);
+        let mut x = std::mem::take(&mut st.sc.x);
+        fit(&mut x, b * h);
+        let r = self.embed_rows(tokens, &mut x, &mut st.sc.rowtmp)
+            .and_then(|()| self.layers_core(st, 0..self.w.layers.len(), &mut x, b, pos0));
+        if let Err(e) = r { st.sc.x = x; return Err(e); }
+        st.pos += b;
+        let out = if want_logits { Ok(self.logits_from_hidden_inner(&x[(b - 1) * h..b * h])?) } else { Ok(vec![]) };
+        st.sc.x = x;
+        out
+    }
+
+    fn embed_rows(&self, tokens: &[usize], x: &mut [f32], rowtmp: &mut Vec<f32>) -> Result<(), ModelError> {
         let s = &self.spec;
-        let (h, hd, nh, nkv) = (s.hidden as usize, s.head_dim as usize, s.heads as usize, s.kv_heads as usize);
-        let (qd, kd, ff, b) = (nh * hd, nkv * hd, s.ffn as usize, tokens.len());
-        let (group, pos0) = (nh / nkv, st.pos);
-        let scale = if s.attn_scale > 0.0 { s.attn_scale as f32 } else { 1.0 / (hd as f32).sqrt() };
-        let half = self.rope_global.0.len();
-        let State { kv, sc, .. } = st;
-        for (v, n) in [(&mut sc.x, b * h), (&mut sc.xb, b * h), (&mut sc.xm, b * h), (&mut sc.q, b * qd), (&mut sc.k, b * kd), (&mut sc.v, b * kd),
-            (&mut sc.att, b * qd), (&mut sc.proj, b * h), (&mut sc.tmp, h), (&mut sc.g, b * ff), (&mut sc.u, b * ff), (&mut sc.mlp, b * h), (&mut sc.headtmp, hd)] { fit(v, n); }
-        let Scratch { x, xb, xm, q, k, v, att, proj, tmp, g, u, mlp, scores, rowtmp, headtmp, yt } = sc;
-        let (mut cos_g, mut sin_g, mut cos_l, mut sin_l) = (vec![0.0; b * half], vec![0.0; b * half], vec![0.0; b * half], vec![0.0; b * half]);
+        let h = s.hidden as usize;
         for (t, &tok) in tokens.iter().enumerate() {
             let row = &mut x[t * h..(t + 1) * h];
             self.w.embed.row_into(tok, h, row, rowtmp)?;
             if s.embed_scale != 1.0 { row.iter_mut().for_each(|a| *a *= s.embed_scale as f32); }
-            rope_table(pos0 + t, &self.rope_global, &mut cos_g[t * half..(t + 1) * half], &mut sin_g[t * half..(t + 1) * half]);
-            rope_table(pos0 + t, &self.rope_local, &mut cos_l[t * half..(t + 1) * half], &mut sin_l[t * half..(t + 1) * half]);
         }
-        for (li, l) in self.w.layers.iter().enumerate() {
+        Ok(())
+    }
+
+    /// The hidden state of one token before layer 0 (embedding row, scaled as the architecture asks).
+    pub fn embed_token(&self, token: usize) -> Result<Vec<f32>, ModelError> {
+        if token >= self.spec.vocab as usize { return Err(ModelError::Token(token)); }
+        let mut x = vec![0.0; self.spec.hidden as usize];
+        self.embed_rows(&[token], &mut x, &mut Vec::new())?;
+        Ok(x)
+    }
+
+    /// Make `st` usable for `add` more positions (the checks `forward_batch` makes, accelerator included).
+    fn ready(&self, st: &mut State, add: usize) -> Result<(), ModelError> {
+        let s = &self.spec;
+        if st.kv.len() != s.layers as usize { return Err(ModelError::Shape("the state was not made by new_state".into())); }
+        if st.pos + add > s.context as usize { return Err(ModelError::ContextFull(s.context as usize)); }
+        if let Some(a) = &self.accel {
+            if st.dev.as_ref().is_some_and(|d| d.owner != a.id) { return Err(ModelError::Backend("the state belongs to another backend".into())); }
+            if st.pos + add > a.kv_capacity { return Err(ModelError::ContextFull(a.kv_capacity)); }
+            if st.dev.is_none() {
+                if st.pos > 0 { return Err(ModelError::Backend("this state already holds a host-side cache; make it with the model that owns the backend".into())); }
+                st.dev = Some(self.new_dev_state(a)?);
+            }
+        }
+        Ok(())
+    }
+
+    /// Run the layers in `range` over the hidden state `x` (one token, `hidden` values) sitting at
+    /// position `pos`, updating those layers' KV cache. Call it for consecutive ranges covering
+    /// `0..layers` (on one machine or several), then [`Model::finish_token`]. `pos` must equal `st.pos`.
+    pub fn run_layers(&self, st: &mut State, range: std::ops::Range<usize>, x: &mut [f32], pos: usize) -> Result<(), ModelError> {
+        let h = self.spec.hidden as usize;
+        if x.len() != h { return Err(ModelError::Shape(format!("hidden state has {} values, expected {h}", x.len()))); }
+        if range.start > range.end || range.end > self.w.layers.len() { return Err(ModelError::Shape(format!("layer range {range:?} outside 0..{}", self.w.layers.len()))); }
+        if pos != st.pos { return Err(ModelError::Shape(format!("position {pos} but the state is at {}", st.pos))); }
+        self.ready(st, 1)?;
+        self.layers_core(st, range, x, 1, pos)
+    }
+
+    /// [`Model::run_layers`] for `b = x.len() / hidden` consecutive tokens starting at `pos0 == st.pos`
+    /// (one weight read per layer for the whole batch). Close with [`Model::finish_batch`] once every
+    /// layer has seen the batch.
+    pub fn run_layers_batch(&self, st: &mut State, range: std::ops::Range<usize>, x: &mut [f32], pos0: usize) -> Result<(), ModelError> {
+        let h = self.spec.hidden as usize;
+        if x.is_empty() || !x.len().is_multiple_of(h) { return Err(ModelError::Shape(format!("{} hidden values is not a whole number of {h}-wide tokens", x.len()))); }
+        let b = x.len() / h;
+        if range.start > range.end || range.end > self.w.layers.len() { return Err(ModelError::Shape(format!("layer range {range:?} outside 0..{}", self.w.layers.len()))); }
+        if pos0 != st.pos { return Err(ModelError::Shape(format!("position {pos0} but the state is at {}", st.pos))); }
+        self.ready(st, b)?;
+        self.layers_core(st, range, x, b, pos0)
+    }
+
+    /// Close a batch that went through `run_layers_batch` for every layer: advance the position and
+    /// record the tokens (as `forward_batch` does).
+    pub fn finish_batch(&self, st: &mut State, tokens: &[usize]) {
+        st.pos += tokens.len();
+        st.tokens.extend_from_slice(tokens);
+        st.last = None;
+    }
+
+    /// Close a token that went through `run_layers` for every layer: advance the position.
+    pub fn finish_token(&self, st: &mut State) {
+        st.pos += 1;
+        st.last = None;
+    }
+
+    /// Final norm, output head, bias and soft-cap on a hidden state: the logits for the next token.
+    /// Panics never; a malformed `x` (wrong length) yields an empty vector.
+    pub fn logits_from_hidden(&self, x: &[f32]) -> Vec<f32> {
+        self.logits_from_hidden_inner(x).unwrap_or_default()
+    }
+
+    fn logits_from_hidden_inner(&self, last: &[f32]) -> Result<Vec<f32>, ModelError> {
+        let s = &self.spec;
+        let h = s.hidden as usize;
+        if last.len() != h { return Err(ModelError::Shape(format!("hidden state has {} values, expected {h}", last.len()))); }
+        let mut xl = vec![0.0; h];
+        norm(s, last, &self.w.final_norm, self.w.final_norm_b.as_deref(), &mut xl);
+        let head = self.w.lm_head.as_ref().unwrap_or(&self.w.embed);
+        let mut logits = vec![0.0; s.vocab as usize];
+        head.matvec_nt(h, &xl, &mut logits, self.threads)?;
+        add_bias(&mut logits, &self.w.lm_head_b);
+        if s.final_softcap > 0.0 { logits.iter_mut().for_each(|l| *l = softcap(*l, s.final_softcap)); }
+        Ok(logits)
+    }
+
+    /// The layer loop: `b` consecutive tokens starting at `pos0`, hidden states in `x`, layers in `range`.
+    fn layers_core(&self, st: &mut State, range: std::ops::Range<usize>, x: &mut [f32], b: usize, pos0: usize) -> Result<(), ModelError> {
+        let s = &self.spec;
+        let (h, hd, nh, nkv) = (s.hidden as usize, s.head_dim as usize, s.heads as usize, s.kv_heads as usize);
+        let (qd, kd, ff) = (nh * hd, nkv * hd, s.ffn as usize);
+        let (group, nt) = (nh / nkv, self.threads);
+        let scale = if s.attn_scale > 0.0 { s.attn_scale as f32 } else { 1.0 / (hd as f32).sqrt() };
+        let half = self.rope_global.0.len();
+        let gap = st.rope_gap();
+        let State { kv, sc, moe_last, dev, kvx, .. } = st;
+        for (v, n) in [(&mut sc.xb, b * h), (&mut sc.xm, b * h), (&mut sc.q, b * qd), (&mut sc.k, b * kd), (&mut sc.v, b * kd),
+            (&mut sc.att, b * qd), (&mut sc.proj, b * h), (&mut sc.tmp, h), (&mut sc.g, b * ff), (&mut sc.u, b * ff), (&mut sc.mlp, b * h), (&mut sc.headtmp, hd)] { fit(v, n); }
+        let Scratch { xb, xm, q, k, v, att, proj, tmp, g, u, mlp, scores, headtmp, yt, .. } = sc;
+        let (mut cos_g, mut sin_g, mut cos_l, mut sin_l) = (vec![0.0; b * half], vec![0.0; b * half], vec![0.0; b * half], vec![0.0; b * half]);
+        for t in 0..b {
+            rope_table(pos0 + t + gap, &self.rope_global, &mut cos_g[t * half..(t + 1) * half], &mut sin_g[t * half..(t + 1) * half]);
+            rope_table(pos0 + t + gap, &self.rope_local, &mut cos_l[t * half..(t + 1) * half], &mut sin_l[t * half..(t + 1) * half]);
+        }
+        let mut skip_to = 0;
+        for li in range.clone() {
+            let l = &self.w.layers[li];
+            if li < skip_to { continue; }
+            if let Some(a) = self.accel.as_ref().filter(|a| a.layers[li].is_some()) {
+                // a run of consecutive accelerated layers: the hidden state crosses the boundary once each way
+                let end = (li..range.end.min(a.layers.len())).find(|&j| a.layers[j].is_none()).unwrap_or(range.end.min(a.layers.len()));
+                let d = dev.as_mut().ok_or_else(|| ModelError::Backend("no accelerator state".into()))?;
+                self.run_device(a, d, li..end, b, pos0, &mut x[..])?;
+                skip_to = end;
+                continue;
+            }
             let sliding = s.is_sliding(li);
             let (cos, sin) = if sliding && s.rope_theta_local > 0.0 { (&cos_l, &sin_l) } else { (&cos_g, &sin_g) };
             for t in 0..b { norm(s, &x[t * h..(t + 1) * h], &l.attn_norm, l.attn_norm_b.as_deref(), &mut xb[t * h..(t + 1) * h]); }
-            l.wq.matmat(h, xb, b, q, yt)?;
-            l.wk.matmat(h, xb, b, k, yt)?;
-            l.wv.matmat(h, xb, b, v, yt)?;
+            l.wq.matmat_nt(h, xb, b, q, yt, nt)?;
+            l.wk.matmat_nt(h, xb, b, k, yt, nt)?;
+            l.wv.matmat_nt(h, xb, b, v, yt, nt)?;
             for t in 0..b {
                 let (qt, kt) = (&mut q[t * qd..(t + 1) * qd], &mut k[t * kd..(t + 1) * kd]);
                 add_bias(qt, &l.bq); add_bias(kt, &l.bk); add_bias(&mut v[t * kd..(t + 1) * kd], &l.bv);
@@ -594,9 +860,10 @@ impl Model {
                 let first = if sliding { (p + 1).saturating_sub(s.sliding_window as usize) } else { 0 };
                 let n = p + 1 - first;
                 if scores.len() < nh * n { scores.resize(nh * n, 0.0); }
-                attend(lkv, kd, hd, nh, group, first, n, scale, s.attn_softcap, &q[t * qd..(t + 1) * qd], &mut att[t * qd..(t + 1) * qd], &mut scores[..nh * n]);
+                attend(lkv, kd, hd, nh, group, first, n, scale, s.attn_softcap, &q[t * qd..(t + 1) * qd], &mut att[t * qd..(t + 1) * qd], &mut scores[..nh * n], nt);
+                if let (Some(acc), 0) = (kvx.acc.as_mut(), lkv.cap) { acc_add(lkv, &mut acc[li], kd, hd, nh, group, n, scale, s.attn_softcap, &q[t * qd..(t + 1) * qd]); }
             }
-            l.wo.matmat(qd, att, b, proj, yt)?;
+            l.wo.matmat_nt(qd, att, b, proj, yt, nt)?;
             for t in 0..b {
                 let pr = &mut proj[t * h..(t + 1) * h];
                 add_bias(pr, &l.bo);
@@ -606,18 +873,34 @@ impl Model {
                 if !s.parallel_residual { xt.iter_mut().zip(&*pr).for_each(|(a, b)| *a += b); }
                 norm(s, xt, &l.ffn_norm, l.ffn_norm_b.as_deref(), &mut xm[t * h..(t + 1) * h]);
             }
-            l.w_up.matmat(h, xm, b, u, yt)?;
-            for r in u.chunks_mut(ff) { add_bias(r, &l.b_up); }
-            if s.gated_mlp {
-                l.w_gate.matmat(h, xm, b, g, yt)?;
-                for (gr, ur) in g.chunks_mut(ff).zip(u.chunks(ff)) {
-                    add_bias(gr, &l.b_gate);
-                    gr.iter_mut().zip(ur).for_each(|(a, b)| *a = activate(s.act, *a) * b);
+            if let Some(moe) = &l.moe {
+                let ex = self.w.experts.as_ref().ok_or_else(|| ModelError::Experts("no expert provider".into()))?;
+                let routing = moe.route_batch(&xm[..b * h], b).map_err(moe_err)?;
+                if ex.prefetch {
+                    // cheap predictor: the next MoE layer will probably want what the previous token gave it
+                    if let Some(nl) = (li + 1..self.w.layers.len()).find(|&j| self.w.layers[j].moe.is_some())
+                        && !moe_last[nl].is_empty()
+                    {
+                        ex.provider.prefetch(nl, &moe_last[nl]);
+                    }
                 }
+                moe_last[li] = routing.experts();
+                let out = moe.apply(ex.provider.as_ref(), s.act, &xm[..b * h], b, &routing).map_err(moe_err)?;
+                mlp.copy_from_slice(&out);
             } else {
-                g.iter_mut().zip(u.iter()).for_each(|(a, b)| *a = activate(s.act, *b));
+                l.w_up.matmat_nt(h, xm, b, u, yt, nt)?;
+                for r in u.chunks_mut(ff) { add_bias(r, &l.b_up); }
+                if s.gated_mlp {
+                    l.w_gate.matmat_nt(h, xm, b, g, yt, nt)?;
+                    for (gr, ur) in g.chunks_mut(ff).zip(u.chunks(ff)) {
+                        add_bias(gr, &l.b_gate);
+                        gr.iter_mut().zip(ur).for_each(|(a, b)| *a = activate(s.act, *a) * b);
+                    }
+                } else {
+                    g.iter_mut().zip(u.iter()).for_each(|(a, b)| *a = activate(s.act, *b));
+                }
+                l.w_down.matmat_nt(ff, g, b, mlp, yt, nt)?;
             }
-            l.w_down.matmat(ff, g, b, mlp, yt)?;
             for t in 0..b {
                 let m = &mut mlp[t * h..(t + 1) * h];
                 add_bias(m, &l.b_down);
@@ -627,17 +910,7 @@ impl Model {
                 else { xt.iter_mut().zip(&*m).for_each(|(a, b)| *a += b); }
             }
         }
-        st.pos += b;
-        if !want_logits { return Ok(vec![]); }
-        let last = &x[(b - 1) * h..b * h];
-        let xl = &mut xb[..h];
-        norm(s, last, &self.w.final_norm, self.w.final_norm_b.as_deref(), xl);
-        let head = self.w.lm_head.as_ref().unwrap_or(&self.w.embed);
-        let mut logits = vec![0.0; s.vocab as usize];
-        head.matvec(h, xl, &mut logits)?;
-        add_bias(&mut logits, &self.w.lm_head_b);
-        if s.final_softcap > 0.0 { logits.iter_mut().for_each(|l| *l = softcap(*l, s.final_softcap)); }
-        Ok(logits)
+        Ok(())
     }
 
     /// Prefill `prompt`, then sample until a stop token, `max_tokens`, cancellation, a `false` from
@@ -676,6 +949,140 @@ pub struct GenerateStats { pub prompt_tokens: usize, pub generated: usize, pub p
 impl GenerateStats {
     pub fn prefill_tps(&self) -> f64 { if self.prefill_secs > 0.0 { self.prompt_tokens as f64 / self.prefill_secs } else { 0.0 } }
     pub fn decode_tps(&self) -> f64 { if self.decode_secs > 0.0 { self.generated as f64 / self.decode_secs } else { 0.0 } }
+}
+
+// ------------------------------------------------------------------ accelerator layers
+
+static ACCEL_ID: AtomicU64 = AtomicU64::new(1);
+
+/// One decoder layer resident in a [`Backend`]: its weights, uploaded once.
+struct DevLayer {
+    attn_norm: Buf, ffn_norm: Buf,
+    wq: WeightHandle, wk: WeightHandle, wv: WeightHandle, wo: WeightHandle,
+    w_up: WeightHandle, w_gate: WeightHandle, w_down: WeightHandle,
+}
+/// The backend, plus which layers run on it.
+struct Accel { id: u64, be: Arc<dyn Backend>, layers: Vec<Option<DevLayer>>, kv_capacity: usize }
+/// Per-state accelerator data: the layers' KV caches and the working buffers, all backend-side.
+struct DevState {
+    owner: u64, kv: Vec<Option<Kv>>,
+    x: Buf, xb: Buf, xm: Buf, q: Buf, k: Buf, v: Buf, att: Buf, proj: Buf, u: Buf, g: Buf, mlp: Buf,
+}
+
+/// How [`Model::with_backend_opts`] splits the model between the host and a backend.
+#[derive(Clone, Debug)]
+pub struct AccelOptions {
+    /// Offload at most this many leading layers (`None` = as many as fit and are supported).
+    pub max_layers: Option<usize>,
+    /// Positions the backend-side KV cache holds (`0` = `min(context, 4096)`). Longer conversations
+    /// are refused with `ContextFull` rather than silently truncated.
+    pub kv_capacity: usize,
+    /// Bytes of device memory kept free for working buffers and the driver.
+    pub reserve: u64,
+}
+impl Default for AccelOptions { fn default() -> Self { AccelOptions { max_layers: None, kv_capacity: 0, reserve: 256 << 20 } } }
+
+fn be_err(e: impl std::fmt::Display) -> ModelError { ModelError::Backend(e.to_string()) }
+
+impl Model {
+    /// Run the layers a backend can take through it (weights uploaded once, as many layers as fit
+    /// its memory), keeping the rest — and the embedding and output head — on the host kernels.
+    /// Without this call the model uses its built-in CPU path, which is the same arithmetic fused
+    /// for speed; routing the CPU through [`crate::backend::CpuBackend`] works but is slower.
+    pub fn with_backend(self, be: Arc<dyn Backend>) -> Result<Model, ModelError> { self.with_backend_opts(be, AccelOptions::default()) }
+
+    pub fn with_backend_opts(mut self, be: Arc<dyn Backend>, o: AccelOptions) -> Result<Model, ModelError> {
+        let n = self.w.layers.len();
+        let cap = if o.kv_capacity > 0 { o.kv_capacity } else { (self.spec.context as usize).min(4096) };
+        let kd = (self.spec.kv_heads * self.spec.head_dim) as usize;
+        let eligible: Vec<bool> = (0..n).map(|i| self.layer_offloadable(i, be.as_ref())).collect();
+        let per_layer: Vec<u64> = self.w.layers.iter().zip(&eligible).map(|(l, &e)| if e {
+            [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down].iter().map(|w| w.stored_bytes() as u64).sum()
+        } else { 0 }).collect();
+        let by_memory = be.device_memory().map_or(n, |v| crate::backend::offload_plan(&per_layer, (cap * kd * 2 * 4) as u64, 0, v, o.reserve).gpu_layers);
+        let limit = by_memory.min(o.max_layers.unwrap_or(n));
+        let (h, qd, ff) = (self.spec.hidden as usize, (self.spec.heads * self.spec.head_dim) as usize, self.spec.ffn as usize);
+        let up = |w: &Weight, rows: usize, cols: usize| -> Result<WeightHandle, ModelError> {
+            match w {
+                Weight::Dense(v) => be.upload(WeightRef::dense(rows, cols, v)),
+                Weight::Quant(q) => be.upload(WeightRef::quant(q.dtype, q.rows, q.cols, q.bytes.as_slice())),
+            }.map_err(be_err)
+        };
+        let mut layers = Vec::with_capacity(n);
+        for (i, l) in self.w.layers.iter().enumerate() {
+            if i >= limit || !eligible[i] { layers.push(None); continue; }
+            layers.push(Some(DevLayer {
+                attn_norm: be.alloc_from(&l.attn_norm).map_err(be_err)?, ffn_norm: be.alloc_from(&l.ffn_norm).map_err(be_err)?,
+                wq: up(&l.wq, qd, h)?, wk: up(&l.wk, kd, h)?, wv: up(&l.wv, kd, h)?, wo: up(&l.wo, h, qd)?,
+                w_up: up(&l.w_up, ff, h)?, w_gate: up(&l.w_gate, ff, h)?, w_down: up(&l.w_down, h, ff)?,
+            }));
+        }
+        self.accel = Some(Accel { id: ACCEL_ID.fetch_add(1, Ordering::Relaxed), be, layers, kv_capacity: cap });
+        Ok(self)
+    }
+
+    /// Which layers run on the backend (empty without one).
+    pub fn offloaded(&self) -> Vec<bool> { self.accel.as_ref().map_or(vec![], |a| a.layers.iter().map(Option::is_some).collect()) }
+
+    /// Can layer `i` run through the [`Backend`] trait unchanged? Variants the trait does not cover
+    /// (biases, QK-norm, soft-capping, GELU, MoE, parallel residuals, scaled or partial RoPE, Gemma
+    /// norms) keep their layer on the host path.
+    fn layer_offloadable(&self, i: usize, be: &dyn Backend) -> bool {
+        let (s, l) = (&self.spec, &self.w.layers[i]);
+        let rope_ok = (s.is_sliding(i) && s.rope_theta_local > 0.0) || s.rope_scaling == RopeScaling::None;
+        let supported = |w: &Weight| match w { Weight::Dense(_) => be.supports(DType::F32), Weight::Quant(q) => be.supports(q.dtype) };
+        s.norm == NormKind::Rms && !s.norm_offset && s.act == Act::Silu && s.gated_mlp && !s.qk_norm && !s.qkv_bias
+            && !s.post_norms && !s.parallel_residual && s.attn_softcap == 0.0 && s.rotary_dim == s.head_dim && rope_ok
+            && l.moe.is_none() && l.attn_norm_b.is_none() && l.ffn_norm_b.is_none()
+            && [&l.bq, &l.bk, &l.bv, &l.bo, &l.q_norm, &l.k_norm, &l.post_attn_norm, &l.post_ffn_norm, &l.b_gate, &l.b_up, &l.b_down].iter().all(|o| o.is_none())
+            && [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down].iter().all(|w| supported(w))
+    }
+
+    fn new_dev_state(&self, a: &Accel) -> Result<DevState, ModelError> {
+        let s = &self.spec;
+        let (h, hd, kvh) = (s.hidden as usize, s.head_dim as usize, s.kv_heads as usize);
+        let (qd, kd, ff) = ((s.heads * s.head_dim) as usize, kvh * hd, s.ffn as usize);
+        let al = |n: usize| a.be.alloc(n).map_err(be_err);
+        let kv = a.layers.iter().map(|l| l.as_ref().map(|_| a.be.kv_create(kvh, hd, a.kv_capacity).map_err(be_err)).transpose()).collect::<Result<Vec<_>, _>>()?;
+        Ok(DevState { owner: a.id, kv, x: al(h)?, xb: al(h)?, xm: al(h)?, q: al(qd)?, k: al(kd)?, v: al(kd)?, att: al(qd)?, proj: al(h)?, u: al(ff)?, g: al(ff)?, mlp: al(h)? })
+    }
+
+    /// Run layers `range` (all accelerated) over `b` tokens, token by token: the layers' state is
+    /// per position, so the result equals the layer-by-layer order used on the host.
+    fn run_device(&self, a: &Accel, d: &mut DevState, range: std::ops::Range<usize>, b: usize, pos0: usize, x: &mut [f32]) -> Result<(), ModelError> {
+        let s = &self.spec;
+        let (h, hd, nh, nkv) = (s.hidden as usize, s.head_dim as usize, s.heads as usize, s.kv_heads as usize);
+        let scale = if s.attn_scale > 0.0 { s.attn_scale as f32 } else { 1.0 / (hd as f32).sqrt() };
+        let (be, eps) = (a.be.as_ref(), s.norm_eps as f32);
+        for t in 0..b {
+            let p = pos0 + t;
+            be.write(&d.x, &x[t * h..(t + 1) * h]).map_err(be_err)?;
+            for li in range.clone() {
+                let (dl, kv) = match (&a.layers[li], &d.kv[li]) { (Some(dl), Some(kv)) => (dl, kv), _ => return Err(ModelError::Backend(format!("layer {li} is not on the backend"))) };
+                let sliding = s.is_sliding(li);
+                let theta = if sliding && s.rope_theta_local > 0.0 { s.rope_theta_local } else { s.rope_theta };
+                be.rmsnorm(&d.x, &dl.attn_norm, eps, &d.xb).map_err(be_err)?;
+                be.matvec(&dl.wq, &d.xb, &d.q).map_err(be_err)?;
+                be.matvec(&dl.wk, &d.xb, &d.k).map_err(be_err)?;
+                be.matvec(&dl.wv, &d.xb, &d.v).map_err(be_err)?;
+                be.rope(&d.q, nh, hd, p, theta).map_err(be_err)?;
+                be.rope(&d.k, nkv, hd, p, theta).map_err(be_err)?;
+                be.kv_append(kv, p, &d.k, &d.v).map_err(be_err)?;
+                let window = sliding.then_some(s.sliding_window as usize);
+                be.attention(kv, &d.q, &d.att, &AttnArgs { n_heads: nh, n_pos: p + 1, scale, window }).map_err(be_err)?;
+                be.matvec(&dl.wo, &d.att, &d.proj).map_err(be_err)?;
+                be.add(&d.x, &d.proj).map_err(be_err)?;
+                be.rmsnorm(&d.x, &dl.ffn_norm, eps, &d.xm).map_err(be_err)?;
+                be.matvec(&dl.w_up, &d.xm, &d.u).map_err(be_err)?;
+                be.matvec(&dl.w_gate, &d.xm, &d.g).map_err(be_err)?;
+                be.silu_mul(&d.g, &d.u).map_err(be_err)?;
+                be.matvec(&dl.w_down, &d.g, &d.mlp).map_err(be_err)?;
+                be.add(&d.x, &d.mlp).map_err(be_err)?;
+            }
+            be.read(&d.x, &mut x[t * h..(t + 1) * h]).map_err(be_err)?;
+        }
+        Ok(())
+    }
 }
 
 /// Token sampling. `temperature <= 0` is greedy. Optional top-k, top-p (nucleus) and a repetition
@@ -721,7 +1128,7 @@ impl Sampler {
         if self.top_k > 0 && self.top_k < cand.len() { cand.select_nth_unstable_by(self.top_k - 1, desc); cand.truncate(self.top_k); }
         if self.top_p < 1.0 { cand.sort_by(desc); }
         let m = cand.iter().map(|c| c.1).fold(f32::NEG_INFINITY, f32::max);
-        let mut probs: Vec<f32> = cand.iter().map(|c| (c.1 - m).exp()).collect();
+        let mut probs: Vec<f32> = cand.iter().map(|c| crate::simd::rmath::exp(c.1 - m)).collect();
         let mut total: f32 = probs.iter().sum();
         if !total.is_finite() || total <= 0.0 { return argmax(); }
         if self.top_p < 1.0 {
@@ -737,15 +1144,232 @@ impl Sampler {
     }
 }
 
+// ------------------------------------------------------------------ KV-cache surgery
+// Everything in this block serves kvpolicy.rs (eviction) and snapshot.rs (save / restore).
+// The rest of this file only reads `kvx.gap`, calls `acc_add` after attention, and keeps
+// `kvx` in step when a state is rewound.
+
+/// What eviction adds to a [`State`]. After the cache is compacted, slot `i` no longer holds the
+/// token at RoPE position `i`: `abs[i]` does (empty = every slot sits at its own position), and the
+/// next token is rotated at `pos + gap`, so its distance to every kept key is the original one.
+#[derive(Clone, Default)]
+pub(crate) struct KvExtra {
+    abs: Vec<usize>,
+    gap: usize,
+    /// Per layer: attention probability each slot has received, summed over heads and queries
+    /// (`None` = not tracked). Only layers that keep every position are tracked.
+    acc: Option<Vec<Vec<f32>>>,
+}
+impl KvExtra {
+    fn identity_prefix(&self, n: usize) -> bool { self.abs.is_empty() || self.abs.iter().take(n).enumerate().all(|(i, &a)| a == i) }
+    fn after_truncate(&mut self, pos: usize) {
+        // reachable only for an identity prefix (or an emptied state): positions are plain again
+        self.abs.clear();
+        self.gap = 0;
+        if let Some(a) = &mut self.acc { for v in a.iter_mut() { v.truncate(pos); } }
+    }
+}
+
+/// Add this query's attention probabilities (every head) to the per-slot accumulator.
+#[allow(clippy::too_many_arguments)]
+fn acc_add(kv: &LayerKv, acc: &mut Vec<f32>, kd: usize, hd: usize, nh: usize, group: usize, n: usize, scale: f32, cap: f64, q: &[f32]) {
+    if acc.len() < n { acc.resize(n, 0.0); }
+    let mut sc = vec![0f32; n];
+    for h in 0..nh {
+        let (kvh, qh) = (h / group, &q[h * hd..(h + 1) * hd]);
+        for (i, s) in sc.iter_mut().enumerate() { *s = softcap(kv.k.dot(i, kd, hd, kvh, qh) * scale, cap); }
+        softmax(&mut sc);
+        for (a, p) in acc.iter_mut().zip(&sc) { *a += p; }
+    }
+}
+
+/// Raw cache contents, borrowed (for writing a snapshot).
+pub(crate) enum PlaneRef<'a> { F32(&'a [f32]), F16(&'a [u16]), Q8 { q: &'a [i8], s: &'a [f32] } }
+/// Raw cache contents, owned (read back from a snapshot).
+pub(crate) enum PlaneData { F32(Vec<f32>), F16(Vec<u16>), Q8 { q: Vec<i8>, s: Vec<f32> } }
+pub(crate) struct LayerView<'a> { pub cap: usize, pub kd: usize, pub kvh: usize, pub k: PlaneRef<'a>, pub v: PlaneRef<'a> }
+
+impl Plane {
+    fn view(&self) -> PlaneRef<'_> {
+        match self { Plane::F32(v) => PlaneRef::F32(v), Plane::F16(v) => PlaneRef::F16(v), Plane::Q8 { q, s } => PlaneRef::Q8 { q, s } }
+    }
+    fn same_kind(&self, d: &PlaneData) -> bool {
+        matches!((self, d), (Plane::F32(_), PlaneData::F32(_)) | (Plane::F16(_), PlaneData::F16(_)) | (Plane::Q8 { .. }, PlaneData::Q8 { .. }))
+    }
+    fn from_data(d: PlaneData) -> Plane {
+        match d { PlaneData::F32(v) => Plane::F32(v), PlaneData::F16(v) => Plane::F16(v), PlaneData::Q8 { q, s } => Plane::Q8 { q, s } }
+    }
+    /// Whole slots held.
+    fn slots(&self, kd: usize, kvh: usize) -> usize {
+        match self { Plane::F32(v) => v.len() / kd.max(1), Plane::F16(v) => v.len() / kd.max(1), Plane::Q8 { q, s } => (q.len() / kd.max(1)).min(s.len() / kvh.max(1)) }
+    }
+    /// New plane whose slot `d` is a bit-exact copy of slot `src[d]` (quantised values are copied, never re-encoded).
+    fn gather(&self, src: &[usize], kd: usize, kvh: usize) -> Plane {
+        match self {
+            Plane::F32(v) => Plane::F32(src.iter().flat_map(|&s| v[s * kd..(s + 1) * kd].iter().copied()).collect()),
+            Plane::F16(v) => Plane::F16(src.iter().flat_map(|&s| v[s * kd..(s + 1) * kd].iter().copied()).collect()),
+            Plane::Q8 { q, s } => Plane::Q8 {
+                q: src.iter().flat_map(|&i| q[i * kd..(i + 1) * kd].iter().copied()).collect(),
+                s: src.iter().flat_map(|&i| s[i * kvh..(i + 1) * kvh].iter().copied()).collect(),
+            },
+        }
+    }
+}
+
+impl State {
+    /// Precision of the cache.
+    pub fn kv_kind(&self) -> KvKind {
+        match self.kv.first().map(|l| &l.k) { Some(Plane::F16(_)) => KvKind::F16, Some(Plane::Q8 { .. }) => KvKind::Q8, _ => KvKind::F32 }
+    }
+    /// Number of layers the cache has.
+    pub fn layer_count(&self) -> usize { self.kv.len() }
+    /// Ring capacity of each layer (`0` = the layer keeps every position).
+    pub fn ring_caps(&self) -> Vec<usize> { self.kv.iter().map(|l| l.cap).collect() }
+    /// How far the RoPE position of the next token is ahead of `pos` (non-zero after eviction).
+    pub fn rope_gap(&self) -> usize { self.kvx.gap }
+    /// RoPE position the next token will get.
+    pub fn rope_pos(&self) -> usize { self.pos + self.kvx.gap }
+    /// RoPE position of the token held in slot `i`.
+    pub fn abs_pos(&self, i: usize) -> usize { self.kvx.abs.get(i).copied().unwrap_or(i) }
+    /// Has eviction run (slots no longer sit at their own RoPE position)?
+    pub fn is_compacted(&self) -> bool { !self.kvx.abs.is_empty() || self.kvx.gap != 0 }
+    /// Start or stop accumulating the attention each slot receives (the signal H2O and SnapKV need).
+    /// Off by default; when off the decoder does no extra work. Turning it on starts from zero.
+    pub fn track_scores(&mut self, on: bool) {
+        self.kvx.acc = on.then(|| vec![vec![]; self.kv.len()]);
+    }
+    pub fn tracks_scores(&self) -> bool { self.kvx.acc.is_some() }
+    /// Forget the accumulated scores but keep tracking (SnapKV: count only the last window of queries).
+    pub fn clear_scores(&mut self) { if let Some(a) = &mut self.kvx.acc { a.iter_mut().for_each(Vec::clear); } }
+    /// Accumulated attention per slot for `layer`; `None` when not tracked or the layer is a ring.
+    pub fn layer_scores(&self, layer: usize) -> Option<&[f32]> {
+        if self.kv.get(layer)?.cap != 0 { return None; }
+        self.kvx.acc.as_ref()?.get(layer).map(Vec::as_slice)
+    }
+    fn rebase_to_prefix(&mut self) { if self.kvx.identity_prefix(self.pos) { self.kvx.abs.clear(); self.kvx.gap = 0; } }
+    /// Leading tokens of `tokens` whose cached slots are valid for them: equal tokens at their own position.
+    fn reusable_prefix(&self, tokens: &[usize]) -> usize {
+        let id = self.kvx.abs.is_empty();
+        self.tokens.iter().zip(tokens).enumerate().take_while(|&(i, (a, b))| a == b && (id || self.kvx.abs.get(i) == Some(&i))).count()
+    }
+    fn held_slots(&self, l: &LayerKv) -> usize { if l.cap > 0 { self.pos.min(l.cap) } else { self.pos } }
+
+    /// Keep only the slots in `keep` (strictly increasing, all `< pos`), in every precision and in
+    /// sliding-window rings. Keys stay as stored (already rotated for their original position); the
+    /// next token is rotated at the original next position (`rope_gap`), so query–key distances are
+    /// exactly what they were. Keeping everything changes nothing. A sliding-window layer can only
+    /// keep what its ring still holds, and its last `ring` slots must be the last positions.
+    pub fn compact(&mut self, keep: &[usize]) -> Result<(), ModelError> {
+        let bad = |m: String| ModelError::Shape(format!("cannot compact the cache: {m}"));
+        if self.dev.is_some() { return Err(ModelError::Backend("a state with an accelerator-side cache cannot be compacted".into())); }
+        let (n, m) = (self.pos, keep.len());
+        if m == 0 || m > n { return Err(bad(format!("{m} slots to keep out of {n}"))); }
+        if keep.windows(2).any(|w| w[0] >= w[1]) || keep[m - 1] >= n { return Err(bad("the slots must be increasing and inside the cache".into())); }
+        if self.tokens.len() != n { return Err(bad("the token history is out of step with the cache".into())); }
+        if m == n { return Ok(()); }
+        for l in &self.kv {
+            let (kd, kvh) = (l.kd, l.kvh);
+            if l.k.slots(kd, kvh) < self.held_slots(l) || l.v.slots(kd, kvh) < self.held_slots(l) { return Err(bad("a layer holds fewer slots than the position counter".into())); }
+            if l.cap > 0 && keep[m.saturating_sub(l.cap)..].iter().any(|&p| p < n.saturating_sub(l.cap)) {
+                return Err(bad(format!("a sliding-window layer of {} slots no longer holds the position asked for", l.cap)));
+            }
+        }
+        let next_abs = n + self.kvx.gap;
+        let new_abs: Vec<usize> = keep.iter().map(|&i| self.abs_pos(i)).collect();
+        for l in &mut self.kv {
+            let (kd, kvh, cap) = (l.kd, l.kvh, l.cap);
+            let src: Vec<usize> = if cap == 0 { keep.to_vec() } else {
+                // rebuild the ring so that slot `j % cap` holds the j-th kept token
+                let start = m.saturating_sub(cap);
+                (0..m.min(cap)).map(|d| keep[if m <= cap { d } else { start + (d + cap - start % cap) % cap }] % cap).collect()
+            };
+            l.k = l.k.gather(&src, kd, kvh);
+            l.v = l.v.gather(&src, kd, kvh);
+        }
+        if let Some(acc) = &mut self.kvx.acc {
+            for (a, l) in acc.iter_mut().zip(&self.kv) {
+                if l.cap == 0 { *a = keep.iter().map(|&i| a.get(i).copied().unwrap_or(0.0)).collect(); } else { a.clear(); }
+            }
+        }
+        self.tokens = keep.iter().map(|&i| self.tokens[i]).collect();
+        self.kvx.gap = next_abs - m;
+        self.kvx.abs = if new_abs.iter().enumerate().all(|(i, &a)| a == i) { vec![] } else { new_abs };
+        self.pos = m;
+        self.last = None;
+        self.reused = 0;
+        Ok(())
+    }
+
+    pub(crate) fn kv_views(&self) -> Vec<LayerView<'_>> {
+        self.kv.iter().map(|l| LayerView { cap: l.cap, kd: l.kd, kvh: l.kvh, k: l.k.view(), v: l.v.view() }).collect()
+    }
+    /// The eviction bookkeeping: RoPE position of each slot (empty = identity) and the gap.
+    pub(crate) fn kvx_parts(&self) -> (&[usize], usize) { (&self.kvx.abs, self.kvx.gap) }
+    /// Fill a freshly made state (`Model::new_state_with`) from snapshot contents, checking every size.
+    pub(crate) fn restore_raw(&mut self, pos: usize, tokens: Vec<usize>, abs: Vec<usize>, gap: usize, planes: Vec<(PlaneData, PlaneData)>) -> Result<(), ModelError> {
+        let bad = |m: &str| ModelError::Shape(format!("snapshot: {m}"));
+        if self.dev.is_some() || self.pos != 0 || !self.tokens.is_empty() { return Err(bad("it can only be restored into a fresh state")); }
+        if planes.len() != self.kv.len() { return Err(bad("the layer count differs")); }
+        if tokens.len() != pos { return Err(bad("the token history does not match the position")); }
+        if !abs.is_empty() && (abs.len() != pos || abs.windows(2).any(|w| w[0] >= w[1])) { return Err(bad("the position table is malformed")); }
+        if abs.last().is_some_and(|&a| a >= pos.saturating_add(gap)) { return Err(bad("the position gap is inconsistent")); }
+        for (l, (k, v)) in self.kv.iter().zip(&planes) {
+            let slots = if l.cap > 0 { pos.min(l.cap) } else { pos };
+            if !l.k.same_kind(k) || !l.v.same_kind(v) { return Err(bad("the cache precision differs")); }
+            let len = |d: &PlaneData| match d {
+                PlaneData::F32(x) => (x.len(), x.len()),
+                PlaneData::F16(x) => (x.len(), x.len()),
+                PlaneData::Q8 { q, s } => (q.len(), s.len() * l.kd / l.kvh.max(1)),
+            };
+            for d in [k, v] { let (a, b) = len(d); if a != slots * l.kd || b != slots * l.kd { return Err(bad("a layer holds the wrong number of values")); } }
+        }
+        for (l, (k, v)) in self.kv.iter_mut().zip(planes) { l.k = Plane::from_data(k); l.v = Plane::from_data(v); }
+        self.pos = pos;
+        self.tokens = tokens;
+        self.kvx.abs = abs;
+        self.kvx.gap = gap;
+        self.last = None;
+        Ok(())
+    }
+}
+
+impl Model {
+    /// Identifies the model a cache or snapshot belongs to: SHA-256 over the architecture and the
+    /// size, storage type and (for experts) shape of every tensor. Different weights of identical
+    /// shape are not told apart; that would mean reading the whole model.
+    pub fn fingerprint(&self) -> [u8; 32] {
+        let mut h = crate::hub::Sha256::new();
+        let mut put = |b: &[u8]| { h.update(&(b.len() as u64).to_le_bytes()); h.update(b); };
+        put(b"colibri-engine-model-v1");
+        put(format!("{:?}", self.spec).as_bytes());
+        let w = |wt: &Weight| -> Vec<u8> {
+            let tag = match wt { Weight::Dense(_) => format!("dense:{}", wt.len()), Weight::Quant(q) => format!("{:?}:{}x{}", q.dtype, q.rows, q.cols) };
+            format!("{tag}:{}", wt.stored_bytes()).into_bytes()
+        };
+        put(&w(&self.w.embed));
+        if let Some(l) = &self.w.lm_head { put(&w(l)); }
+        put(&(self.w.final_norm.len() as u64).to_le_bytes());
+        for (i, l) in self.w.layers.iter().enumerate() {
+            put(&(i as u64).to_le_bytes());
+            for t in [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down] { put(&w(t)); }
+            if let Some(m) = &l.moe {
+                let c = m.router.config();
+                put(format!("moe:{}:{}:{}:{}", c.experts, c.top_k, m.shared.len(), m.stored_bytes()).as_bytes());
+            }
+        }
+        h.finish()
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
 
-    fn rng(seed: &mut u64) -> f32 {
+    pub(crate) fn rng(seed: &mut u64) -> f32 {
         *seed ^= *seed << 13; *seed ^= *seed >> 7; *seed ^= *seed << 17;
         ((*seed >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.6
     }
-    fn mat(n: usize, s: &mut u64) -> Vec<f32> { (0..n).map(|_| rng(s)).collect() }
+    pub(crate) fn mat(n: usize, s: &mut u64) -> Vec<f32> { (0..n).map(|_| rng(s)).collect() }
     fn ones(n: usize, s: &mut u64) -> Vec<f32> { (0..n).map(|_| 1.0 + rng(s) * 0.2).collect() }
     fn some(on: bool, n: usize, s: &mut u64) -> Option<Vec<f32>> { on.then(|| mat(n, s)) }
 
@@ -771,16 +1395,16 @@ pub(crate) mod tests {
             post_attn_norm: some(spec.post_norms, h, &mut s), ffn_norm: ones(h, &mut s), ffn_norm_b: some(ln, h, &mut s),
             w_gate: if spec.gated_mlp { mat(ff * h, &mut s) } else { vec![] }.into(), b_gate: some(extras && spec.gated_mlp, ff, &mut s),
             w_up: mat(ff * h, &mut s).into(), b_up: some(extras, ff, &mut s), w_down: mat(h * ff, &mut s).into(), b_down: some(extras, h, &mut s),
-            post_ffn_norm: some(spec.post_norms, h, &mut s),
+            post_ffn_norm: some(spec.post_norms, h, &mut s), ..Default::default()
         }).collect();
         Weights { embed: mat(v * h, &mut s).into(), layers, final_norm: ones(h, &mut s), final_norm_b: some(ln, h, &mut s),
-            lm_head: if spec.tied_embeddings { None } else { Some(mat(v * h, &mut s).into()) }, lm_head_b: some(extras && !spec.tied_embeddings, v, &mut s) }
+            lm_head: if spec.tied_embeddings { None } else { Some(mat(v * h, &mut s).into()) }, lm_head_b: some(extras && !spec.tied_embeddings, v, &mut s), experts: None }
     }
     pub fn model_of(spec: Spec, extras: bool) -> Model { let w = random_weights(&spec, 0x9e37_79b9_7f4a_7c15, extras); Model::new(spec, w).unwrap() }
     pub fn tiny(heads: u64, kv: u64, tied: bool) -> Model { model_of(base_spec(heads, kv, tied), false) }
 
     /// Independent reference: recompute every position from scratch, no cache, straightforward loops.
-    fn reference_logits(m: &Model, tokens: &[usize]) -> Vec<f32> {
+    pub(crate) fn reference_logits(m: &Model, tokens: &[usize]) -> Vec<f32> {
         let s = &m.spec;
         let (h, hd, nh, nkv, ff) = (s.hidden as usize, s.head_dim as usize, s.heads as usize, s.kv_heads as usize, s.ffn as usize);
         let sc = if s.attn_scale > 0.0 { s.attn_scale as f32 } else { 1.0 / (hd as f32).sqrt() };
@@ -814,7 +1438,7 @@ pub(crate) mod tests {
                     let lo = if s.is_sliding(li) { (p + 1).saturating_sub(s.sliding_window as usize) } else { 0 };
                     let mut sco: Vec<f32> = (lo..=p).map(|t| {
                         let d: f32 = (0..hd).map(|d| qs[p][head * hd + d] * ks[t][kvh * hd + d]).sum::<f32>() * sc;
-                        if s.attn_softcap > 0.0 { s.attn_softcap as f32 * (d / s.attn_softcap as f32).tanh() } else { d }
+                        if s.attn_softcap > 0.0 { s.attn_softcap as f32 * crate::simd::rmath::tanh(d / s.attn_softcap as f32) } else { d }
                     }).collect();
                     softmax(&mut sco);
                     for d in 0..hd { att[head * hd + d] = (lo..=p).map(|t| sco[t - lo] * vs[t][kvh * hd + d]).sum(); }
@@ -823,12 +1447,14 @@ pub(crate) mod tests {
                 if let Some(pn) = &l.post_attn_norm { o = nm(&o, pn, None); }
                 let resid_after_attn: Vec<f32> = xs[p].iter().zip(&o).map(|(a, b)| a + b).collect();
                 let mlp_in = nm(if s.parallel_residual { &xs[p] } else { &resid_after_attn }, &l.ffn_norm, l.ffn_norm_b.as_deref());
-                let up = mv(l.w_up.as_dense().unwrap(), h, &mlp_in, &l.b_up);
-                let act: Vec<f32> = if s.gated_mlp {
-                    let gt = mv(l.w_gate.as_dense().unwrap(), h, &mlp_in, &l.b_gate);
-                    (0..ff).map(|i| activate(s.act, gt[i]) * up[i]).collect()
-                } else { up.iter().map(|&u| activate(s.act, u)).collect() };
-                let mut d = mv(l.w_down.as_dense().unwrap(), ff, &act, &l.b_down);
+                let mut d = if l.moe.is_some() { naive_moe(m, li, &mlp_in) } else {
+                    let up = mv(l.w_up.as_dense().unwrap(), h, &mlp_in, &l.b_up);
+                    let act: Vec<f32> = if s.gated_mlp {
+                        let gt = mv(l.w_gate.as_dense().unwrap(), h, &mlp_in, &l.b_gate);
+                        (0..ff).map(|i| activate(s.act, gt[i]) * up[i]).collect()
+                    } else { up.iter().map(|&u| activate(s.act, u)).collect() };
+                    mv(l.w_down.as_dense().unwrap(), ff, &act, &l.b_down)
+                };
                 if let Some(pn) = &l.post_ffn_norm { d = nm(&d, pn, None); }
                 new_xs[p] = if s.parallel_residual { (0..h).map(|i| xs[p][i] + o[i] + d[i]).collect() } else { (0..h).map(|i| resid_after_attn[i] + d[i]).collect() };
             }
@@ -837,9 +1463,45 @@ pub(crate) mod tests {
         let xb = nm(xs.last().unwrap(), &m.w.final_norm, m.w.final_norm_b.as_deref());
         let head = m.w.lm_head.as_ref().unwrap_or(&m.w.embed).as_dense().unwrap();
         let mut out = mv(head, h, &xb, &m.w.lm_head_b);
-        if s.final_softcap > 0.0 { out.iter_mut().for_each(|l| *l = s.final_softcap as f32 * (*l / s.final_softcap as f32).tanh()); }
+        if s.final_softcap > 0.0 { out.iter_mut().for_each(|l| *l = s.final_softcap as f32 * crate::simd::rmath::tanh(*l / s.final_softcap as f32)); }
         out
     }
+    /// Independent mixture-of-experts feed-forward: explicit softmax, sort-based top-k and plain loops,
+    /// sharing nothing with `moe.rs` except the weights it is given.
+    pub(crate) fn naive_moe(m: &Model, li: usize, x: &[f32]) -> Vec<f32> {
+        let s = &m.spec;
+        let (moe, h) = (m.w.layers[li].moe.as_ref().unwrap(), x.len());
+        let (rc, rw) = (moe.router.config(), moe.router.weights());
+        let logits: Vec<f32> = (0..rc.experts).map(|e| (0..h).map(|i| rw[e * h + i] * x[i]).sum()).collect();
+        let mx = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let ex: Vec<f32> = logits.iter().map(|l| crate::simd::rmath::exp(l - mx)).collect();
+        let tot: f32 = ex.iter().sum();
+        let probs: Vec<f32> = ex.iter().map(|v| v / tot).collect();
+        let mut order: Vec<usize> = (0..rc.experts).collect();
+        order.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap().then(a.cmp(&b)));
+        let chosen = &order[..rc.top_k];
+        let norm: f32 = if rc.renormalise { chosen.iter().map(|&e| probs[e]).sum() } else { 1.0 };
+        let ffn = |w: &ExpertWeightsView, x: &[f32]| -> Vec<f32> {
+            let f = w.0.len() / h;
+            let a: Vec<f32> = (0..f).map(|j| activate(s.act, (0..h).map(|i| w.0[j * h + i] * x[i]).sum::<f32>()) * (0..h).map(|i| w.1[j * h + i] * x[i]).sum::<f32>()).collect();
+            (0..h).map(|i| (0..f).map(|j| w.2[i * f + j] * a[j]).sum()).collect()
+        };
+        let mut out = vec![0.0f32; h];
+        let provider = &m.w.experts.as_ref().unwrap().provider;
+        for &e in chosen {
+            let w = provider.expert(li, e).unwrap();
+            let d = ffn(&ExpertWeightsView(w.gate.to_f32(), w.up.to_f32(), w.down.to_f32()), x);
+            let wt = probs[e] / norm * rc.routed_scale;
+            out.iter_mut().zip(&d).for_each(|(o, v)| *o += wt * v);
+        }
+        for sh in &moe.shared {
+            let d = ffn(&ExpertWeightsView(sh.gate.to_f32(), sh.up.to_f32(), sh.down.to_f32()), x);
+            let g = match &moe.shared_gate { Some(g) => 1.0 / (1.0 + crate::simd::rmath::exp(-(0..h).map(|i| g[i] * x[i]).sum::<f32>())), None => 1.0 };
+            out.iter_mut().zip(&d).for_each(|(o, v)| *o += g * v);
+        }
+        out
+    }
+    pub(crate) struct ExpertWeightsView(pub Vec<f32>, pub Vec<f32>, pub Vec<f32>);
     fn rope_naive(c: &mut [&mut f32], pos: usize, (inv, ms): &(Vec<f64>, f64)) {
         let half = inv.len();
         for i in 0..half {
@@ -1372,5 +2034,288 @@ pub(crate) mod tests {
         let big: Vec<f32> = (0..50_000).map(|i| ((i * 7919) % 50_000) as f32).collect();
         let mut s = Sampler::new(1.0, 5, 3);
         for _ in 0..50 { assert!(big[s.sample(&big)] >= 49_995.0); }
+    }
+
+    // ------------------------------------------------------------ accelerator, prefix reuse, threads
+    pub(crate) mod accel_and_prefix {
+        use super::*;
+        use crate::backend::{BackendError, CpuBackend};
+        use crate::moe::{ExpertWeights, InMemoryExperts, MoeBlock, Router, RouterConfig, Scoring};
+        use std::collections::HashMap;
+
+        type R<T> = Result<T, BackendError>;
+        /// An "accelerator" that wraps the CPU backend and counts every call.
+        struct Counting { inner: CpuBackend, calls: Mutex<HashMap<&'static str, usize>>, mem: Option<u64> }
+        impl Counting {
+            fn new(mem: Option<u64>) -> Arc<Counting> { Arc::new(Counting { inner: CpuBackend::new(), calls: Mutex::new(HashMap::new()), mem }) }
+            fn bump(&self, op: &'static str) { *lock(&self.calls).entry(op).or_insert(0) += 1; }
+            fn n(&self, op: &str) -> usize { lock(&self.calls).get(op).copied().unwrap_or(0) }
+        }
+        impl Backend for Counting {
+            fn name(&self) -> String { "counting".into() }
+            fn is_accelerator(&self) -> bool { true }
+            fn device_memory(&self) -> Option<u64> { self.mem }
+            fn supports(&self, t: DType) -> bool { self.inner.supports(t) }
+            fn alloc(&self, len: usize) -> R<Buf> { self.inner.alloc(len) }
+            fn write(&self, dst: &Buf, src: &[f32]) -> R<()> { self.bump("write"); self.inner.write(dst, src) }
+            fn read(&self, src: &Buf, dst: &mut [f32]) -> R<()> { self.bump("read"); self.inner.read(src, dst) }
+            fn upload(&self, w: WeightRef<'_>) -> R<WeightHandle> { self.bump("upload"); self.inner.upload(w) }
+            fn matvec(&self, w: &WeightHandle, x: &Buf, out: &Buf) -> R<()> { self.bump("matvec"); self.inner.matvec(w, x, out) }
+            fn matmat(&self, w: &WeightHandle, x: &Buf, batch: usize, out: &Buf) -> R<()> { self.bump("matmat"); self.inner.matmat(w, x, batch, out) }
+            fn rmsnorm(&self, x: &Buf, weight: &Buf, eps: f32, out: &Buf) -> R<()> { self.bump("rmsnorm"); self.inner.rmsnorm(x, weight, eps, out) }
+            fn rope(&self, x: &Buf, n: usize, hd: usize, pos: usize, theta: f64) -> R<()> { self.bump("rope"); self.inner.rope(x, n, hd, pos, theta) }
+            fn silu_mul(&self, g: &Buf, u: &Buf) -> R<()> { self.bump("silu_mul"); self.inner.silu_mul(g, u) }
+            fn add(&self, a: &Buf, b: &Buf) -> R<()> { self.bump("add"); self.inner.add(a, b) }
+            fn kv_create(&self, kvh: usize, hd: usize, cap: usize) -> R<Kv> { self.bump("kv_create"); self.inner.kv_create(kvh, hd, cap) }
+            fn kv_append(&self, kv: &Kv, pos: usize, k: &Buf, v: &Buf) -> R<()> { self.bump("kv_append"); self.inner.kv_append(kv, pos, k, v) }
+            fn attention(&self, kv: &Kv, q: &Buf, out: &Buf, a: &AttnArgs) -> R<()> { self.bump("attention"); self.inner.attention(kv, q, out, a) }
+        }
+
+        const T8: [usize; 8] = [3, 7, 1, 19, 0, 7, 12, 5];
+        fn twin(m: &Model) -> Model { Model::new(m.spec.clone(), m.w.clone()).unwrap() }
+        fn run_all(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>) {
+            let mut st = m.new_state();
+            let steps = T8.iter().map(|&t| m.forward(&mut st, t).unwrap()).collect();
+            let mut st = m.new_state();
+            (steps, m.forward_batch(&mut st, &T8).unwrap())
+        }
+
+        #[test]
+        fn offloaded_layers_go_through_the_backend_and_results_do_not_change() {
+            let base = tiny(4, 2, false);
+            let (want_steps, want_batch) = run_all(&base);
+            // (offload limit, a layer with a bias that the backend cannot do, expected layers)
+            for (limit, biased, expect) in [(None, None, vec![true, true, true]), (Some(2), None, vec![true, true, false]), (None, Some(1), vec![true, false, true])] {
+                let mut m = twin(&base);
+                if let Some(i) = biased { m.w.layers[i].bq = Some(vec![0.0; 32]); }
+                let be = Counting::new(None);
+                let m = m.with_backend_opts(be.clone(), AccelOptions { max_layers: limit, ..Default::default() }).unwrap();
+                assert_eq!(m.offloaded(), expect);
+                let l = expect.iter().filter(|&&e| e).count();
+                assert_eq!(be.n("upload"), l * 7);
+                let (steps, batch) = run_all(&m);
+                for (i, (a, b)) in steps.iter().zip(&want_steps).enumerate() { assert!(rel_diff(a, b) < 2e-4, "{expect:?} step {i}: {}", rel_diff(a, b)); }
+                assert!(rel_diff(&batch, &want_batch) < 2e-4, "{expect:?} batch");
+                // two passes of 8 tokens (token by token, then as one batch)
+                let t = 2 * T8.len();
+                assert_eq!(be.n("kv_create"), 2 * l, "{expect:?}");
+                assert_eq!(be.n("matvec"), l * 7 * t);
+                assert_eq!(be.n("attention"), l * t);
+                assert_eq!(be.n("kv_append"), l * t);
+                assert_eq!(be.n("rope"), l * 2 * t);
+                assert_eq!(be.n("rmsnorm"), l * 2 * t);
+                assert_eq!(be.n("add"), l * 2 * t);
+                assert_eq!(be.n("silu_mul"), l * t);
+                assert_eq!(be.n("matmat"), 0);
+                // the hidden state crosses the boundary once per token per run of accelerated layers
+                let runs = expect.windows(2).filter(|w| w[1] && !w[0]).count() + usize::from(expect[0]);
+                assert_eq!(be.n("read"), runs * t, "{expect:?}");
+            }
+        }
+
+        #[test]
+        fn device_memory_decides_how_many_layers_fit() {
+            let base = tiny(4, 2, false);
+            let per_layer: u64 = [&base.w.layers[0].wq, &base.w.layers[0].wk, &base.w.layers[0].wv, &base.w.layers[0].wo,
+                &base.w.layers[0].w_gate, &base.w.layers[0].w_up, &base.w.layers[0].w_down].iter().map(|w| w.stored_bytes() as u64).sum();
+            let kv = 32 * 16 * 2 * 4; // context 32, 2 kv heads x 8
+            let m = twin(&base).with_backend_opts(Counting::new(Some(per_layer + kv + per_layer / 2)), AccelOptions { reserve: 0, ..Default::default() }).unwrap();
+            assert_eq!(m.offloaded(), vec![true, false, false]);
+            let m = twin(&base).with_backend_opts(Counting::new(Some(10)), AccelOptions { reserve: 0, ..Default::default() }).unwrap();
+            assert_eq!(m.offloaded(), vec![false, false, false]);
+            // nothing offloaded: identical to the plain model
+            let (a, _) = run_all(&m);
+            let (b, _) = run_all(&base);
+            assert_eq!(a, b);
+        }
+
+        #[test]
+        fn quantised_weights_are_uploaded_as_they_are_and_unsupported_variants_stay_home() {
+            let q = requantise(&model_of(wide_spec(false), false), DType::Q8_0);
+            let be = Counting::new(None);
+            let m = twin(&q).with_backend(be.clone()).unwrap();
+            assert_eq!(m.offloaded(), vec![true, true]);
+            let (a, _) = run_all(&m);
+            let (b, _) = run_all(&q);
+            for (x, y) in a.iter().zip(&b) { assert!(rel_diff(x, y) < 5e-2, "{}", rel_diff(x, y)); }
+            // Gemma-style norms and QK-norm are not in the trait: those layers are never offloaded
+            let mut gem = base_spec(4, 2, true);
+            gem.norm_offset = true; gem.act = Act::GeluTanh; gem.qk_norm = true;
+            let m = model_of(gem, true).with_backend(Counting::new(None)).unwrap();
+            assert_eq!(m.offloaded(), vec![false, false, false]);
+        }
+
+        #[test]
+        fn the_accelerator_cache_has_a_capacity_and_foreign_states_are_refused() {
+            let be = Counting::new(None);
+            let m = twin(&tiny(4, 2, false)).with_backend_opts(be, AccelOptions { kv_capacity: 4, ..Default::default() }).unwrap();
+            let mut st = m.new_state();
+            m.forward_batch(&mut st, &T8[..4]).unwrap();
+            assert_eq!(m.forward(&mut st, 1), Err(ModelError::ContextFull(4)));
+            assert!(st.fork().is_err());
+            let host = tiny(4, 2, false);
+            let mut hs = host.new_state();
+            host.forward(&mut hs, 1).unwrap();
+            assert!(matches!(m.forward(&mut hs, 2), Err(ModelError::Backend(_))));
+        }
+
+        // ------------------------------------------------------------------ prefix reuse
+        const A: [usize; 8] = [3, 7, 1, 19, 0, 7, 12, 5];
+        const B: [usize; 9] = [3, 7, 1, 19, 0, 9, 2, 4, 6]; // shares five tokens with A
+
+        fn fresh(m: &Model, kind: KvKind, toks: &[usize]) -> Vec<f32> { let mut st = m.new_state_with(kind); m.forward_batch(&mut st, toks).unwrap() }
+
+        /// `prefill_cached` must give what a fresh state gives, whatever the state held before.
+        fn check_prefix(name: &str, m: &Model, kind: KvKind, tol: f32, expect_rewind: bool) {
+            let mut st = m.new_state_with(kind);
+            let la = m.prefill_cached(&mut st, &A).unwrap();
+            assert_eq!(st.reused(), 0, "{name}");
+            assert!(rel_diff(&la, &fresh(m, kind, &A)) <= tol, "{name} first");
+            // the same prompt again: everything is reused
+            assert_eq!(m.prefill_cached(&mut st, &A).unwrap(), la, "{name}");
+            assert_eq!(st.reused(), A.len());
+            // a longer prompt that starts with the old one
+            let ext: Vec<usize> = A.iter().copied().chain([4, 8]).collect();
+            let le = m.prefill_cached(&mut st, &ext).unwrap();
+            assert_eq!(st.reused(), A.len(), "{name}");
+            assert!(rel_diff(&le, &fresh(m, kind, &ext)) <= tol, "{name} extend: {}", rel_diff(&le, &fresh(m, kind, &ext)));
+            assert_eq!(st.tokens(), &ext[..]);
+            // a different continuation after five shared tokens
+            let lb = m.prefill_cached(&mut st, &B).unwrap();
+            assert_eq!(st.reused(), if expect_rewind { 5 } else { 0 }, "{name} rewind");
+            assert!(rel_diff(&lb, &fresh(m, kind, &B)) <= tol, "{name} diverge: {}", rel_diff(&lb, &fresh(m, kind, &B)));
+            assert_eq!((st.pos, st.tokens().len()), (B.len(), B.len()));
+            // a shorter prompt that is a prefix of the cached one
+            let ls = m.prefill_cached(&mut st, &B[..6]).unwrap();
+            assert!(rel_diff(&ls, &fresh(m, kind, &B[..6])) <= tol, "{name} shorter");
+            assert_eq!(st.pos, 6);
+            // and decoding goes on normally afterwards
+            let next = m.forward(&mut st, 11).unwrap();
+            let want = { let mut f = m.new_state_with(kind); m.forward_batch(&mut f, &B[..6]).unwrap(); m.forward(&mut f, 11).unwrap() };
+            assert!(rel_diff(&next, &want) <= tol, "{name} continue");
+        }
+
+        #[test]
+        fn cached_prefill_equals_fresh_for_dense_models_and_every_kv_precision() {
+            let m = tiny(4, 2, false);
+            check_prefix("f32", &m, KvKind::F32, 0.0, true);
+            check_prefix("f16", &m, KvKind::F16, 1e-5, true);
+            check_prefix("q8", &m, KvKind::Q8, 1e-5, true);
+            let q = requantise(&model_of(wide_spec(false), false), DType::Q8_0);
+            check_prefix("quantised weights", &q, KvKind::F32, 3e-2, true); // activations are quantised per batch shape
+        }
+
+        #[test]
+        fn cached_prefill_with_sliding_windows_rewinds_only_while_the_ring_has_not_wrapped() {
+            let mk = |window: u64| { let mut sp = base_spec(4, 2, true); sp.sliding_window = window; sp.sliding_layers = vec![true, false, true]; sp.rope_theta_local = 500.0; model_of(sp, false) };
+            check_prefix("window 16", &mk(16), KvKind::F32, 1e-6, true);
+            check_prefix("window 3 (wrapped: starts over)", &mk(3), KvKind::F32, 1e-6, false);
+            let mut st = mk(3).new_state();
+            mk(3).forward_batch(&mut st, &A).unwrap();
+            assert!(!st.can_truncate(5) && st.can_truncate(8));
+            assert!(st.truncate(5).is_err());
+        }
+
+        pub(crate) fn moe_model() -> Model {
+            let (h, n_exp, mf) = (16usize, 4usize, 24usize);
+            let mut sp = crate::arch::Spec::dense("llama", 3, h as u64, 4, 2, 4, 32, 20, 32);
+            sp.experts = n_exp as u64; sp.experts_used = 2; sp.support = crate::arch::Support::Moe; sp.moe_ffn = mf as u64; sp.shared_experts = 1;
+            let mut w = random_weights(&sp, 0x1234_5678_9abc_def1, false);
+            let mut seed = 0x0bad_cafe_f00d_1234_u64;
+            let mut per_layer = vec![];
+            for li in 0..3 {
+                let l = &mut w.layers[li];
+                l.w_gate = Weight::Dense(vec![]); l.w_up = Weight::Dense(vec![]); l.w_down = Weight::Dense(vec![]);
+                let cfg = RouterConfig { hidden: h, experts: n_exp, top_k: 2, scoring: Scoring::Softmax, renormalise: true, routed_scale: 1.0, groups: None, selection_bias: None };
+                let router = Router::new(cfg, mat(n_exp * h, &mut seed)).unwrap();
+                let sh = vec![ExpertWeights::dense(mat(mf * h, &mut seed), mat(mf * h, &mut seed), mat(h * mf, &mut seed))];
+                l.moe = Some(Arc::new(MoeBlock::new(li, router, sh).unwrap()));
+                per_layer.push((0..n_exp).map(|_| ExpertWeights::dense(mat(mf * h, &mut seed), mat(mf * h, &mut seed), mat(h * mf, &mut seed))).collect());
+            }
+            w.experts = Some(Experts { provider: Arc::new(InMemoryExperts::new(per_layer)), prefetch: true });
+            Model::new(sp, w).unwrap()
+        }
+
+        #[test]
+        fn cached_prefill_equals_fresh_for_mixture_of_experts() {
+            check_prefix("moe", &moe_model(), KvKind::F32, 1e-5, true);
+        }
+
+        #[test]
+        fn forked_states_continue_independently_and_truncation_is_checked() {
+            let m = tiny(4, 2, false);
+            let mut st = m.new_state();
+            m.forward_batch(&mut st, &A).unwrap();
+            let mut f = st.fork().unwrap();
+            let want = |extra: usize| { let mut s = m.new_state(); m.forward_batch(&mut s, &A).unwrap(); m.forward(&mut s, extra).unwrap() };
+            assert_eq!(m.forward(&mut f, 4).unwrap(), want(4));
+            assert_eq!(m.forward(&mut st, 9).unwrap(), want(9));
+            assert_eq!((f.pos, st.pos), (9, 9));
+            assert_ne!(f.tokens(), st.tokens());
+            assert!(st.truncate(100).is_err());
+            st.truncate(3).unwrap();
+            assert_eq!((st.pos, st.tokens()), (3, &A[..3]));
+            assert_eq!(m.forward_batch(&mut st, &A[3..]).unwrap(), fresh(&m, KvKind::F32, &A));
+            st.reset();
+            assert_eq!((st.pos, st.kv_bytes(), st.tokens().len()), (0, 0, 0));
+            assert!(m.prefill_cached(&mut st, &[]).is_err());
+        }
+
+        // ---------------------------------------------------------------------- threads
+        #[test]
+        fn thread_limits_and_the_pool_give_identical_numbers() {
+            let (rows, cols) = (1024usize, 512usize);
+            let w: Vec<f32> = (0..rows * cols).map(|i| ((i * 31 % 17) as f32 - 8.0) * 0.01).collect();
+            let wt = Weight::Dense(w);
+            let x: Vec<f32> = (0..cols).map(|i| (i as f32).sin()).collect();
+            let (mut a, mut b) = (vec![0.0; rows], vec![0.0; rows]);
+            wt.matvec_nt(cols, &x, &mut a, 1).unwrap();
+            wt.matvec_nt(cols, &x, &mut b, 0).unwrap();
+            assert_eq!(a, b);
+            let bt = 6;
+            let xs: Vec<f32> = (0..bt * cols).map(|i| ((i * 7) % 13) as f32 - 6.0).collect();
+            let (mut oa, mut ob, mut yt) = (vec![0.0; bt * rows], vec![0.0; bt * rows], vec![]);
+            wt.matmat_nt(cols, &xs, bt, &mut oa, &mut yt, 1).unwrap();
+            wt.matmat_nt(cols, &xs, bt, &mut ob, &mut yt, 0).unwrap();
+            assert_eq!(oa, ob);
+            wt.matmat_nt(cols, &xs, bt, &mut ob, &mut yt, 2).unwrap();
+            assert_eq!(oa, ob);
+            // attention over many heads and positions is large enough to split
+            let (nh, nkv, hd, n) = (16usize, 4usize, 64usize, 600usize);
+            let kd = nkv * hd;
+            let plane = |seed: usize| Plane::F32((0..n * kd).map(|i| (((i + seed) * 2654435761usize % 1000) as f32 - 500.0) / 500.0).collect());
+            let kv = LayerKv { k: plane(1), v: plane(2), cap: 0, kd, kvh: nkv };
+            let q: Vec<f32> = (0..nh * hd).map(|i| ((i * 13 % 29) as f32 - 14.0) / 14.0).collect();
+            let (mut s1, mut s2) = (vec![0.0; nh * n], vec![0.0; nh * n]);
+            let (mut o1, mut o2) = (vec![0.0; nh * hd], vec![0.0; nh * hd]);
+            attend(&kv, kd, hd, nh, nh / nkv, 0, n, 0.125, 0.0, &q, &mut o1, &mut s1, 1);
+            attend(&kv, kd, hd, nh, nh / nkv, 0, n, 0.125, 0.0, &q, &mut o2, &mut s2, 0);
+            assert_eq!(o1, o2);
+            // a whole model honours the limit and gets the same answer
+            let mut m = tiny(4, 2, false);
+            let a = run_all(&m).0;
+            m.set_threads(1);
+            assert_eq!(m.threads(), 1);
+            assert_eq!(run_all(&m).0, a);
+        }
+    }
+
+    #[test]
+    fn split_layer_path_equals_forward() {
+        let m = tiny(2, 1, false);
+        let (mut a, mut b) = (m.new_state(), m.new_state());
+        for (i, &t) in [3usize, 7, 1, 19, 5].iter().enumerate() {
+            let want = m.forward(&mut a, t).unwrap();
+            let mut x = m.embed_token(t).unwrap();
+            m.run_layers(&mut b, 0..1, &mut x, i).unwrap();
+            m.run_layers(&mut b, 1..3, &mut x, i).unwrap();
+            m.finish_token(&mut b);
+            assert_eq!(m.logits_from_hidden(&x), want, "token {i}");
+        }
+        assert_eq!(a.pos, b.pos);
+        let mut x = m.embed_token(2).unwrap();
+        let bp = b.pos; assert!(m.run_layers(&mut b, 0..9, &mut x, bp).is_err());
+        assert!(m.run_layers(&mut b, 0..1, &mut x, 0).is_err());
+        assert!(m.embed_token(10_000).is_err());
     }
 }

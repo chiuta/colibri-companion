@@ -19,7 +19,7 @@ pub fn softmax(x: &mut [f32]) {
     simd::scale(x, 1.0 / s);
 }
 
-pub fn silu(x: f32) -> f32 { x / (1.0 + (-x).exp()) }
+pub fn silu(x: f32) -> f32 { x / (1.0 + simd::rmath::exp(-x)) }
 
 /// `g = silu(g) · u` over the common length, vectorised.
 pub fn silu_mul(g: &mut [f32], u: &[f32]) { simd::silu_mul(g, u) }
@@ -27,9 +27,9 @@ pub fn silu_mul(g: &mut [f32], u: &[f32]) { simd::silu_mul(g, u) }
 /// `y += a · x`.
 pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) { simd::axpy(a, x, y) }
 
-struct RopeScratch { d: usize, theta_bits: u64, inv_freq: Vec<f64>, cos: Vec<f32>, sin: Vec<f32> }
+struct RopeScratch { d: usize, det: bool, theta_bits: u64, inv_freq: Vec<f64>, cos: Vec<f32>, sin: Vec<f32> }
 thread_local! {
-    static ROPE: RefCell<RopeScratch> = const { RefCell::new(RopeScratch { d: 0, theta_bits: 0, inv_freq: Vec::new(), cos: Vec::new(), sin: Vec::new() }) };
+    static ROPE: RefCell<RopeScratch> = const { RefCell::new(RopeScratch { d: 0, det: false, theta_bits: 0, inv_freq: Vec::new(), cos: Vec::new(), sin: Vec::new() }) };
 }
 
 /// Rotary embedding on one head vector, "rotate-half" pairing (i, i + d/2) as Hugging Face does.
@@ -39,16 +39,18 @@ pub fn rope(head: &mut [f32], pos: usize, theta: f64) {
     let half = d / 2;
     ROPE.with(|cell| {
         let mut s = cell.borrow_mut();
-        if s.d != d || s.theta_bits != theta.to_bits() {
+        let det = simd::is_reproducible();
+        if s.d != d || s.det != det || s.theta_bits != theta.to_bits() {
             s.d = d;
+            s.det = det;
             s.theta_bits = theta.to_bits();
-            s.inv_freq = (0..half).map(|i| theta.powf(-(2.0 * i as f64) / d as f64)).collect();
+            s.inv_freq = (0..half).map(|i| simd::rmath::powf64(theta, -(2.0 * i as f64) / d as f64)).collect();
         }
         let RopeScratch { inv_freq, cos, sin, .. } = &mut *s;
         cos.clear();
         sin.clear();
         for f in inv_freq.iter() {
-            let (sn, cs) = (pos as f64 * f).sin_cos();
+            let (sn, cs) = simd::rmath::sin_cos64(pos as f64 * f);
             cos.push(cs as f32);
             sin.push(sn as f32);
         }

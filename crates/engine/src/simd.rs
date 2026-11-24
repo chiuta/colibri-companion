@@ -16,7 +16,15 @@
 //! * float reductions may differ from the scalar order by normal rounding (reassociation);
 //! * `exp`-based kernels use a degree-7 polynomial, relative error about 2e-7, unless
 //!   [`set_precise`] is on, which routes them through libm.
-use std::sync::atomic::{AtomicBool, Ordering};
+//!
+//! Reproducible mode ([`set_reproducible`], or `ENGINE_REPRODUCIBLE=1`): every float kernel is
+//! replaced by a fixed-order implementation that gives the same bits on every machine, every
+//! variant and every thread count: 16 virtual lanes (`lane[i % 16] += a[i]·b[i]`, separate
+//! multiply and add, never an FMA), reduced by a fixed pairwise tree 16→8→4→2→1; `exp` is a
+//! polynomial evaluated without FMA and without libm; the integer kernels are exact already.
+//! The `rmath` module gives the deterministic scalar functions (`exp`, `tanh`, `sin_cos`,
+//! `powf`, `ln`) that the model code uses in place of libm while the mode is on.
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 /// Table of kernels for one instruction-set level.
@@ -57,15 +65,60 @@ static PRECISE: AtomicBool = AtomicBool::new(false);
 pub fn set_precise(on: bool) { PRECISE.store(on, Ordering::Relaxed); }
 pub fn is_precise() -> bool { PRECISE.load(Ordering::Relaxed) }
 
-fn table() -> &'static Kernels {
-    static K: OnceLock<Kernels> = OnceLock::new();
-    K.get_or_init(|| {
-        let all = available();
-        if let Ok(want) = std::env::var("ENGINE_SIMD") {
-            if let Some(k) = all.iter().find(|k| k.name == want) { return *k; }
+/// 0 = not decided yet (read `ENGINE_REPRODUCIBLE` on first use), 1 = off, 2 = on.
+static REPRO: AtomicU8 = AtomicU8::new(0);
+
+/// Switch reproducible mode (bit-identical results on every machine / variant / thread count).
+/// Slower than the normal kernels; see `examples/bench_repro.rs`.
+pub fn set_reproducible(on: bool) { REPRO.store(if on { 2 } else { 1 }, Ordering::Relaxed); }
+/// Whether reproducible mode is on (initialised from `ENGINE_REPRODUCIBLE=1|true|on` if never set).
+pub fn is_reproducible() -> bool {
+    match REPRO.load(Ordering::Relaxed) {
+        2 => true,
+        1 => false,
+        _ => {
+            let on = matches!(std::env::var("ENGINE_REPRODUCIBLE").as_deref(), Ok("1") | Ok("true") | Ok("on") | Ok("yes"));
+            // Only the first decision sticks: a concurrent `set_reproducible` wins.
+            let _ = REPRO.compare_exchange(0, if on { 2 } else { 1 }, Ordering::Relaxed, Ordering::Relaxed);
+            REPRO.load(Ordering::Relaxed) == 2
         }
-        *all.last().expect("the scalar variant always exists")
+    }
+}
+
+fn variants() -> &'static [Kernels] {
+    static V: OnceLock<Vec<Kernels>> = OnceLock::new();
+    V.get_or_init(available)
+}
+fn repro_variants() -> &'static [Kernels] {
+    static V: OnceLock<Vec<Kernels>> = OnceLock::new();
+    V.get_or_init(|| variants().iter().map(reproducible).collect())
+}
+fn default_index() -> usize {
+    static I: OnceLock<usize> = OnceLock::new();
+    *I.get_or_init(|| {
+        let all = variants();
+        if let Ok(want) = std::env::var("ENGINE_SIMD")
+            && let Some(i) = all.iter().position(|k| k.name == want) { return i; }
+        all.len() - 1
     })
+}
+
+/// 0 = use the default variant, n = `variants()[n - 1]` (set by [`force_variant`]).
+static FORCED: AtomicUsize = AtomicUsize::new(0);
+
+/// Force a variant by name at run time (for tests, benchmarks and bug reports; `ENGINE_SIMD` does
+/// the same at start-up). Returns false when this CPU does not have it. `"default"` undoes it.
+pub fn force_variant(name: &str) -> bool {
+    if name == "default" { FORCED.store(0, Ordering::Relaxed); return true; }
+    match variants().iter().position(|k| k.name == name) {
+        Some(i) => { FORCED.store(i + 1, Ordering::Relaxed); true }
+        None => false,
+    }
+}
+
+fn table() -> &'static Kernels {
+    let i = match FORCED.load(Ordering::Relaxed) { 0 => default_index(), n => n - 1 };
+    if is_reproducible() { &repro_variants()[i] } else { &variants()[i] }
 }
 
 /// Name of the variant in use, e.g. `"avx2+fma"`.
@@ -91,10 +144,10 @@ pub fn scale(x: &mut [f32], k: f32) { (table().scale)(x, k) }
 /// `out[i] = x[i]·k·w[i]` over the shortest of the three slices.
 pub fn mul3(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) { (table().mul3)(x, w, k, out) }
 pub fn exp_sub_sum(x: &mut [f32], m: f32) -> f32 {
-    if is_precise() { scalar::exp_sub_sum(x, m) } else { (table().exp_sub_sum)(x, m) }
+    if is_precise() && !is_reproducible() { scalar::exp_sub_sum(x, m) } else { (table().exp_sub_sum)(x, m) }
 }
 pub fn silu_mul(g: &mut [f32], u: &[f32]) {
-    if is_precise() { scalar::silu_mul(g, u) } else { (table().silu_mul)(g, u) }
+    if is_precise() && !is_reproducible() { scalar::silu_mul(g, u) } else { (table().silu_mul)(g, u) }
 }
 /// Rotate `head` (pairs `i`, `i + half`, `half = cos.len()`) by the angles given as `cos`/`sin`.
 pub fn rope_rotate(head: &mut [f32], cos: &[f32], sin: &[f32]) { (table().rope)(head, cos, sin) }
@@ -248,6 +301,274 @@ pub(crate) mod scalar {
         }
         acc
     }
+}
+
+// ------------------------------------------------------------------ reproducible kernels
+
+/// The same kernel table with every float kernel replaced by its fixed-order twin (see the module
+/// docs). Exact kernels (max, scale, conversions, integer dots) stay the variant's own, so a
+/// variant's integer speed is kept. The result has the same bits whatever `base` is.
+pub fn reproducible(base: &Kernels) -> Kernels {
+    #[cfg(target_arch = "x86_64")]
+    if base.name.starts_with("avx") {
+        use repro_avx2 as v;
+        return Kernels {
+            name: base.name,
+            dot_f32: v::dot_f32, sumsq: v::sumsq, axpy: v::axpy, mul3: v::mul3,
+            exp_sub_sum: v::exp_sub_sum, silu_mul: v::silu_mul, rope: v::rope,
+            q4_0_q8_0_row: repro::q4_0_q8_0_row,
+            ..*base
+        };
+    }
+    Kernels {
+        name: base.name,
+        dot_f32: repro::dot_f32, sumsq: repro::sumsq, axpy: repro::axpy, mul3: repro::mul3,
+        exp_sub_sum: repro::exp_sub_sum, silu_mul: repro::silu_mul, rope: repro::rope,
+        q4_0_q8_0_row: repro::q4_0_q8_0_row,
+        ..*base
+    }
+}
+
+/// Fixed pairwise tree over 16 lanes: 16→8→4→2→1.
+#[inline(always)]
+pub(crate) fn tree16(l: [f32; 16]) -> f32 {
+    let a = [l[0] + l[8], l[1] + l[9], l[2] + l[10], l[3] + l[11], l[4] + l[12], l[5] + l[13], l[6] + l[14], l[7] + l[15]];
+    let b = [a[0] + a[4], a[1] + a[5], a[2] + a[6], a[3] + a[7]];
+    let c = [b[0] + b[2], b[1] + b[3]];
+    c[0] + c[1]
+}
+
+mod repro {
+    use super::*;
+
+    // The bodies are `inline(always)` so that the AVX2 wrappers below get their own vectorised copy.
+    // Rust never fuses `a * b + c` on its own and the wrappers do not enable FMA, so every copy
+    // computes the same IEEE operations in the same order: the same bits.
+    #[inline(always)]
+    pub fn dot_f32_impl(a: &[f32], b: &[f32]) -> f32 {
+        let n = a.len().min(b.len());
+        let (a, b) = (&a[..n], &b[..n]);
+        let mut l = [0f32; 16];
+        let (ca, cb) = (a.chunks_exact(16), b.chunks_exact(16));
+        let (ra, rb) = (ca.remainder(), cb.remainder());
+        for (x, y) in ca.zip(cb) {
+            for j in 0..16 { l[j] += x[j] * y[j]; }
+        }
+        for j in 0..ra.len() { l[j] += ra[j] * rb[j]; }
+        tree16(l)
+    }
+    #[inline(always)]
+    pub fn sumsq_impl(a: &[f32]) -> f32 { dot_f32_impl(a, a) }
+    #[inline(always)]
+    pub fn axpy_impl(a: f32, x: &[f32], y: &mut [f32]) {
+        for (y, x) in y.iter_mut().zip(x) { let p = a * *x; *y += p; }
+    }
+    #[inline(always)]
+    pub fn mul3_impl(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) {
+        for ((o, x), w) in out.iter_mut().zip(x).zip(w) { *o = x * k * w; }
+    }
+    #[inline(always)]
+    pub fn rope_impl(h: &mut [f32], c: &[f32], s: &[f32]) {
+        let half = c.len().min(s.len()).min(h.len() / 2);
+        let (lo, rest) = h.split_at_mut(half);
+        let hi = &mut rest[..half];
+        for i in 0..half {
+            let (a, b) = (lo[i], hi[i]);
+            let (ac, bs, as_, bc) = (a * c[i], b * s[i], a * s[i], b * c[i]);
+            lo[i] = ac - bs;
+            hi[i] = as_ + bc;
+        }
+    }
+    /// `exp` as a degree-7 polynomial, plain mul + add (no FMA, no libm), written without branches
+    /// so that it vectorises. Rounding to the nearest integer uses the add-a-magic-number trick
+    /// (round-to-nearest-even by IEEE addition).
+    #[inline(always)]
+    pub fn exp_det(x: f32) -> f32 {
+        const MAGIC: f32 = 12_582_912.0; // 1.5 · 2^23
+        let xc = x.clamp(EXP_LO, EXP_HI);
+        let n = (xc * LOG2E + MAGIC) - MAGIC;
+        let r = xc - n * LN2_HI - n * LN2_LO;
+        let mut p = C7;
+        for c in [C6, C5, C4, C3, C2, 1.0, 1.0] { p = p * r + c; }
+        let v = p * f32::from_bits(((n as i32 + 127) as u32) << 23);
+        let v = if x < EXP_LO { 0.0 } else { v };
+        if x.is_nan() { x } else { v }
+    }
+    #[inline(always)]
+    pub fn exp_sub_sum_impl(x: &mut [f32], m: f32) -> f32 {
+        let mut l = [0f32; 16];
+        let mut it = x.chunks_exact_mut(16);
+        for c in &mut it {
+            let mut e = [0f32; 16];
+            for j in 0..16 { e[j] = exp_det(c[j] - m); }
+            c.copy_from_slice(&e);
+            for j in 0..16 { l[j] += e[j]; }
+        }
+        for (j, v) in it.into_remainder().iter_mut().enumerate() {
+            *v = exp_det(*v - m);
+            l[j] += *v;
+        }
+        tree16(l)
+    }
+    #[inline(always)]
+    pub fn silu_mul_impl(g: &mut [f32], u: &[f32]) {
+        for (g, u) in g.iter_mut().zip(u) { *g = *g / (1.0 + exp_det(-*g)) * u; }
+    }
+
+    pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 { dot_f32_impl(a, b) }
+    pub fn sumsq(a: &[f32]) -> f32 { sumsq_impl(a) }
+    pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) { axpy_impl(a, x, y) }
+    pub fn mul3(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) { mul3_impl(x, w, k, out) }
+    pub fn rope(h: &mut [f32], c: &[f32], s: &[f32]) { rope_impl(h, c, s) }
+    pub fn exp_sub_sum(x: &mut [f32], m: f32) -> f32 { exp_sub_sum_impl(x, m) }
+    pub fn silu_mul(g: &mut [f32], u: &[f32]) { silu_mul_impl(g, u) }
+
+    /// Sequential f32 accumulation of exact per-block integer dots (the integer block dot is exact
+    /// in every variant, so the portable one gives the same value as any of them).
+    pub fn q4_0_q8_0_row(w: &[u8], a: &[u8], n: usize) -> f32 {
+        let mut acc = 0f32;
+        for (wb, ab) in w.chunks_exact(18).zip(a.chunks_exact(34)).take(n) {
+            let dw = scalar::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let da = scalar::f16_to_f32(u16::from_le_bytes([ab[0], ab[1]]));
+            let qs: &[u8; 16] = wb[2..18].try_into().unwrap();
+            let mut y = [0i8; 32];
+            for (d, s) in y.iter_mut().zip(&ab[2..34]) { *d = *s as i8; }
+            let t = dw * da;
+            acc += t * scalar::q4_0_block(qs, &y) as f32;
+        }
+        acc
+    }
+}
+
+/// The same fixed-order loops compiled for AVX2 (no FMA enabled, so no contraction is possible).
+#[cfg(target_arch = "x86_64")]
+mod repro_avx2 {
+    use super::repro::*;
+    macro_rules! wrap {
+        ($shim:ident, $inner:ident, $imp:ident, ($($arg:ident: $t:ty),*) $(-> $r:ty)?) => {
+            #[target_feature(enable = "avx2")]
+            unsafe fn $inner($($arg: $t),*) $(-> $r)? { $imp($($arg),*) }
+            pub fn $shim($($arg: $t),*) $(-> $r)? {
+                // SAFETY: only reachable through a table built for a variant whose name starts with
+                // "avx", i.e. after AVX2 was detected.
+                unsafe { $inner($($arg),*) }
+            }
+        };
+    }
+    wrap!(dot_f32, dot_f32_avx2, dot_f32_impl, (a: &[f32], b: &[f32]) -> f32);
+    wrap!(sumsq, sumsq_avx2, sumsq_impl, (a: &[f32]) -> f32);
+    wrap!(axpy, axpy_avx2, axpy_impl, (a: f32, x: &[f32], y: &mut [f32]));
+    wrap!(mul3, mul3_avx2, mul3_impl, (x: &[f32], w: &[f32], k: f32, out: &mut [f32]));
+    wrap!(rope, rope_avx2, rope_impl, (h: &mut [f32], c: &[f32], s: &[f32]));
+    wrap!(exp_sub_sum, exp_sub_sum_avx2, exp_sub_sum_impl, (x: &mut [f32], m: f32) -> f32);
+    wrap!(silu_mul, silu_mul_avx2, silu_mul_impl, (g: &mut [f32], u: &[f32]));
+}
+
+/// Deterministic scalar math: only `+ - * /` and `sqrt` (all correctly rounded by IEEE 754), so the
+/// results are identical on every machine. Used instead of libm whenever reproducible mode is on.
+pub mod detmath {
+    const LN2_HI: f64 = 6.931_471_803_691_238e-1;
+    const LN2_LO: f64 = 1.908_214_929_270_587_7e-10;
+    const LN2: f64 = std::f64::consts::LN_2;
+    const INV_LN2: f64 = std::f64::consts::LOG2_E;
+
+    fn pow2(k: i64) -> f64 { f64::from_bits(((k + 1023) as u64) << 52) }
+
+    pub fn exp(x: f64) -> f64 {
+        if x.is_nan() { return x; }
+        if x > 709.78 { return f64::INFINITY; }
+        if x < -745.2 { return 0.0; }
+        let k = (x * INV_LN2 + 0.5).floor();
+        let r = x - k * LN2_HI - k * LN2_LO;
+        // Horner on Σ r^i / i!, i = 0..=13.
+        let mut c = [0f64; 14];
+        let mut fact = 1.0;
+        for (i, ci) in c.iter_mut().enumerate() { if i > 0 { fact *= i as f64; } *ci = 1.0 / fact; }
+        let mut acc = c[13];
+        for i in (0..13).rev() { acc = acc * r + c[i]; }
+        let ki = k as i64;
+        let (k1, k2) = (ki / 2, ki - ki / 2);
+        acc * pow2(k1) * pow2(k2)
+    }
+
+    pub fn ln(x: f64) -> f64 {
+        if x.is_nan() || x < 0.0 { return f64::NAN; }
+        if x == 0.0 { return f64::NEG_INFINITY; }
+        if x.is_infinite() { return x; }
+        let (mut x, mut e) = (x, 0i64);
+        if x < f64::MIN_POSITIVE { x *= 18_014_398_509_481_984.0; e -= 54; }
+        let bits = x.to_bits();
+        e += ((bits >> 52) & 0x7ff) as i64 - 1023;
+        let mut m = f64::from_bits((bits & 0x000f_ffff_ffff_ffff) | (1023u64 << 52));
+        if m > std::f64::consts::SQRT_2 { m *= 0.5; e += 1; }
+        let s = (m - 1.0) / (m + 1.0);
+        let s2 = s * s;
+        let mut acc = 0.0;
+        let mut k = 41.0;
+        while k >= 1.0 { acc = acc * s2 + 1.0 / k; k -= 2.0; }
+        e as f64 * LN2 + 2.0 * s * acc
+    }
+
+    pub fn powf(b: f64, y: f64) -> f64 {
+        if y == 0.0 { return 1.0; }
+        if b == 0.0 { return if y > 0.0 { 0.0 } else { f64::INFINITY }; }
+        if b < 0.0 {
+            // Integer exponents only (negative base otherwise NaN, as in libm).
+            if y != y.floor() || y.abs() > 9.0e15 { return f64::NAN; }
+            let v = exp(y * ln(-b));
+            return if (y as i64) % 2 == 0 { v } else { -v };
+        }
+        exp(y * ln(b))
+    }
+
+    /// `(sin x, cos x)`; accurate to about 1e-16 for |x| < 1e6, deterministic for any finite x.
+    pub fn sin_cos(x: f64) -> (f64, f64) {
+        if !x.is_finite() { return (f64::NAN, f64::NAN); }
+        const P1: f64 = 1.570_796_326_734_125_6;
+        const P2: f64 = 6.077_100_506_303_966e-11;
+        const P3: f64 = 2.022_266_248_795_950_6e-21;
+        let k = (x * std::f64::consts::FRAC_2_PI + 0.5).floor();
+        let r = x - k * P1 - k * P2 - k * P3;
+        let r2 = r * r;
+        let (mut s, mut c) = (0.0f64, 0.0f64);
+        // sin: Σ (-1)^i r^(2i+1)/(2i+1)!, cos: Σ (-1)^i r^(2i)/(2i)!, up to degree 27.
+        let mut fs = [0f64; 14];
+        let mut fc = [0f64; 14];
+        let mut fact = 1.0;
+        for n in 0..28 {
+            if n > 0 { fact *= n as f64; }
+            let sign = if (n / 2) % 2 == 0 { 1.0 } else { -1.0 };
+            if n % 2 == 1 { fs[n / 2] = sign / fact; } else { fc[n / 2] = sign / fact; }
+        }
+        for i in (0..14).rev() { s = s * r2 + fs[i]; c = c * r2 + fc[i]; }
+        let (sr, cr) = (s * r, c);
+        match (k as i64).rem_euclid(4) {
+            0 => (sr, cr),
+            1 => (cr, -sr),
+            2 => (-sr, -cr),
+            _ => (-cr, sr),
+        }
+    }
+
+    pub fn tanh(x: f64) -> f64 {
+        if x.is_nan() { return x; }
+        let a = x.abs();
+        if a > 22.0 { return if x > 0.0 { 1.0 } else { -1.0 }; }
+        if a < 1e-4 { return x - x * x * x / 3.0; }
+        let e = exp(2.0 * x);
+        (e - 1.0) / (e + 1.0)
+    }
+}
+
+/// Math used by the model code: libm normally, [`detmath`] when reproducible mode is on.
+pub mod rmath {
+    use super::{detmath, is_reproducible};
+    pub fn exp(x: f32) -> f32 { if is_reproducible() { detmath::exp(x as f64) as f32 } else { x.exp() } }
+    pub fn tanh(x: f32) -> f32 { if is_reproducible() { detmath::tanh(x as f64) as f32 } else { x.tanh() } }
+    pub fn exp64(x: f64) -> f64 { if is_reproducible() { detmath::exp(x) } else { x.exp() } }
+    pub fn ln64(x: f64) -> f64 { if is_reproducible() { detmath::ln(x) } else { x.ln() } }
+    pub fn powf64(b: f64, y: f64) -> f64 { if is_reproducible() { detmath::powf(b, y) } else { b.powf(y) } }
+    pub fn sin_cos64(x: f64) -> (f64, f64) { if is_reproducible() { detmath::sin_cos(x) } else { x.sin_cos() } }
 }
 
 // ------------------------------------------------------------------- shim generators
@@ -1374,5 +1695,133 @@ mod tests {
             (k.rope)(&mut [], &[], &[]);
             assert_eq!((k.dot_i8)(&[], &[]), 0);
         }
+    }
+
+    // ---------------------------------------------------------------- reproducible mode
+
+    fn bits(v: &[f32]) -> Vec<u32> { v.iter().map(|x| x.to_bits()).collect() }
+
+    #[test]
+    fn reproducible_float_kernels_are_bit_identical_across_variants() {
+        let oracle = reproducible(&scalar::kernels());
+        for k in available() {
+            let rk = reproducible(&k);
+            let mut r = Rng(0x0dd_ba11_cafe_f00d);
+            for n in 0..=300usize {
+                let a = r.vec(n + 2, 3.0);
+                let b = r.vec(n + 2, 3.0);
+                for off in 0..2 {
+                    let (a, b) = (&a[off..off + n], &b[off..off + n]);
+                    assert_eq!((rk.dot_f32)(a, b).to_bits(), (oracle.dot_f32)(a, b).to_bits(), "{} dot n={n}", k.name);
+                    assert_eq!((rk.sumsq)(a).to_bits(), (oracle.sumsq)(a).to_bits(), "{} sumsq n={n}", k.name);
+                    assert_eq!((rk.max)(a).to_bits(), (oracle.max)(a).to_bits(), "{} max n={n}", k.name);
+                    let (mut y1, mut y2) = (b.to_vec(), b.to_vec());
+                    (rk.axpy)(0.37, a, &mut y1);
+                    (oracle.axpy)(0.37, a, &mut y2);
+                    assert_eq!(bits(&y1), bits(&y2), "{} axpy n={n}", k.name);
+                    let (mut o1, mut o2) = (vec![0f32; n], vec![0f32; n]);
+                    (rk.mul3)(a, b, 0.73, &mut o1);
+                    (oracle.mul3)(a, b, 0.73, &mut o2);
+                    assert_eq!(bits(&o1), bits(&o2), "{} mul3 n={n}", k.name);
+                    let (mut s1, mut s2) = (a.to_vec(), a.to_vec());
+                    (rk.scale)(&mut s1, 1.7);
+                    (oracle.scale)(&mut s2, 1.7);
+                    assert_eq!(bits(&s1), bits(&s2), "{} scale n={n}", k.name);
+                    // exp / softmax: wide range including very negative values.
+                    let wide: Vec<f32> = a.iter().map(|v| v * 30.0).collect();
+                    let m = (rk.max)(&wide);
+                    let (mut e1, mut e2) = (wide.clone(), wide.clone());
+                    let (t1, t2) = ((rk.exp_sub_sum)(&mut e1, m), (oracle.exp_sub_sum)(&mut e2, m));
+                    assert_eq!(bits(&e1), bits(&e2), "{} exp n={n}", k.name);
+                    assert_eq!(t1.to_bits(), t2.to_bits(), "{} exp sum n={n}", k.name);
+                    let (mut g1, mut g2) = (wide.clone(), wide.clone());
+                    (rk.silu_mul)(&mut g1, b);
+                    (oracle.silu_mul)(&mut g2, b);
+                    assert_eq!(bits(&g1), bits(&g2), "{} silu n={n}", k.name);
+                }
+                // rope: head of 2·half values, tables of `half`.
+                let half = n / 2;
+                let head = r.vec(2 * half, 2.0);
+                let (c, s) = (r.vec(half, 1.0), r.vec(half, 1.0));
+                let (mut h1, mut h2) = (head.clone(), head.clone());
+                (rk.rope)(&mut h1, &c, &s);
+                (oracle.rope)(&mut h2, &c, &s);
+                assert_eq!(bits(&h1), bits(&h2), "{} rope n={n}", k.name);
+                // f16 / bf16 conversions are exact: every bit pattern, every variant.
+                let src: Vec<u16> = (0..n).map(|_| r.next() as u16).collect();
+                let (mut f1, mut f2) = (vec![0f32; n], vec![0f32; n]);
+                (rk.f16_to_f32)(&src, &mut f1);
+                (oracle.f16_to_f32)(&src, &mut f2);
+                assert_eq!(bits(&f1).iter().zip(bits(&f2)).filter(|(a, b)| **a != *b && !f32::from_bits(**a).is_nan()).count(), 0, "{} f16 n={n}", k.name);
+                (rk.bf16_to_f32)(&src, &mut f1);
+                (oracle.bf16_to_f32)(&src, &mut f2);
+                assert_eq!(bits(&f1), bits(&f2), "{} bf16 n={n}", k.name);
+                // integer dots are exact.
+                let (x, y) = (r.i8s(n), r.i8s(n));
+                assert_eq!((rk.dot_i8)(&x, &y), (oracle.dot_i8)(&x, &y), "{} dot_i8 n={n}", k.name);
+            }
+        }
+    }
+
+    #[test]
+    fn reproducible_q4_0_rows_are_bit_identical_across_variants() {
+        let oracle = reproducible(&scalar::kernels());
+        let mut r = Rng(0x5eed_5eed_1234_4321);
+        for blocks in 0..=40usize {
+            let (mut w, mut a) = (vec![0u8; blocks * 18], vec![0u8; blocks * 34]);
+            for b in 0..blocks {
+                w[b * 18..b * 18 + 2].copy_from_slice(&(0x2c00u16 + (r.next() % 0x400) as u16).to_le_bytes());
+                for v in &mut w[b * 18 + 2..b * 18 + 18] { *v = r.next() as u8; }
+                a[b * 34..b * 34 + 2].copy_from_slice(&(0x2800u16 + (r.next() % 0x400) as u16).to_le_bytes());
+                for v in &mut a[b * 34 + 2..b * 34 + 34] { *v = r.next() as u8; }
+            }
+            for k in available() {
+                let rk = reproducible(&k);
+                assert_eq!((rk.q4_0_q8_0_row)(&w, &a, blocks).to_bits(), (oracle.q4_0_q8_0_row)(&w, &a, blocks).to_bits(), "{} blocks={blocks}", k.name);
+            }
+        }
+    }
+
+    #[test]
+    fn reproducible_kernels_are_accurate_too() {
+        let rk = reproducible(&scalar::kernels());
+        let mut r = Rng(77);
+        for n in [1usize, 15, 16, 17, 100, 1000] {
+            let (a, b) = (r.vec(n, 2.0), r.vec(n, 2.0));
+            let want: f64 = a.iter().zip(&b).map(|(x, y)| *x as f64 * *y as f64).sum();
+            let got = (rk.dot_f32)(&a, &b) as f64;
+            assert!((got - want).abs() <= 1e-4 * (1.0 + want.abs()) + 1e-5 * n as f64, "n={n} {got} vs {want}");
+        }
+        let mut x = r.vec(200, 10.0);
+        let m = (rk.max)(&x);
+        let want: Vec<f64> = x.iter().map(|v| (*v as f64 - m as f64).exp()).collect();
+        let sum = (rk.exp_sub_sum)(&mut x, m);
+        for (g, w) in x.iter().zip(&want) { assert!((*g as f64 - w).abs() <= 1e-6 * w + 1e-30, "{g} vs {w}"); }
+        assert!((sum as f64 - want.iter().sum::<f64>()).abs() < 1e-4);
+    }
+
+    #[test]
+    fn detmath_matches_libm_closely_and_is_total() {
+        for i in -2000..2000 {
+            let x = i as f64 * 0.37;
+            let (e, w) = (detmath::exp(x), x.exp());
+            assert!(e == w || (e - w).abs() <= 4e-16 * w.abs() + 1e-300, "exp({x}): {e} vs {w}");
+            let (s, c) = detmath::sin_cos(x);
+            assert!((s - x.sin()).abs() < 2e-15 && (c - x.cos()).abs() < 2e-15, "sincos({x})");
+            let t = detmath::tanh(x / 40.0);
+            assert!((t - (x / 40.0).tanh()).abs() < 1e-14, "tanh({})", x / 40.0);
+            let p = x.abs() + 1e-3;
+            assert!((detmath::ln(p) - p.ln()).abs() <= 1e-15 * (1.0 + p.ln().abs()), "ln({p})");
+        }
+        for (b, y) in [(10_000.0f64, -0.125), (1_000_000.0, -0.984_375), (2.0, 10.0), (0.5, 3.0), (7.0, -2.0)] {
+            let (g, w) = (detmath::powf(b, y), b.powf(y));
+            assert!((g - w).abs() <= 1e-14 * w, "pow({b},{y}): {g} vs {w}");
+        }
+        assert!(detmath::exp(f64::NAN).is_nan() && detmath::exp(1000.0).is_infinite() && detmath::exp(-1000.0) == 0.0);
+        assert_eq!(detmath::ln(0.0), f64::NEG_INFINITY);
+        assert!(detmath::ln(-1.0).is_nan() && detmath::sin_cos(f64::INFINITY).0.is_nan());
+        assert_eq!(detmath::tanh(50.0), 1.0);
+        assert_eq!(detmath::tanh(-50.0), -1.0);
+        assert!(detmath::sin_cos(123_456.789).0.is_finite());
     }
 }

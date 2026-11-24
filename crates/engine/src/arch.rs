@@ -77,6 +77,13 @@ pub struct Spec {
     pub rope_scaling: RopeScaling,
     /// Attention score multiplier; 0 = `1/sqrt(head_dim)`.
     pub attn_scale: f64,
+    // ---- mixture of experts ----
+    /// Intermediate size of one routed expert; 0 = same as `ffn` (Mixtral).
+    pub moe_ffn: u64,
+    /// Divide the selected routing weights by their sum (Mixtral, `norm_topk_prob`).
+    pub norm_topk_prob: bool,
+    /// Multiplier on the routing weights (`routed_scaling_factor`); 1 = none.
+    pub routed_scale: f64,
 }
 
 impl Spec {
@@ -90,19 +97,23 @@ impl Spec {
             qkv_bias: false, post_norms: false, parallel_residual: false, attn_softcap: 0.0, final_softcap: 0.0,
             sliding_window: 0, sliding_layers: vec![], rope_theta_local: 0.0, rotary_dim: head_dim,
             rope_scaling: RopeScaling::None, attn_scale: 0.0,
+            moe_ffn: 0, norm_topk_prob: false, routed_scale: 1.0,
         }
     }
+    /// Width of one routed expert.
+    pub fn expert_ffn(&self) -> u64 { if self.moe_ffn > 0 { self.moe_ffn } else { self.ffn } }
     /// Does layer `i` use the sliding window?
     pub fn is_sliding(&self, i: usize) -> bool { self.sliding_window > 0 && self.sliding_layers.get(i).copied().unwrap_or(false) }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum SpecError { Missing(&'static str), NotAnObject }
+pub enum SpecError { Missing(&'static str), NotAnObject, Absurd(&'static str) }
 impl std::fmt::Display for SpecError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SpecError::Missing(k) => write!(f, "the model description has no `{k}`"),
             SpecError::NotAnObject => write!(f, "the model description is not a JSON object"),
+            SpecError::Absurd(k) => write!(f, "the model description has an unreasonable `{k}`"),
         }
     }
 }
@@ -117,8 +128,11 @@ pub fn classify(name: &str) -> Support {
         | "yi" | "smollm3" | "stablelm" | "starcoder2" | "exaone" | "glm" | "glm4" | "baichuan" | "minicpm" => Support::Standard,
         "falcon" | "gpt_neox" | "gptneox" => Support::Planned("fused interleaved QKV tensor layout"),
         "gpt2" | "gptj" | "opt" | "bloom" | "mpt" => Support::Planned("learned or ALiBi position scheme"),
-        "mixtral" | "qwen2_moe" | "qwen3_moe" | "qwen3moe" | "olmoe" | "granitemoe" | "phimoe" | "dbrx"
-        | "arctic" | "jamba_moe" | "gpt_oss" | "gpt-oss" | "llama4" | "glm4_moe" | "hunyuan_moe" | "ernie4_5_moe" => Support::Moe,
+        "mixtral" | "qwen2_moe" | "qwen2moe" | "qwen3_moe" | "qwen3moe" => Support::Moe,
+        "olmoe" => Support::Planned("OLMoE normalises whole q/k projections, not heads"),
+        "gpt_oss" | "gpt-oss" | "gptoss" => Support::Planned("MXFP4 experts with clamped SwiGLU and expert biases"),
+        "granitemoe" | "phimoe" | "dbrx" | "arctic" | "jamba_moe" | "llama4" | "glm4_moe" | "hunyuan_moe" | "ernie4_5_moe" | "grok" =>
+            Support::Planned("this mixture-of-experts layout"),
         "deepseek_v2" | "deepseek_v3" | "deepseek2" | "kimi_k2" | "minimax" => Support::Planned("multi-head latent attention"),
         "mamba" | "mamba2" | "rwkv" | "rwkv6" | "rwkv7" | "falcon_mamba" | "jamba" | "zamba" | "bamba" => Support::Planned("state-space / recurrent layers"),
         "t5" | "mt5" | "bart" | "whisper" | "bert" | "roberta" => Support::Planned("encoder / encoder-decoder models"),
@@ -141,7 +155,7 @@ fn traits(family: &str) -> Traits {
         "gemma" => { t.gemma = true; t.act = Act::GeluTanh; }
         "gemma2" => { t.gemma = true; t.act = Act::GeluTanh; t.post_norms = true; t.sliding_pattern = 2; }
         "gemma3" | "gemma3_text" => { t.gemma = true; t.act = Act::GeluTanh; t.post_norms = true; t.qk_norm = true; t.sliding_pattern = 6; }
-        "qwen2" | "qwen2_moe" => t.qkv_bias = true,
+        "qwen2" | "qwen2_moe" | "qwen2moe" => t.qkv_bias = true,
         "qwen3" | "qwen3_moe" | "qwen3moe" => t.qk_norm = true,
         "starcoder2" => { t.layer_norm = true; t.gated = false; t.act = Act::GeluTanh; }
         "gpt_neox" | "gptneox" => { t.layer_norm = true; t.gated = false; t.parallel = true; t.act = Act::Gelu; }
@@ -186,6 +200,9 @@ fn parse_rope_scaling(c: &Value, root: &Value, orig_default: f64) -> (RopeScalin
     }
 }
 
+/// No real model has more layers than this; larger values would only size per-layer tables.
+const MAX_LAYERS: u64 = 1 << 16;
+
 fn layers_from_types(c: &Value, n: u64) -> Option<Vec<bool>> {
     let a = c.get("layer_types")?.as_array()?;
     (a.len() as u64 == n).then(|| a.iter().map(|v| v.as_str() == Some("sliding_attention")).collect())
@@ -204,6 +221,7 @@ pub fn from_hf_config(json: &str) -> Result<Spec, SpecError> {
     let family = c.get("model_type").or_else(|| root.get("model_type")).and_then(Value::as_str).unwrap_or("unknown").to_string();
     let hidden = first_u64(c, &["hidden_size", "n_embd", "d_model"]).ok_or(SpecError::Missing("hidden_size"))?;
     let layers = first_u64(c, &["num_hidden_layers", "n_layer", "num_layers"]).ok_or(SpecError::Missing("num_hidden_layers"))?;
+    if layers > MAX_LAYERS { return Err(SpecError::Absurd("num_hidden_layers")); }
     let heads = first_u64(c, &["num_attention_heads", "n_head"]).ok_or(SpecError::Missing("num_attention_heads"))?;
     if heads == 0 { return Err(SpecError::Missing("num_attention_heads")); }
     let kv_heads = first_u64(c, &["num_key_value_heads", "n_head_kv", "multi_query_group_num"]).unwrap_or(heads);
@@ -211,7 +229,7 @@ pub fn from_hf_config(json: &str) -> Result<Spec, SpecError> {
     let head_dim = first_u64(c, &["head_dim"]).filter(|d| *d > 0).unwrap_or(hidden / heads);
     let t = traits(&family);
     let mut s = Spec::dense(&family, layers, hidden, heads, kv_heads.max(1), head_dim,
-        first_u64(c, &["intermediate_size", "ffn_dim", "n_inner"]).unwrap_or(hidden * 4),
+        first_u64(c, &["intermediate_size", "ffn_dim", "n_inner"]).unwrap_or(hidden.saturating_mul(4)),
         first_u64(c, &["vocab_size"]).unwrap_or(0),
         first_u64(c, &["max_position_embeddings", "n_positions", "seq_length", "max_seq_len"]).unwrap_or(4096));
     s.support = match classify(&family) { Support::Standard if experts > 1 => Support::Moe, x => x };
@@ -223,6 +241,10 @@ pub fn from_hf_config(json: &str) -> Result<Spec, SpecError> {
     s.experts = experts;
     s.experts_used = first_u64(c, &["num_experts_per_tok", "num_experts_per_token", "moe_top_k", "top_k"]).unwrap_or(if experts > 0 { 2 } else { 0 });
     s.shared_experts = first_u64(c, &["n_shared_experts", "num_shared_experts"]).unwrap_or(0);
+    s.moe_ffn = first_u64(c, &["moe_intermediate_size", "expert_intermediate_size"]).unwrap_or(0);
+    // Mixtral always renormalises; the others say so in their config (default off, as in transformers)
+    s.norm_topk_prob = c.get("norm_topk_prob").and_then(Value::as_bool).unwrap_or(family == "mixtral");
+    s.routed_scale = first_f64(c, &["routed_scaling_factor"]).filter(|v| *v > 0.0).unwrap_or(1.0);
     s.tied_embeddings = c.get("tie_word_embeddings").and_then(Value::as_bool).unwrap_or(t.gemma);
 
     s.norm = if t.layer_norm { NormKind::Layer } else { NormKind::Rms };
@@ -256,6 +278,7 @@ pub fn from_hf_config(json: &str) -> Result<Spec, SpecError> {
 pub fn from_gguf(g: &Gguf) -> Result<Spec, SpecError> {
     let family = g.architecture().ok_or(SpecError::Missing("general.architecture"))?.to_string();
     let layers = g.get_u64("block_count").ok_or(SpecError::Missing("block_count"))?;
+    if layers > MAX_LAYERS { return Err(SpecError::Absurd("block_count")); }
     let hidden = g.get_u64("embedding_length").ok_or(SpecError::Missing("embedding_length"))?;
     let heads = g.get_u64("attention.head_count").filter(|h| *h > 0).ok_or(SpecError::Missing("attention.head_count"))?;
     let experts = g.get_u64("expert_count").unwrap_or(0);
@@ -273,6 +296,13 @@ pub fn from_gguf(g: &Gguf) -> Result<Spec, SpecError> {
     s.experts = experts;
     s.experts_used = g.get_u64("expert_used_count").unwrap_or(if experts > 0 { 2 } else { 0 });
     s.shared_experts = g.get_u64("expert_shared_count").unwrap_or(0);
+    s.moe_ffn = g.get_u64("expert_feed_forward_length").unwrap_or(0);
+    // llama.cpp renormalises for Mixtral-style `llama` files unless the file says otherwise
+    s.norm_topk_prob = match g.meta.get(&format!("{family}.expert_weights_norm")) {
+        Some(crate::gguf::Value::Bool(b)) => *b,
+        _ => family == "llama" && experts > 1,
+    };
+    s.routed_scale = g.get_f64("expert_weights_scale").filter(|v| *v > 0.0).unwrap_or(1.0);
     s.tied_embeddings = !g.tensors.iter().any(|x| x.name == "output.weight");
     s.norm = if t.layer_norm { NormKind::Layer } else { NormKind::Rms };
     // llama.cpp's converter already adds 1 to Gemma norm weights, so no offset at run time.
@@ -302,7 +332,7 @@ pub fn from_gguf(g: &Gguf) -> Result<Spec, SpecError> {
 
 impl Spec {
     /// Bytes of KV cache per token (f16 keys and values).
-    pub fn kv_bytes_per_token(&self) -> u64 { 2 * self.layers * self.kv_heads * self.head_dim * 2 }
+    pub fn kv_bytes_per_token(&self) -> u64 { 4u64.saturating_mul(self.layers).saturating_mul(self.kv_heads).saturating_mul(self.head_dim) }
     pub fn kv_bytes(&self, tokens: u64) -> u64 { self.kv_bytes_per_token().saturating_mul(tokens) }
 }
 

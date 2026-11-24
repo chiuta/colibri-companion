@@ -1,0 +1,19 @@
+[package]
+name = "colibri-rs-cli"
+version.workspace = true
+edition.workspace = true
+rust-version = "1.89"
+license.workspace = true
+description = "corbul: command-line front end for the companion engine — inspect, download, chat and an OpenAI/Ollama-compatible local server"
+
+[lib]
+name = "corbul"
+path = "src/lib.rs"
+
+[[bin]]
+name = "corbul"
+path = "src/main.rs"
+
+[dependencies]
+companion-engine = { path = "../engine" }
+serde_json = { workspace = true, features = ["preserve_order"] }

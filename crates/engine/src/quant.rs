@@ -32,7 +32,7 @@ impl DType {
     /// Bytes needed for `n` elements, or `None` if the type is unknown or `n` is not block-aligned.
     pub fn bytes_for(self, n: u64) -> Option<u64> {
         let (e, b) = self.geometry()?;
-        if n % e as u64 != 0 { return None; }
+        if !n.is_multiple_of(e as u64) { return None; }
         (n / e as u64).checked_mul(b as u64)
     }
     /// Can [`dequantize`] decode this type?
