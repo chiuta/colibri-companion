@@ -708,6 +708,7 @@ dependencies = [
 name = "companion-engine"
 version = "0.1.0-alpha.7"
 dependencies = [
+ "memmap2",
  "serde_json",
 ]
 

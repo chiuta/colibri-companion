@@ -11,8 +11,15 @@
 //! * [`plan`]  – decides what stays in RAM and what is streamed from disk, for any RAM budget.
 pub mod arch;
 pub mod gguf;
+pub mod hub;
+pub mod hw;
+pub mod pool;
+pub mod simd;
 pub mod loader;
 pub mod model;
+pub mod moe;
 pub mod ops;
+pub mod qmatmul;
 pub mod plan;
 pub mod quant;
+pub mod tokenizer;

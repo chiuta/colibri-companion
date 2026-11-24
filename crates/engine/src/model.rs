@@ -1,146 +1,745 @@
-//! Dense decoder forward pass (Llama / Mistral / Qwen / Gemma-style): RMS-norm, grouped-query
-//! attention with RoPE and a KV cache, gated SiLU MLP, optional tied output head.
-use crate::arch::Spec;
-use crate::ops::{matvec, rmsnorm, rope, silu, softmax};
+//! Decoder forward pass. One code path covers the Llama / Mistral / Qwen / Gemma / Phi-3 /
+//! StarCoder2 family of variants: RMS- or layer-norm, grouped-query attention with (partial,
+//! scaled) RoPE and a KV cache, optional biases, QK-norm, soft-capping and sliding windows,
+//! gated or plain MLP, sequential or parallel residuals, optional tied output head.
+//!
+//! Weights are [`Weight`]s: plain f32, or quantised bytes (owned or memory-mapped) that are
+//! multiplied in place without ever being expanded to f32. The KV cache can be f32, f16 or
+//! int8, and sliding-window layers keep only their window in a ring buffer. One implementation
+//! serves both single-token decoding and batched prefill ([`Model::forward_batch`]).
+use crate::arch::{Act, NormKind, RopeScaling, Spec};
+use crate::ops::softmax;
+use crate::qmatmul::qmatvec;
+use crate::quant::{dequantize, DType, QuantError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
+/// Tokens processed per pass during prefill; bounds scratch memory for long prompts.
+pub const PREFILL_CHUNK: usize = 128;
+
+// ------------------------------------------------------------------ weights
+
+/// Raw bytes of a tensor: owned, or a window into a memory-mapped file.
+#[derive(Clone)]
+pub enum Bytes {
+    Owned(Arc<Vec<u8>>),
+    Mapped { map: Arc<memmap2::Mmap>, start: usize, len: usize },
+}
+impl Bytes {
+    pub fn owned(v: Vec<u8>) -> Bytes { Bytes::Owned(Arc::new(v)) }
+    /// `None` when the window does not lie inside the map.
+    pub fn mapped(map: Arc<memmap2::Mmap>, start: usize, len: usize) -> Option<Bytes> {
+        (start.checked_add(len)? <= map.len()).then_some(Bytes::Mapped { map, start, len })
+    }
+    pub fn as_slice(&self) -> &[u8] {
+        match self { Bytes::Owned(v) => v, Bytes::Mapped { map, start, len } => &map[*start..*start + *len] }
+    }
+    pub fn len(&self) -> usize { match self { Bytes::Owned(v) => v.len(), Bytes::Mapped { len, .. } => *len } }
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn is_mapped(&self) -> bool { matches!(self, Bytes::Mapped { .. }) }
+    /// A sub-window; mapped bytes stay mapped, owned bytes are copied.
+    pub fn slice(&self, from: usize, len: usize) -> Option<Bytes> {
+        if from.checked_add(len)? > self.len() { return None; }
+        Some(match self {
+            Bytes::Owned(v) => Bytes::owned(v[from..from + len].to_vec()),
+            Bytes::Mapped { map, start, .. } => Bytes::Mapped { map: map.clone(), start: start + from, len },
+        })
+    }
+}
+
+/// A weight matrix kept in its stored (quantised or half-precision) form, row-major `rows × cols`.
+#[derive(Clone)]
+pub struct QWeight { pub dtype: DType, pub rows: usize, pub cols: usize, pub bytes: Bytes }
+fn qerr(e: QuantError) -> ModelError { ModelError::Shape(e.to_string()) }
+impl QWeight {
+    pub fn new(dtype: DType, rows: usize, cols: usize, bytes: Bytes) -> Result<QWeight, ModelError> {
+        let rb = dtype.bytes_for(cols as u64).filter(|_| dtype.decodable())
+            .ok_or_else(|| ModelError::Shape(format!("{dtype:?} rows of {cols} values cannot be kept quantised")))? as usize;
+        if rows.checked_mul(rb) != Some(bytes.len()) {
+            return Err(ModelError::Shape(format!("{dtype:?} {rows}x{cols} needs {rows}*{rb} bytes, got {}", bytes.len())));
+        }
+        Ok(QWeight { dtype, rows, cols, bytes })
+    }
+    pub fn row_bytes(&self) -> usize { self.dtype.bytes_for(self.cols as u64).unwrap_or(0) as usize }
+    fn row_into(&self, r: usize, buf: &mut Vec<f32>) -> Result<(), ModelError> {
+        let rb = self.row_bytes();
+        let b = self.bytes.as_slice().get(r * rb..(r + 1) * rb).ok_or_else(|| ModelError::Shape(format!("row {r} out of range")))?;
+        dequantize(self.dtype, b, self.cols, buf).map_err(qerr)
+    }
+}
+
+#[derive(Clone)]
+pub enum Weight { Dense(Vec<f32>), Quant(QWeight) }
+impl Default for Weight { fn default() -> Self { Weight::Dense(Vec::new()) } }
+impl From<Vec<f32>> for Weight { fn from(v: Vec<f32>) -> Self { Weight::Dense(v) } }
+
+fn threads() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+}
+/// Dot product with eight independent accumulators, so the compiler can vectorise it.
+pub fn dot8(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len().min(b.len());
+    let (a, b) = (&a[..n], &b[..n]);
+    let (ca, cb) = (a.chunks_exact(8), b.chunks_exact(8));
+    let (ra, rb) = (ca.remainder(), cb.remainder());
+    let mut acc = [0f32; 8];
+    for (x, y) in ca.zip(cb) { for i in 0..8 { acc[i] += x[i] * y[i]; } }
+    let mut s: f32 = acc.iter().sum();
+    for (x, y) in ra.iter().zip(rb) { s += x * y; }
+    s
+}
+fn dense_rows(w: &[f32], cols: usize, x: &[f32], out: &mut [f32]) {
+    for (o, row) in out.iter_mut().zip(w.chunks_exact(cols)) { *o = dot8(row, x); }
+}
+fn dense_matvec(w: &[f32], cols: usize, x: &[f32], out: &mut [f32]) {
+    if cols == 0 { out.fill(0.0); return; }
+    let nt = threads();
+    if w.len() < (1 << 18) || nt == 1 || out.len() < 2 * nt { return dense_rows(w, cols, x, out); }
+    let per = out.len().div_ceil(nt);
+    std::thread::scope(|s| {
+        for (o, wc) in out.chunks_mut(per).zip(w.chunks(per * cols)) { s.spawn(move || dense_rows(wc, cols, x, o)); }
+    });
+}
+
+impl Weight {
+    /// Number of elements.
+    pub fn len(&self) -> usize { match self { Weight::Dense(v) => v.len(), Weight::Quant(q) => q.rows * q.cols } }
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn as_dense(&self) -> Option<&[f32]> { if let Weight::Dense(v) = self { Some(v) } else { None } }
+    pub fn is_mapped(&self) -> bool { matches!(self, Weight::Quant(q) if q.bytes.is_mapped()) }
+    /// Bytes this weight occupies as stored (resident for owned data, address space for mapped).
+    pub fn stored_bytes(&self) -> usize { match self { Weight::Dense(v) => v.len() * 4, Weight::Quant(q) => q.bytes.len() } }
+    pub fn to_f32(&self) -> Vec<f32> {
+        match self {
+            Weight::Dense(v) => v.clone(),
+            Weight::Quant(q) => { let mut o = vec![]; let _ = dequantize(q.dtype, q.bytes.as_slice(), q.rows * q.cols, &mut o); o }
+        }
+    }
+    fn rows_of(&self, cols: usize) -> usize {
+        match self { Weight::Dense(v) => v.len().checked_div(cols).unwrap_or(0), Weight::Quant(q) => q.rows }
+    }
+    /// `out = W · x`, `W` being `out.len() × cols`.
+    pub fn matvec(&self, cols: usize, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
+        let bad = || ModelError::Shape(format!("matvec {}x{} with a vector of {}", out.len(), cols, x.len()));
+        if x.len() != cols { return Err(bad()); }
+        match self {
+            Weight::Dense(w) => { if w.len() != out.len() * cols { return Err(bad()); } dense_matvec(w, cols, x, out); Ok(()) }
+            Weight::Quant(q) => {
+                if q.cols != cols || q.rows != out.len() { return Err(bad()); }
+                qmatvec(q.dtype, q.bytes.as_slice(), q.rows, q.cols, x, out).map_err(qerr)
+            }
+        }
+    }
+    /// Rows `r0..r0+n` times all `b` token vectors, written as `yt[i*b + t]`.
+    fn tile(&self, r0: usize, n: usize, cols: usize, x: &[f32], b: usize, yt: &mut [f32]) -> Result<(), ModelError> {
+        let mut buf = Vec::new();
+        for i in 0..n {
+            let r = r0 + i;
+            let row: &[f32] = match self {
+                Weight::Dense(w) => &w[r * cols..(r + 1) * cols],
+                Weight::Quant(q) => { q.row_into(r, &mut buf)?; &buf }
+            };
+            for t in 0..b { yt[i * b + t] = dot8(row, &x[t * cols..(t + 1) * cols]); }
+        }
+        Ok(())
+    }
+    /// `out[t] = W · x[t]` for `b` token vectors at once. Each weight row is read once for the whole
+    /// batch (quantised rows are decoded once), which is what makes prefill faster than `b` matvecs.
+    pub fn matmat(&self, cols: usize, x: &[f32], b: usize, out: &mut [f32], yt: &mut Vec<f32>) -> Result<(), ModelError> {
+        let rows = self.rows_of(cols);
+        if b == 0 || x.len() != b * cols || out.len() != b * rows { return Err(ModelError::Shape("matmat sizes disagree".into())); }
+        if b == 1 || (b < 4 && matches!(self, Weight::Quant(_))) {
+            for t in 0..b { self.matvec(cols, &x[t * cols..(t + 1) * cols], &mut out[t * rows..(t + 1) * rows])?; }
+            return Ok(());
+        }
+        yt.clear();
+        yt.resize(rows * b, 0.0);
+        let nt = threads();
+        if rows * cols * b < (1 << 18) || nt == 1 || rows < 2 * nt {
+            self.tile(0, rows, cols, x, b, yt)?;
+        } else {
+            let per = rows.div_ceil(nt);
+            let res: Vec<Result<(), ModelError>> = std::thread::scope(|s| {
+                let hs: Vec<_> = yt.chunks_mut(per * b).enumerate()
+                    .map(|(i, c)| s.spawn(move || self.tile(i * per, c.len() / b, cols, x, b, c))).collect();
+                hs.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(ModelError::Shape("worker panicked".into())))).collect()
+            });
+            for r in res { r?; }
+        }
+        for r in 0..rows { for t in 0..b { out[t * rows + r] = yt[r * b + t]; } }
+        Ok(())
+    }
+    /// Copy row `row` (length `cols`) into `out`, decoding it if quantised.
+    pub fn row_into(&self, row: usize, cols: usize, out: &mut [f32], tmp: &mut Vec<f32>) -> Result<(), ModelError> {
+        match self {
+            Weight::Dense(w) => out.copy_from_slice(w.get(row * cols..(row + 1) * cols).ok_or(ModelError::Token(row))?),
+            Weight::Quant(q) => {
+                if row >= q.rows || q.cols != cols { return Err(ModelError::Token(row)); }
+                q.row_into(row, tmp)?;
+                out.copy_from_slice(tmp);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default, Clone)]
 pub struct Layer {
-    pub attn_norm: Vec<f32>, pub wq: Vec<f32>, pub wk: Vec<f32>, pub wv: Vec<f32>, pub wo: Vec<f32>,
-    pub ffn_norm: Vec<f32>, pub w_gate: Vec<f32>, pub w_up: Vec<f32>, pub w_down: Vec<f32>,
+    pub attn_norm: Vec<f32>, pub attn_norm_b: Option<Vec<f32>>,
+    pub wq: Weight, pub wk: Weight, pub wv: Weight, pub wo: Weight,
+    pub bq: Option<Vec<f32>>, pub bk: Option<Vec<f32>>, pub bv: Option<Vec<f32>>, pub bo: Option<Vec<f32>>,
+    /// Per-head RMSNorm weights (`head_dim` values) when `spec.qk_norm`.
+    pub q_norm: Option<Vec<f32>>, pub k_norm: Option<Vec<f32>>,
+    /// Norm applied to the attention output before it is added back (`spec.post_norms`).
+    pub post_attn_norm: Option<Vec<f32>>,
+    /// Norm in front of the MLP (Llama's `post_attention_layernorm`, Gemma's `pre_feedforward_layernorm`).
+    pub ffn_norm: Vec<f32>, pub ffn_norm_b: Option<Vec<f32>>,
+    /// Empty when the MLP is not gated.
+    pub w_gate: Weight, pub b_gate: Option<Vec<f32>>,
+    pub w_up: Weight, pub b_up: Option<Vec<f32>>,
+    pub w_down: Weight, pub b_down: Option<Vec<f32>>,
+    pub post_ffn_norm: Option<Vec<f32>>,
 }
+#[derive(Default, Clone)]
 pub struct Weights {
-    pub embed: Vec<f32>, pub layers: Vec<Layer>, pub final_norm: Vec<f32>,
+    pub embed: Weight, pub layers: Vec<Layer>, pub final_norm: Vec<f32>, pub final_norm_b: Option<Vec<f32>>,
     /// `None` = tied to `embed`.
-    pub lm_head: Option<Vec<f32>>,
+    pub lm_head: Option<Weight>, pub lm_head_b: Option<Vec<f32>>,
 }
-pub struct Model { pub spec: Spec, pub w: Weights }
+impl Weights {
+    /// Bytes taken by the big matrices as stored.
+    pub fn stored_bytes(&self) -> usize {
+        self.embed.stored_bytes() + self.lm_head.as_ref().map_or(0, Weight::stored_bytes)
+            + self.layers.iter().map(|l| [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down].iter().map(|w| w.stored_bytes()).sum::<usize>()).sum::<usize>()
+    }
+}
+pub struct Model {
+    pub spec: Spec, pub w: Weights,
+    rope_global: (Vec<f64>, f64),
+    rope_local: (Vec<f64>, f64),
+}
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ModelError { Shape(String), Token(usize), ContextFull(usize) }
+pub enum ModelError { Shape(String), Token(usize), ContextFull(usize), NoTokens }
 impl std::fmt::Display for ModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ModelError::Shape(s) => write!(f, "weights do not match the architecture: {s}"),
             ModelError::Token(t) => write!(f, "token {t} is outside the vocabulary"),
             ModelError::ContextFull(n) => write!(f, "the context window of {n} tokens is full"),
+            ModelError::NoTokens => write!(f, "no tokens were given"),
         }
     }
 }
 impl std::error::Error for ModelError {}
 
-/// Per-conversation state: the KV cache grows one position at a time.
+// ------------------------------------------------------------------ primitives
+
+// ------------------------------------------------------------------ primitives
+
+/// RMS- or layer-norm according to the spec; `w` is applied as `1 + w` for Gemma-style RMSNorm.
+pub fn norm(spec: &Spec, x: &[f32], w: &[f32], b: Option<&[f32]>, out: &mut [f32]) {
+    let n = x.len().max(1) as f32;
+    let eps = spec.norm_eps as f32;
+    match spec.norm {
+        NormKind::Rms => {
+            let k = 1.0 / (x.iter().map(|v| v * v).sum::<f32>() / n + eps).sqrt();
+            let off = if spec.norm_offset { 1.0 } else { 0.0 };
+            for ((o, v), g) in out.iter_mut().zip(x).zip(w) { *o = v * k * (g + off); }
+        }
+        NormKind::Layer => {
+            let mean = x.iter().sum::<f32>() / n;
+            let k = 1.0 / (x.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / n + eps).sqrt();
+            for (i, ((o, v), g)) in out.iter_mut().zip(x).zip(w).enumerate() {
+                *o = (v - mean) * k * g + b.map_or(0.0, |b| b[i]);
+            }
+        }
+    }
+}
+
+fn erf(x: f32) -> f32 {
+    // Abramowitz & Stegun 7.1.26, |error| < 1.5e-7
+    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
+    let y = 1.0 - (((((1.061_405_4 * t - 1.453_152_1) * t) + 1.421_413_8) * t - 0.284_496_72) * t + 0.254_829_6) * t * (-x * x).exp();
+    y.copysign(x)
+}
+pub fn activate(a: Act, x: f32) -> f32 {
+    match a {
+        Act::Silu => x / (1.0 + (-x).exp()),
+        Act::GeluTanh => 0.5 * x * (1.0 + (0.797_884_6 * (x + 0.044_715 * x * x * x)).tanh()),
+        Act::Gelu => 0.5 * x * (1.0 + erf(x * std::f32::consts::FRAC_1_SQRT_2)),
+    }
+}
+
+/// Inverse frequencies (one per rotated pair) and the cos/sin magnitude factor for a RoPE setup.
+pub fn rope_inv_freq(theta: f64, rotary_dim: usize, scaling: RopeScaling) -> (Vec<f64>, f64) {
+    let half = rotary_dim / 2;
+    let base: Vec<f64> = (0..half).map(|i| theta.powf(-(2.0 * i as f64) / rotary_dim as f64)).collect();
+    match scaling {
+        RopeScaling::None => (base, 1.0),
+        RopeScaling::Linear { factor } => (base.into_iter().map(|f| f / factor).collect(), 1.0),
+        RopeScaling::Llama3 { factor, low_freq_factor, high_freq_factor, original_max } => {
+            let (low_w, high_w) = (original_max / low_freq_factor, original_max / high_freq_factor);
+            let v = base.into_iter().map(|f| {
+                let wl = 2.0 * std::f64::consts::PI / f;
+                if wl < high_w { f } else if wl > low_w { f / factor } else {
+                    let sm = (original_max / wl - low_freq_factor) / (high_freq_factor - low_freq_factor);
+                    (1.0 - sm) * f / factor + sm * f
+                }
+            }).collect();
+            (v, 1.0)
+        }
+        RopeScaling::Yarn { factor, original_max, beta_fast, beta_slow, mscale } => {
+            let d = rotary_dim as f64;
+            let corr = |rot: f64| d * (original_max / (rot * 2.0 * std::f64::consts::PI)).ln() / (2.0 * theta.ln());
+            let lo = corr(beta_fast).floor().max(0.0);
+            let hi = corr(beta_slow).ceil().min(d - 1.0);
+            let hi = if hi == lo { hi + 0.001 } else { hi };
+            let v = base.into_iter().enumerate().map(|(i, f)| {
+                let extra = 1.0 - ((i as f64 - lo) / (hi - lo)).clamp(0.0, 1.0);
+                f / factor * (1.0 - extra) + f * extra
+            }).collect();
+            (v, mscale)
+        }
+    }
+}
+
+/// Rotate the first `2 * inv.len()` dimensions of one head (rotate-half pairing).
+pub fn rope_apply(head: &mut [f32], pos: usize, (inv, mscale): &(Vec<f64>, f64)) {
+    let half = inv.len();
+    for (i, f) in inv.iter().enumerate() {
+        let (s, c) = (pos as f64 * f).sin_cos();
+        let (s, c) = (s * mscale, c * mscale);
+        let (a, b) = (head[i] as f64, head[i + half] as f64);
+        head[i] = (a * c - b * s) as f32;
+        head[i + half] = (a * s + b * c) as f32;
+    }
+}
+
+fn add_bias(v: &mut [f32], b: &Option<Vec<f32>>) { if let Some(b) = b { v.iter_mut().zip(b).for_each(|(a, b)| *a += b); } }
+fn softcap(v: f32, cap: f64) -> f32 { if cap > 0.0 { (cap as f32) * (v / cap as f32).tanh() } else { v } }
+
+fn rope_table(pos: usize, (inv, ms): &(Vec<f64>, f64), cos: &mut [f64], sin: &mut [f64]) {
+    for (i, f) in inv.iter().enumerate() {
+        let (s, c) = (pos as f64 * f).sin_cos();
+        cos[i] = c * ms;
+        sin[i] = s * ms;
+    }
+}
+/// Rotate one head with a precomputed cos/sin row; identical numbers to [`rope_apply`].
+fn rope_cs(head: &mut [f32], cos: &[f64], sin: &[f64]) {
+    let half = cos.len();
+    for i in 0..half {
+        let (a, b) = (head[i] as f64, head[i + half] as f64);
+        head[i] = (a * cos[i] - b * sin[i]) as f32;
+        head[i + half] = (a * sin[i] + b * cos[i]) as f32;
+    }
+}
+
+// ------------------------------------------------------------------ KV cache
+
+/// Precision of the key/value cache. `F16` halves its memory, `Q8` (int8 with one scale per head
+/// and position) quarters it, at a small cost in accuracy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum KvKind { #[default] F32, F16, Q8 }
+
+fn f16_lut() -> &'static [f32] {
+    static L: OnceLock<Vec<f32>> = OnceLock::new();
+    L.get_or_init(|| (0..=65535u16).map(crate::quant::f16_to_f32).collect())
+}
+/// Round-to-nearest-even f32 → IEEE half.
+pub fn f32_to_f16(x: f32) -> u16 {
+    let b = x.to_bits();
+    let sign = ((b >> 16) & 0x8000) as u16;
+    let e = ((b >> 23) & 0xff) as i32;
+    let m = b & 0x7f_ffff;
+    if e == 0xff { return sign | 0x7c00 | if m != 0 { 0x200 } else { 0 }; }
+    let ne = e - 127 + 15;
+    if ne >= 31 { return sign | 0x7c00; }
+    if ne <= 0 {
+        if ne < -10 { return sign; }
+        let m = m | 0x80_0000;
+        let shift = (14 - ne) as u32;
+        let mut h = (m >> shift) as u16;
+        let (rem, mid) = (m & ((1 << shift) - 1), 1u32 << (shift - 1));
+        if rem > mid || (rem == mid && h & 1 == 1) { h += 1; }
+        return sign | h;
+    }
+    let mut h = (((ne as u32) << 10) | (m >> 13)) as u16;
+    let rem = m & 0x1fff;
+    if rem > 0x1000 || (rem == 0x1000 && h & 1 == 1) { h += 1; }
+    sign | h
+}
+
+#[derive(Clone)]
+enum Plane { F32(Vec<f32>), F16(Vec<u16>), Q8 { q: Vec<i8>, s: Vec<f32> } }
+impl Default for Plane { fn default() -> Self { Plane::F32(vec![]) } }
+impl Plane {
+    fn new(kind: KvKind) -> Plane {
+        match kind { KvKind::F32 => Plane::F32(vec![]), KvKind::F16 => Plane::F16(vec![]), KvKind::Q8 => Plane::Q8 { q: vec![], s: vec![] } }
+    }
+    fn write(&mut self, slot: usize, kd: usize, hd: usize, src: &[f32]) {
+        let (lo, hi) = (slot * kd, (slot + 1) * kd);
+        match self {
+            Plane::F32(v) => { if v.len() < hi { v.resize(hi, 0.0); } v[lo..hi].copy_from_slice(src); }
+            Plane::F16(v) => {
+                if v.len() < hi { v.resize(hi, 0); }
+                for (d, s) in v[lo..hi].iter_mut().zip(src) { *d = f32_to_f16(*s); }
+            }
+            Plane::Q8 { q, s } => {
+                let kvh = kd / hd;
+                if q.len() < hi { q.resize(hi, 0); }
+                if s.len() < (slot + 1) * kvh { s.resize((slot + 1) * kvh, 0.0); }
+                for h in 0..kvh {
+                    let c = &src[h * hd..(h + 1) * hd];
+                    let amax = c.iter().fold(0f32, |a, v| a.max(v.abs()));
+                    let sc = if amax > 0.0 { amax / 127.0 } else { 0.0 };
+                    s[slot * kvh + h] = sc;
+                    let inv = if sc > 0.0 { 1.0 / sc } else { 0.0 };
+                    for (d, v) in q[lo + h * hd..lo + (h + 1) * hd].iter_mut().zip(c) { *d = (v * inv).round().clamp(-127.0, 127.0) as i8; }
+                }
+            }
+        }
+    }
+    fn dot(&self, slot: usize, kd: usize, hd: usize, head: usize, qh: &[f32]) -> f32 {
+        let o = slot * kd + head * hd;
+        match self {
+            Plane::F32(v) => dot8(qh, &v[o..o + hd]),
+            Plane::F16(v) => { let l = f16_lut(); qh.iter().zip(&v[o..o + hd]).map(|(a, b)| a * l[*b as usize]).sum() }
+            Plane::Q8 { q, s } => qh.iter().zip(&q[o..o + hd]).map(|(a, b)| a * *b as f32).sum::<f32>() * s[slot * (kd / hd) + head],
+        }
+    }
+    fn axpy(&self, slot: usize, kd: usize, hd: usize, head: usize, p: f32, out: &mut [f32]) {
+        let o = slot * kd + head * hd;
+        match self {
+            Plane::F32(v) => for (d, x) in out.iter_mut().zip(&v[o..o + hd]) { *d += p * x; },
+            Plane::F16(v) => { let l = f16_lut(); for (d, x) in out.iter_mut().zip(&v[o..o + hd]) { *d += p * l[*x as usize]; } }
+            Plane::Q8 { q, s } => { let k = p * s[slot * (kd / hd) + head]; for (d, x) in out.iter_mut().zip(&q[o..o + hd]) { *d += k * *x as f32; } }
+        }
+    }
+    fn bytes(&self) -> usize {
+        match self { Plane::F32(v) => v.len() * 4, Plane::F16(v) => v.len() * 2, Plane::Q8 { q, s } => q.len() + s.len() * 4 }
+    }
+}
+
+#[derive(Clone, Default)]
+struct LayerKv { k: Plane, v: Plane, /// ring capacity; 0 = keep everything
+    cap: usize }
+impl LayerKv { fn slot(&self, pos: usize) -> usize { if self.cap > 0 { pos % self.cap } else { pos } } }
+
+/// Reusable work buffers, so decoding allocates nothing per token.
 #[derive(Default)]
-pub struct State { k: Vec<Vec<f32>>, v: Vec<Vec<f32>>, pub pos: usize }
+struct Scratch {
+    x: Vec<f32>, xb: Vec<f32>, xm: Vec<f32>, q: Vec<f32>, k: Vec<f32>, v: Vec<f32>, att: Vec<f32>, proj: Vec<f32>,
+    tmp: Vec<f32>, g: Vec<f32>, u: Vec<f32>, mlp: Vec<f32>, scores: Vec<f32>, rowtmp: Vec<f32>, headtmp: Vec<f32>, yt: Vec<f32>,
+}
+fn fit(v: &mut Vec<f32>, n: usize) { v.clear(); v.resize(n, 0.0); }
+
+/// Per-conversation state: the KV cache (grows, or wraps for sliding-window layers) and scratch buffers.
+#[derive(Default)]
+pub struct State { kv: Vec<LayerKv>, pub pos: usize, sc: Scratch }
+impl State {
+    /// Bytes currently held by the KV cache.
+    pub fn kv_bytes(&self) -> usize { self.kv.iter().map(|l| l.k.bytes() + l.v.bytes()).sum() }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attend(kv: &LayerKv, kd: usize, hd: usize, nh: usize, group: usize, first: usize, n: usize, scale: f32, cap: f64,
+          q: &[f32], att: &mut [f32], scores: &mut [f32]) {
+    let head = |h: usize, out: &mut [f32], sc: &mut [f32]| {
+        let (kvh, qh) = (h / group, &q[h * hd..(h + 1) * hd]);
+        for (i, s) in sc.iter_mut().enumerate() { *s = softcap(kv.k.dot(kv.slot(first + i), kd, hd, kvh, qh) * scale, cap); }
+        softmax(sc);
+        out.fill(0.0);
+        for (i, p) in sc.iter().enumerate() { kv.v.axpy(kv.slot(first + i), kd, hd, kvh, *p, out); }
+    };
+    let nt = threads().min(nh);
+    if nt <= 1 || nh * n * hd < (1 << 19) {
+        for (h, (o, sc)) in att.chunks_mut(hd).zip(scores.chunks_mut(n)).enumerate() { head(h, o, sc); }
+    } else {
+        let per = nh.div_ceil(nt);
+        let head = &head;
+        std::thread::scope(|s| {
+            for (gi, (oa, sa)) in att.chunks_mut(per * hd).zip(scores.chunks_mut(per * n)).enumerate() {
+                s.spawn(move || { for (j, (o, sc)) in oa.chunks_mut(hd).zip(sa.chunks_mut(n)).enumerate() { head(gi * per + j, o, sc); } });
+            }
+        });
+    }
+}
 
 impl Model {
     pub fn new(spec: Spec, w: Weights) -> Result<Model, ModelError> {
         let (h, ff, v) = (spec.hidden as usize, spec.ffn as usize, spec.vocab as usize);
+        let (hd, rd) = (spec.head_dim as usize, spec.rotary_dim as usize);
         let (qd, kd) = ((spec.heads * spec.head_dim) as usize, (spec.kv_heads * spec.head_dim) as usize);
         if spec.heads % spec.kv_heads != 0 { return Err(ModelError::Shape("heads not divisible by kv heads".into())); }
+        if rd == 0 || rd % 2 != 0 || rd > hd { return Err(ModelError::Shape(format!("rotary_dim {rd} must be even and within head_dim {hd}"))); }
         let chk = |name: &str, got: usize, want: usize| {
             if got == want { Ok(()) } else { Err(ModelError::Shape(format!("{name}: {got} values, expected {want}"))) }
         };
-        chk("embed", w.embed.len(), v * h)?;
+        let chk_w = |name: &str, w: &Weight, rows: usize, cols: usize| match w {
+            Weight::Dense(x) => chk(name, x.len(), rows * cols),
+            Weight::Quant(q) if rows * cols == 0 => chk(name, q.rows * q.cols, 0),
+            Weight::Quant(q) if q.rows == rows && q.cols == cols => Ok(()),
+            Weight::Quant(q) => Err(ModelError::Shape(format!("{name}: stored as {}x{}, expected {rows}x{cols}", q.rows, q.cols))),
+        };
+        let chk_opt = |name: &str, got: &Option<Vec<f32>>, want: usize, required: bool| match got {
+            Some(g) => chk(name, g.len(), want),
+            None if required => Err(ModelError::Shape(format!("{name} is missing"))),
+            None => Ok(()),
+        };
+        chk_w("embed", &w.embed, v, h)?;
         chk("final_norm", w.final_norm.len(), h)?;
-        if let Some(l) = &w.lm_head { chk("lm_head", l.len(), v * h)?; }
+        chk_opt("final_norm bias", &w.final_norm_b, h, false)?;
+        if let Some(l) = &w.lm_head { chk_w("lm_head", l, v, h)?; }
+        chk_opt("lm_head bias", &w.lm_head_b, v, false)?;
         chk("layers", w.layers.len(), spec.layers as usize)?;
         for (i, l) in w.layers.iter().enumerate() {
-            for (n, got, want) in [("attn_norm", l.attn_norm.len(), h), ("wq", l.wq.len(), qd * h), ("wk", l.wk.len(), kd * h),
-                ("wv", l.wv.len(), kd * h), ("wo", l.wo.len(), h * qd), ("ffn_norm", l.ffn_norm.len(), h),
-                ("w_gate", l.w_gate.len(), ff * h), ("w_up", l.w_up.len(), ff * h), ("w_down", l.w_down.len(), h * ff)] {
-                chk(&format!("layer {i} {n}"), got, want)?;
+            let gate = if spec.gated_mlp { ff } else { 0 };
+            for (n, wt, rows, cols) in [("wq", &l.wq, qd, h), ("wk", &l.wk, kd, h), ("wv", &l.wv, kd, h), ("wo", &l.wo, h, qd),
+                ("w_gate", &l.w_gate, gate, h), ("w_up", &l.w_up, ff, h), ("w_down", &l.w_down, h, ff)] {
+                chk_w(&format!("layer {i} {n}"), wt, rows, cols)?;
             }
+            chk(&format!("layer {i} attn_norm"), l.attn_norm.len(), h)?;
+            chk(&format!("layer {i} ffn_norm"), l.ffn_norm.len(), h)?;
+            let c = |n: &str, g: &Option<Vec<f32>>, want: usize, req: bool| chk_opt(&format!("layer {i} {n}"), g, want, req);
+            c("attn_norm bias", &l.attn_norm_b, h, spec.norm == NormKind::Layer)?;
+            c("ffn_norm bias", &l.ffn_norm_b, h, spec.norm == NormKind::Layer)?;
+            c("bq", &l.bq, qd, spec.qkv_bias)?; c("bk", &l.bk, kd, spec.qkv_bias)?; c("bv", &l.bv, kd, spec.qkv_bias)?;
+            c("bo", &l.bo, h, false)?; c("b_gate", &l.b_gate, ff, false)?; c("b_up", &l.b_up, ff, false)?; c("b_down", &l.b_down, h, false)?;
+            c("q_norm", &l.q_norm, hd, spec.qk_norm)?; c("k_norm", &l.k_norm, hd, spec.qk_norm)?;
+            c("post_attn_norm", &l.post_attn_norm, h, spec.post_norms)?; c("post_ffn_norm", &l.post_ffn_norm, h, spec.post_norms)?;
         }
-        Ok(Model { spec, w })
+        if spec.norm == NormKind::Layer { chk_opt("final_norm bias", &w.final_norm_b, h, true)?; }
+        let rope_global = rope_inv_freq(spec.rope_theta, rd, spec.rope_scaling);
+        let rope_local = if spec.rope_theta_local > 0.0 { rope_inv_freq(spec.rope_theta_local, rd, RopeScaling::None) } else { rope_global.clone() };
+        Ok(Model { spec, w, rope_global, rope_local })
     }
 
-    pub fn new_state(&self) -> State {
-        State { k: vec![vec![]; self.spec.layers as usize], v: vec![vec![]; self.spec.layers as usize], pos: 0 }
+    /// Bytes taken by the big weight matrices as stored (a memory-mapped model counts its file size).
+    pub fn weight_bytes(&self) -> usize { self.w.stored_bytes() }
+
+    pub fn new_state(&self) -> State { self.new_state_with(KvKind::F32) }
+    /// State with the chosen KV precision. Sliding-window layers keep a ring of `sliding_window` positions.
+    pub fn new_state_with(&self, kind: KvKind) -> State {
+        let kv = (0..self.spec.layers as usize).map(|i| LayerKv {
+            k: Plane::new(kind), v: Plane::new(kind),
+            cap: if self.spec.is_sliding(i) { self.spec.sliding_window as usize } else { 0 },
+        }).collect();
+        State { kv, pos: 0, sc: Scratch::default() }
     }
 
     /// Feed one token, return the logits for the next one.
-    pub fn forward(&self, st: &mut State, token: usize) -> Result<Vec<f32>, ModelError> {
+    pub fn forward(&self, st: &mut State, token: usize) -> Result<Vec<f32>, ModelError> { self.forward_batch(st, &[token]) }
+
+    /// Feed many tokens (a prompt) and return the logits after the last one. Equal, within rounding,
+    /// to calling [`Model::forward`] for each token, but each weight row is read once per chunk.
+    pub fn forward_batch(&self, st: &mut State, tokens: &[usize]) -> Result<Vec<f32>, ModelError> {
+        let s = &self.spec;
+        if tokens.is_empty() { return Err(ModelError::NoTokens); }
+        if let Some(&t) = tokens.iter().find(|&&t| t >= s.vocab as usize) { return Err(ModelError::Token(t)); }
+        if st.kv.len() != s.layers as usize { return Err(ModelError::Shape("the state was not made by new_state".into())); }
+        if st.pos + tokens.len() > s.context as usize { return Err(ModelError::ContextFull(s.context as usize)); }
+        let chunks = tokens.len().div_ceil(PREFILL_CHUNK);
+        let mut last = vec![];
+        for (i, c) in tokens.chunks(PREFILL_CHUNK).enumerate() { last = self.run_chunk(st, c, i + 1 == chunks)?; }
+        Ok(last)
+    }
+
+    fn run_chunk(&self, st: &mut State, tokens: &[usize], want_logits: bool) -> Result<Vec<f32>, ModelError> {
         let s = &self.spec;
         let (h, hd, nh, nkv) = (s.hidden as usize, s.head_dim as usize, s.heads as usize, s.kv_heads as usize);
-        let (qd, kd, ff) = (nh * hd, nkv * hd, s.ffn as usize);
-        if token >= s.vocab as usize { return Err(ModelError::Token(token)); }
-        if st.pos >= s.context as usize { return Err(ModelError::ContextFull(s.context as usize)); }
-        let eps = s.norm_eps as f32;
-        let mut x = self.w.embed[token * h..(token + 1) * h].to_vec();
-        let (mut xb, mut q, mut k, mut v) = (vec![0.0; h], vec![0.0; qd], vec![0.0; kd], vec![0.0; kd]);
-        let (mut att, mut proj) = (vec![0.0; qd], vec![0.0; h]);
-        let (mut g, mut u) = (vec![0.0; ff], vec![0.0; ff]);
-        let group = nh / nkv;
-        let scale = 1.0 / (hd as f32).sqrt();
-        for (li, l) in self.w.layers.iter().enumerate() {
-            rmsnorm(&x, &l.attn_norm, eps, &mut xb);
-            matvec(&l.wq, h, &xb, &mut q);
-            matvec(&l.wk, h, &xb, &mut k);
-            matvec(&l.wv, h, &xb, &mut v);
-            for hq in q.chunks_mut(hd) { rope(hq, st.pos, s.rope_theta); }
-            for hk in k.chunks_mut(hd) { rope(hk, st.pos, s.rope_theta); }
-            st.k[li].extend_from_slice(&k);
-            st.v[li].extend_from_slice(&v);
-            let n = st.pos + 1;
-            let mut scores = vec![0.0f32; n];
-            for head in 0..nh {
-                let kvh = head / group;
-                let qh = &q[head * hd..(head + 1) * hd];
-                for (t, sc) in scores.iter_mut().enumerate() {
-                    let kt = &st.k[li][t * kd + kvh * hd..t * kd + (kvh + 1) * hd];
-                    *sc = qh.iter().zip(kt).map(|(a, b)| a * b).sum::<f32>() * scale;
-                }
-                softmax(&mut scores);
-                let out = &mut att[head * hd..(head + 1) * hd];
-                out.fill(0.0);
-                for (t, p) in scores.iter().enumerate() {
-                    let vt = &st.v[li][t * kd + kvh * hd..t * kd + (kvh + 1) * hd];
-                    for (o, vv) in out.iter_mut().zip(vt) { *o += p * vv; }
-                }
-            }
-            matvec(&l.wo, qd, &att, &mut proj);
-            x.iter_mut().zip(&proj).for_each(|(a, b)| *a += b);
-            rmsnorm(&x, &l.ffn_norm, eps, &mut xb);
-            matvec(&l.w_gate, h, &xb, &mut g);
-            matvec(&l.w_up, h, &xb, &mut u);
-            g.iter_mut().zip(&u).for_each(|(a, b)| *a = silu(*a) * b);
-            matvec(&l.w_down, ff, &g, &mut proj);
-            x.iter_mut().zip(&proj).for_each(|(a, b)| *a += b);
+        let (qd, kd, ff, b) = (nh * hd, nkv * hd, s.ffn as usize, tokens.len());
+        let (group, pos0) = (nh / nkv, st.pos);
+        let scale = if s.attn_scale > 0.0 { s.attn_scale as f32 } else { 1.0 / (hd as f32).sqrt() };
+        let half = self.rope_global.0.len();
+        let State { kv, sc, .. } = st;
+        for (v, n) in [(&mut sc.x, b * h), (&mut sc.xb, b * h), (&mut sc.xm, b * h), (&mut sc.q, b * qd), (&mut sc.k, b * kd), (&mut sc.v, b * kd),
+            (&mut sc.att, b * qd), (&mut sc.proj, b * h), (&mut sc.tmp, h), (&mut sc.g, b * ff), (&mut sc.u, b * ff), (&mut sc.mlp, b * h), (&mut sc.headtmp, hd)] { fit(v, n); }
+        let Scratch { x, xb, xm, q, k, v, att, proj, tmp, g, u, mlp, scores, rowtmp, headtmp, yt } = sc;
+        let (mut cos_g, mut sin_g, mut cos_l, mut sin_l) = (vec![0.0; b * half], vec![0.0; b * half], vec![0.0; b * half], vec![0.0; b * half]);
+        for (t, &tok) in tokens.iter().enumerate() {
+            let row = &mut x[t * h..(t + 1) * h];
+            self.w.embed.row_into(tok, h, row, rowtmp)?;
+            if s.embed_scale != 1.0 { row.iter_mut().for_each(|a| *a *= s.embed_scale as f32); }
+            rope_table(pos0 + t, &self.rope_global, &mut cos_g[t * half..(t + 1) * half], &mut sin_g[t * half..(t + 1) * half]);
+            rope_table(pos0 + t, &self.rope_local, &mut cos_l[t * half..(t + 1) * half], &mut sin_l[t * half..(t + 1) * half]);
         }
-        st.pos += 1;
-        rmsnorm(&x, &self.w.final_norm, eps, &mut xb);
-        let head = self.w.lm_head.as_deref().unwrap_or(&self.w.embed);
+        for (li, l) in self.w.layers.iter().enumerate() {
+            let sliding = s.is_sliding(li);
+            let (cos, sin) = if sliding && s.rope_theta_local > 0.0 { (&cos_l, &sin_l) } else { (&cos_g, &sin_g) };
+            for t in 0..b { norm(s, &x[t * h..(t + 1) * h], &l.attn_norm, l.attn_norm_b.as_deref(), &mut xb[t * h..(t + 1) * h]); }
+            l.wq.matmat(h, xb, b, q, yt)?;
+            l.wk.matmat(h, xb, b, k, yt)?;
+            l.wv.matmat(h, xb, b, v, yt)?;
+            for t in 0..b {
+                let (qt, kt) = (&mut q[t * qd..(t + 1) * qd], &mut k[t * kd..(t + 1) * kd]);
+                add_bias(qt, &l.bq); add_bias(kt, &l.bk); add_bias(&mut v[t * kd..(t + 1) * kd], &l.bv);
+                if let (Some(qn), Some(kn)) = (&l.q_norm, &l.k_norm) {
+                    for hq in qt.chunks_mut(hd) { norm(s, hq, qn, None, headtmp); hq.copy_from_slice(headtmp); }
+                    for hk in kt.chunks_mut(hd) { norm(s, hk, kn, None, headtmp); hk.copy_from_slice(headtmp); }
+                }
+                let (c, sn) = (&cos[t * half..(t + 1) * half], &sin[t * half..(t + 1) * half]);
+                for hq in qt.chunks_mut(hd) { rope_cs(hq, c, sn); }
+                for hk in kt.chunks_mut(hd) { rope_cs(hk, c, sn); }
+            }
+            let lkv = &mut kv[li];
+            for t in 0..b {
+                let p = pos0 + t;
+                let slot = lkv.slot(p);
+                lkv.k.write(slot, kd, hd, &k[t * kd..(t + 1) * kd]);
+                lkv.v.write(slot, kd, hd, &v[t * kd..(t + 1) * kd]);
+                let first = if sliding { (p + 1).saturating_sub(s.sliding_window as usize) } else { 0 };
+                let n = p + 1 - first;
+                if scores.len() < nh * n { scores.resize(nh * n, 0.0); }
+                attend(lkv, kd, hd, nh, group, first, n, scale, s.attn_softcap, &q[t * qd..(t + 1) * qd], &mut att[t * qd..(t + 1) * qd], &mut scores[..nh * n]);
+            }
+            l.wo.matmat(qd, att, b, proj, yt)?;
+            for t in 0..b {
+                let pr = &mut proj[t * h..(t + 1) * h];
+                add_bias(pr, &l.bo);
+                if let Some(pn) = &l.post_attn_norm { norm(s, pr, pn, None, tmp); pr.copy_from_slice(tmp); }
+                let xt = &mut x[t * h..(t + 1) * h];
+                // MLP input: the block input (parallel residual) or the residual stream after attention (sequential)
+                if !s.parallel_residual { xt.iter_mut().zip(&*pr).for_each(|(a, b)| *a += b); }
+                norm(s, xt, &l.ffn_norm, l.ffn_norm_b.as_deref(), &mut xm[t * h..(t + 1) * h]);
+            }
+            l.w_up.matmat(h, xm, b, u, yt)?;
+            for r in u.chunks_mut(ff) { add_bias(r, &l.b_up); }
+            if s.gated_mlp {
+                l.w_gate.matmat(h, xm, b, g, yt)?;
+                for (gr, ur) in g.chunks_mut(ff).zip(u.chunks(ff)) {
+                    add_bias(gr, &l.b_gate);
+                    gr.iter_mut().zip(ur).for_each(|(a, b)| *a = activate(s.act, *a) * b);
+                }
+            } else {
+                g.iter_mut().zip(u.iter()).for_each(|(a, b)| *a = activate(s.act, *b));
+            }
+            l.w_down.matmat(ff, g, b, mlp, yt)?;
+            for t in 0..b {
+                let m = &mut mlp[t * h..(t + 1) * h];
+                add_bias(m, &l.b_down);
+                if let Some(pn) = &l.post_ffn_norm { norm(s, m, pn, None, tmp); m.copy_from_slice(tmp); }
+                let xt = &mut x[t * h..(t + 1) * h];
+                if s.parallel_residual { xt.iter_mut().zip(&proj[t * h..(t + 1) * h]).zip(&*m).for_each(|((a, b), c)| *a += b + c); }
+                else { xt.iter_mut().zip(&*m).for_each(|(a, b)| *a += b); }
+            }
+        }
+        st.pos += b;
+        if !want_logits { return Ok(vec![]); }
+        let last = &x[(b - 1) * h..b * h];
+        let xl = &mut xb[..h];
+        norm(s, last, &self.w.final_norm, self.w.final_norm_b.as_deref(), xl);
+        let head = self.w.lm_head.as_ref().unwrap_or(&self.w.embed);
         let mut logits = vec![0.0; s.vocab as usize];
-        matvec(head, h, &xb, &mut logits);
+        head.matvec(h, xl, &mut logits)?;
+        add_bias(&mut logits, &self.w.lm_head_b);
+        if s.final_softcap > 0.0 { logits.iter_mut().for_each(|l| *l = softcap(*l, s.final_softcap)); }
         Ok(logits)
+    }
+
+    /// Prefill `prompt`, then sample until a stop token, `max_tokens`, cancellation, a `false` from
+    /// `on_token`, or a full context. The stop token itself is not passed to `on_token`.
+    pub fn generate(&self, st: &mut State, prompt: &[usize], sampler: &mut Sampler, opts: &GenerateOptions,
+                    on_token: &mut dyn FnMut(usize) -> bool) -> Result<GenerateStats, ModelError> {
+        let mut stats = GenerateStats { prompt_tokens: prompt.len(), generated: 0, prefill_secs: 0.0, decode_secs: 0.0, stop: StopReason::MaxTokens };
+        let t0 = Instant::now();
+        let mut logits = self.forward_batch(st, prompt)?;
+        stats.prefill_secs = t0.elapsed().as_secs_f64();
+        sampler.observe_all(prompt);
+        let t1 = Instant::now();
+        loop {
+            if stats.generated >= opts.max_tokens { stats.stop = StopReason::MaxTokens; break; }
+            if opts.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) { stats.stop = StopReason::Cancelled; break; }
+            let tok = sampler.sample(&logits);
+            sampler.observe(tok);
+            if opts.stop_tokens.contains(&tok) { stats.stop = StopReason::StopToken; break; }
+            stats.generated += 1;
+            if !on_token(tok) { stats.stop = StopReason::Callback; break; }
+            if stats.generated >= opts.max_tokens { stats.stop = StopReason::MaxTokens; break; }
+            if st.pos >= self.spec.context as usize { stats.stop = StopReason::ContextFull; break; }
+            logits = self.forward(st, tok)?;
+        }
+        stats.decode_secs = t1.elapsed().as_secs_f64();
+        Ok(stats)
     }
 }
 
-/// Token sampling. `temperature <= 0` is greedy.
-pub struct Sampler { pub temperature: f32, pub top_k: usize, rng: u64 }
+pub struct GenerateOptions<'a> { pub max_tokens: usize, pub stop_tokens: Vec<usize>, pub cancel: Option<&'a AtomicBool> }
+impl Default for GenerateOptions<'_> { fn default() -> Self { GenerateOptions { max_tokens: 256, stop_tokens: vec![], cancel: None } } }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason { MaxTokens, StopToken, Cancelled, Callback, ContextFull }
+#[derive(Debug, Clone)]
+pub struct GenerateStats { pub prompt_tokens: usize, pub generated: usize, pub prefill_secs: f64, pub decode_secs: f64, pub stop: StopReason }
+impl GenerateStats {
+    pub fn prefill_tps(&self) -> f64 { if self.prefill_secs > 0.0 { self.prompt_tokens as f64 / self.prefill_secs } else { 0.0 } }
+    pub fn decode_tps(&self) -> f64 { if self.decode_secs > 0.0 { self.generated as f64 / self.decode_secs } else { 0.0 } }
+}
+
+/// Token sampling. `temperature <= 0` is greedy. Optional top-k, top-p (nucleus) and a repetition
+/// penalty over the last `repeat_last_n` tokens passed to [`Sampler::observe`].
+pub struct Sampler {
+    pub temperature: f32, pub top_k: usize, pub top_p: f32, pub repeat_penalty: f32, pub repeat_last_n: usize,
+    rng: u64, history: Vec<usize>,
+}
 impl Sampler {
-    pub fn new(temperature: f32, top_k: usize, seed: u64) -> Sampler { Sampler { temperature, top_k, rng: seed | 1 } }
+    pub fn new(temperature: f32, top_k: usize, seed: u64) -> Sampler {
+        Sampler { temperature, top_k, top_p: 1.0, repeat_penalty: 1.0, repeat_last_n: 64, rng: seed | 1, history: vec![] }
+    }
+    pub fn with_top_p(mut self, p: f32) -> Sampler { self.top_p = p; self }
+    pub fn with_repetition_penalty(mut self, penalty: f32, last_n: usize) -> Sampler { self.repeat_penalty = penalty; self.repeat_last_n = last_n; self }
+    pub fn observe(&mut self, token: usize) {
+        self.history.push(token);
+        if self.history.len() > 8192 { self.history.drain(..4096); }
+    }
+    pub fn observe_all(&mut self, tokens: &[usize]) { tokens.iter().for_each(|&t| self.observe(t)); }
+    pub fn clear_history(&mut self) { self.history.clear(); }
     fn next_f32(&mut self) -> f32 {
         self.rng ^= self.rng << 13; self.rng ^= self.rng >> 7; self.rng ^= self.rng << 17;
         (self.rng >> 40) as f32 / (1u64 << 24) as f32
     }
     pub fn sample(&mut self, logits: &[f32]) -> usize {
+        if logits.is_empty() { return 0; }
+        let penalised;
+        let logits = if self.repeat_penalty != 1.0 && self.repeat_last_n > 0 && !self.history.is_empty() {
+            let mut seen: Vec<usize> = self.history[self.history.len().saturating_sub(self.repeat_last_n)..].to_vec();
+            seen.sort_unstable();
+            seen.dedup();
+            let mut l = logits.to_vec();
+            let n = l.len();
+            for t in seen.into_iter().filter(|&t| t < n) { l[t] = if l[t] > 0.0 { l[t] / self.repeat_penalty } else { l[t] * self.repeat_penalty }; }
+            penalised = l;
+            &penalised[..]
+        } else { logits };
         let argmax = || logits.iter().enumerate().fold((0, f32::NEG_INFINITY), |b, (i, &v)| if v > b.1 { (i, v) } else { b }).0;
-        if self.temperature <= 0.0 || logits.is_empty() { return argmax(); }
-        let mut idx: Vec<usize> = (0..logits.len()).collect();
-        idx.sort_by(|&a, &b| logits[b].total_cmp(&logits[a]));
-        idx.truncate(if self.top_k == 0 { logits.len() } else { self.top_k.min(logits.len()) });
-        let mut p: Vec<f32> = idx.iter().map(|&i| logits[i] / self.temperature).collect();
-        softmax(&mut p);
-        let mut r = self.next_f32();
-        for (&i, pi) in idx.iter().zip(&p) { if r < *pi { return i; } r -= pi; }
-        idx[idx.len() - 1]
+        if self.temperature <= 0.0 { return argmax(); }
+        let inv_t = 1.0 / self.temperature;
+        let mut cand: Vec<(usize, f32)> = logits.iter().enumerate().map(|(i, &l)| (i, l * inv_t)).collect();
+        let desc = |a: &(usize, f32), b: &(usize, f32)| b.1.total_cmp(&a.1);
+        if self.top_k > 0 && self.top_k < cand.len() { cand.select_nth_unstable_by(self.top_k - 1, desc); cand.truncate(self.top_k); }
+        if self.top_p < 1.0 { cand.sort_by(desc); }
+        let m = cand.iter().map(|c| c.1).fold(f32::NEG_INFINITY, f32::max);
+        let mut probs: Vec<f32> = cand.iter().map(|c| (c.1 - m).exp()).collect();
+        let mut total: f32 = probs.iter().sum();
+        if !total.is_finite() || total <= 0.0 { return argmax(); }
+        if self.top_p < 1.0 {
+            let (mut cum, mut keep) = (0.0, probs.len());
+            for (i, p) in probs.iter().enumerate() { cum += p / total; if cum >= self.top_p { keep = i + 1; break; } }
+            probs.truncate(keep);
+            cand.truncate(keep);
+            total = probs.iter().sum();
+        }
+        let mut r = self.next_f32() * total;
+        for (c, p) in cand.iter().zip(&probs) { if r < *p { return c.0; } r -= p; }
+        cand[cand.len() - 1].0
     }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::arch::Support;
 
     fn rng(seed: &mut u64) -> f32 {
         *seed ^= *seed << 13; *seed ^= *seed >> 7; *seed ^= *seed << 17;
@@ -148,79 +747,295 @@ pub(crate) mod tests {
     }
     fn mat(n: usize, s: &mut u64) -> Vec<f32> { (0..n).map(|_| rng(s)).collect() }
     fn ones(n: usize, s: &mut u64) -> Vec<f32> { (0..n).map(|_| 1.0 + rng(s) * 0.2).collect() }
+    fn some(on: bool, n: usize, s: &mut u64) -> Option<Vec<f32>> { on.then(|| mat(n, s)) }
 
-    pub fn tiny(heads: u64, kv: u64, tied: bool) -> Model {
-        let spec = Spec { family: "llama".into(), support: Support::Standard, layers: 3, hidden: 16, heads, kv_heads: kv,
-            head_dim: 8, ffn: 24, vocab: 20, context: 32, rope_theta: 10_000.0, norm_eps: 1e-5,
-            experts: 0, experts_used: 0, shared_experts: 0, tied_embeddings: tied };
-        let mut s = 0x9e37_79b9_7f4a_7c15u64;
-        let (h, qd, kd, ff) = (16usize, (heads * 8) as usize, (kv * 8) as usize, 24usize);
-        let layers = (0..3).map(|_| Layer {
-            attn_norm: ones(h, &mut s), wq: mat(qd * h, &mut s), wk: mat(kd * h, &mut s), wv: mat(kd * h, &mut s),
-            wo: mat(h * qd, &mut s), ffn_norm: ones(h, &mut s), w_gate: mat(ff * h, &mut s), w_up: mat(ff * h, &mut s),
-            w_down: mat(h * ff, &mut s) }).collect();
-        let w = Weights { embed: mat(20 * h, &mut s), layers, final_norm: ones(h, &mut s),
-            lm_head: if tied { None } else { Some(mat(20 * h, &mut s)) } };
-        Model::new(spec, w).unwrap()
+    pub fn base_spec(heads: u64, kv: u64, tied: bool) -> Spec {
+        let mut sp = Spec::dense("llama", 3, 16, heads, kv, 8, 24, 20, 32);
+        sp.tied_embeddings = tied;
+        sp
     }
 
-    /// Independent reference: recompute every position from scratch with full softmax attention.
+    /// Random weights for exactly the tensors `spec` asks for (plus optional biases when `extras`).
+    pub fn random_weights(spec: &Spec, seed: u64, extras: bool) -> Weights {
+        let mut s = seed;
+        let (h, qd, kd, ff, v) = (spec.hidden as usize, (spec.heads * spec.head_dim) as usize, (spec.kv_heads * spec.head_dim) as usize, spec.ffn as usize, spec.vocab as usize);
+        let hd = spec.head_dim as usize;
+        let ln = spec.norm == NormKind::Layer;
+        let bias = spec.qkv_bias || extras;
+        let layers = (0..spec.layers).map(|_| Layer {
+            attn_norm: ones(h, &mut s), attn_norm_b: some(ln, h, &mut s),
+            wq: mat(qd * h, &mut s).into(), wk: mat(kd * h, &mut s).into(), wv: mat(kd * h, &mut s).into(), wo: mat(h * qd, &mut s).into(),
+            bq: some(bias, qd, &mut s), bk: some(bias, kd, &mut s), bv: some(bias, kd, &mut s), bo: some(extras, h, &mut s),
+            q_norm: some(spec.qk_norm, hd, &mut s).map(|v| v.iter().map(|x| x + 1.0).collect()),
+            k_norm: some(spec.qk_norm, hd, &mut s).map(|v| v.iter().map(|x| x + 1.0).collect()),
+            post_attn_norm: some(spec.post_norms, h, &mut s), ffn_norm: ones(h, &mut s), ffn_norm_b: some(ln, h, &mut s),
+            w_gate: if spec.gated_mlp { mat(ff * h, &mut s) } else { vec![] }.into(), b_gate: some(extras && spec.gated_mlp, ff, &mut s),
+            w_up: mat(ff * h, &mut s).into(), b_up: some(extras, ff, &mut s), w_down: mat(h * ff, &mut s).into(), b_down: some(extras, h, &mut s),
+            post_ffn_norm: some(spec.post_norms, h, &mut s),
+        }).collect();
+        Weights { embed: mat(v * h, &mut s).into(), layers, final_norm: ones(h, &mut s), final_norm_b: some(ln, h, &mut s),
+            lm_head: if spec.tied_embeddings { None } else { Some(mat(v * h, &mut s).into()) }, lm_head_b: some(extras && !spec.tied_embeddings, v, &mut s) }
+    }
+    pub fn model_of(spec: Spec, extras: bool) -> Model { let w = random_weights(&spec, 0x9e37_79b9_7f4a_7c15, extras); Model::new(spec, w).unwrap() }
+    pub fn tiny(heads: u64, kv: u64, tied: bool) -> Model { model_of(base_spec(heads, kv, tied), false) }
+
+    /// Independent reference: recompute every position from scratch, no cache, straightforward loops.
     fn reference_logits(m: &Model, tokens: &[usize]) -> Vec<f32> {
         let s = &m.spec;
-        let (h, hd, nh, nkv) = (s.hidden as usize, s.head_dim as usize, s.heads as usize, s.kv_heads as usize);
-        let mut xs: Vec<Vec<f32>> = tokens.iter().map(|&t| m.w.embed[t * h..(t + 1) * h].to_vec()).collect();
-        for l in &m.w.layers {
+        let (h, hd, nh, nkv, ff) = (s.hidden as usize, s.head_dim as usize, s.heads as usize, s.kv_heads as usize, s.ffn as usize);
+        let sc = if s.attn_scale > 0.0 { s.attn_scale as f32 } else { 1.0 / (hd as f32).sqrt() };
+        let mut xs: Vec<Vec<f32>> = tokens.iter().map(|&t| m.w.embed.as_dense().unwrap()[t * h..(t + 1) * h].iter().map(|v| v * s.embed_scale as f32).collect()).collect();
+        let mv = |w: &[f32], cols: usize, x: &[f32], b: &Option<Vec<f32>>| -> Vec<f32> {
+            let mut o: Vec<f32> = w.chunks(cols).map(|r| r.iter().zip(x).map(|(a, b)| a * b).sum()).collect();
+            if let Some(b) = b { o.iter_mut().zip(b).for_each(|(a, b)| *a += b); }
+            o
+        };
+        let nm = |x: &[f32], w: &[f32], b: Option<&[f32]>| { let mut o = vec![0.0; x.len()]; norm(s, x, w, b, &mut o); o };
+        for (li, l) in m.w.layers.iter().enumerate() {
+            let theta_local = s.is_sliding(li) && s.rope_theta_local > 0.0;
+            let tab = if theta_local { rope_inv_freq(s.rope_theta_local, s.rotary_dim as usize, RopeScaling::None) } else { rope_inv_freq(s.rope_theta, s.rotary_dim as usize, s.rope_scaling) };
             let (mut ks, mut vs, mut qs) = (vec![], vec![], vec![]);
             for (p, x) in xs.iter().enumerate() {
-                let mut xb = vec![0.0; h];
-                rmsnorm(x, &l.attn_norm, s.norm_eps as f32, &mut xb);
-                let (mut q, mut k, mut v) = (vec![0.0; nh * hd], vec![0.0; nkv * hd], vec![0.0; nkv * hd]);
-                matvec(&l.wq, h, &xb, &mut q); matvec(&l.wk, h, &xb, &mut k); matvec(&l.wv, h, &xb, &mut v);
-                q.chunks_mut(hd).for_each(|c| rope(c, p, s.rope_theta));
-                k.chunks_mut(hd).for_each(|c| rope(c, p, s.rope_theta));
+                let xb = nm(x, &l.attn_norm, l.attn_norm_b.as_deref());
+                let (mut q, mut k, v) = (mv(l.wq.as_dense().unwrap(), h, &xb, &l.bq), mv(l.wk.as_dense().unwrap(), h, &xb, &l.bk), mv(l.wv.as_dense().unwrap(), h, &xb, &l.bv));
+                if let (Some(qn), Some(kn)) = (&l.q_norm, &l.k_norm) {
+                    for c in q.chunks_mut(hd) { let r = nm(c, qn, None); c.copy_from_slice(&r); }
+                    for c in k.chunks_mut(hd) { let r = nm(c, kn, None); c.copy_from_slice(&r); }
+                }
+                for c in q.iter_mut().collect::<Vec<_>>().chunks_mut(hd) { rope_naive(c, p, &tab); }
+                for c in k.iter_mut().collect::<Vec<_>>().chunks_mut(hd) { rope_naive(c, p, &tab); }
                 qs.push(q); ks.push(k); vs.push(v);
             }
+            let mut new_xs = xs.clone();
             for p in 0..xs.len() {
                 let mut att = vec![0.0; nh * hd];
                 for head in 0..nh {
                     let kvh = head / (nh / nkv);
-                    let mut sc: Vec<f32> = (0..=p).map(|t| (0..hd).map(|d| qs[p][head * hd + d] * ks[t][kvh * hd + d]).sum::<f32>() / (hd as f32).sqrt()).collect();
-                    softmax(&mut sc);
-                    for d in 0..hd { att[head * hd + d] = (0..=p).map(|t| sc[t] * vs[t][kvh * hd + d]).sum(); }
+                    let lo = if s.is_sliding(li) { (p + 1).saturating_sub(s.sliding_window as usize) } else { 0 };
+                    let mut sco: Vec<f32> = (lo..=p).map(|t| {
+                        let d: f32 = (0..hd).map(|d| qs[p][head * hd + d] * ks[t][kvh * hd + d]).sum::<f32>() * sc;
+                        if s.attn_softcap > 0.0 { s.attn_softcap as f32 * (d / s.attn_softcap as f32).tanh() } else { d }
+                    }).collect();
+                    softmax(&mut sco);
+                    for d in 0..hd { att[head * hd + d] = (lo..=p).map(|t| sco[t - lo] * vs[t][kvh * hd + d]).sum(); }
                 }
-                let mut o = vec![0.0; h];
-                matvec(&l.wo, nh * hd, &att, &mut o);
-                for i in 0..h { xs[p][i] += o[i]; }
-                let mut xb = vec![0.0; h];
-                rmsnorm(&xs[p], &l.ffn_norm, s.norm_eps as f32, &mut xb);
-                let ff = s.ffn as usize;
-                let (mut g, mut u, mut d) = (vec![0.0; ff], vec![0.0; ff], vec![0.0; h]);
-                matvec(&l.w_gate, h, &xb, &mut g); matvec(&l.w_up, h, &xb, &mut u);
-                for i in 0..ff { g[i] = silu(g[i]) * u[i]; }
-                matvec(&l.w_down, ff, &g, &mut d);
-                for i in 0..h { xs[p][i] += d[i]; }
+                let mut o = mv(l.wo.as_dense().unwrap(), nh * hd, &att, &l.bo);
+                if let Some(pn) = &l.post_attn_norm { o = nm(&o, pn, None); }
+                let resid_after_attn: Vec<f32> = xs[p].iter().zip(&o).map(|(a, b)| a + b).collect();
+                let mlp_in = nm(if s.parallel_residual { &xs[p] } else { &resid_after_attn }, &l.ffn_norm, l.ffn_norm_b.as_deref());
+                let up = mv(l.w_up.as_dense().unwrap(), h, &mlp_in, &l.b_up);
+                let act: Vec<f32> = if s.gated_mlp {
+                    let gt = mv(l.w_gate.as_dense().unwrap(), h, &mlp_in, &l.b_gate);
+                    (0..ff).map(|i| activate(s.act, gt[i]) * up[i]).collect()
+                } else { up.iter().map(|&u| activate(s.act, u)).collect() };
+                let mut d = mv(l.w_down.as_dense().unwrap(), ff, &act, &l.b_down);
+                if let Some(pn) = &l.post_ffn_norm { d = nm(&d, pn, None); }
+                new_xs[p] = if s.parallel_residual { (0..h).map(|i| xs[p][i] + o[i] + d[i]).collect() } else { (0..h).map(|i| resid_after_attn[i] + d[i]).collect() };
             }
+            xs = new_xs;
         }
-        let mut xb = vec![0.0; h];
-        rmsnorm(xs.last().unwrap(), &m.w.final_norm, s.norm_eps as f32, &mut xb);
-        let head = m.w.lm_head.as_deref().unwrap_or(&m.w.embed);
-        let mut out = vec![0.0; s.vocab as usize];
-        matvec(head, h, &xb, &mut out);
+        let xb = nm(xs.last().unwrap(), &m.w.final_norm, m.w.final_norm_b.as_deref());
+        let head = m.w.lm_head.as_ref().unwrap_or(&m.w.embed).as_dense().unwrap();
+        let mut out = mv(head, h, &xb, &m.w.lm_head_b);
+        if s.final_softcap > 0.0 { out.iter_mut().for_each(|l| *l = s.final_softcap as f32 * (*l / s.final_softcap as f32).tanh()); }
         out
     }
+    fn rope_naive(c: &mut [&mut f32], pos: usize, (inv, ms): &(Vec<f64>, f64)) {
+        let half = inv.len();
+        for i in 0..half {
+            let a = pos as f64 * inv[i];
+            let (x, y) = (*c[i] as f64, *c[i + half] as f64);
+            *c[i] = ((x * a.cos() - y * a.sin()) * ms) as f32;
+            *c[i + half] = ((x * a.sin() + y * a.cos()) * ms) as f32;
+        }
+    }
+
+    const TOKS: [usize; 9] = [3, 7, 1, 19, 0, 7, 12, 5, 9];
+    fn decode(m: &Model) -> Vec<Vec<f32>> {
+        let mut st = m.new_state();
+        TOKS.iter().map(|&t| m.forward(&mut st, t).unwrap()).collect()
+    }
+    /// The cached path must equal the reference at every step, and differ from `baseline`.
+    fn check(name: &str, m: &Model, baseline: Option<&Model>) {
+        let got = decode(m);
+        for (i, g) in got.iter().enumerate() {
+            let want = reference_logits(m, &TOKS[..=i]);
+            for (a, b) in g.iter().zip(&want) { assert!((a - b).abs() < 2e-4, "{name} step {i}: {a} vs {b}"); }
+        }
+        if let Some(b) = baseline {
+            let other = decode(b);
+            let d = got.iter().zip(&other).flat_map(|(x, y)| x.iter().zip(y).map(|(a, b)| (a - b).abs())).fold(0.0, f32::max);
+            assert!(d > 2e-4, "{name}: the feature changed nothing ({d})");
+        }
+    }
+    /// Same weights, feature switched off in the spec.
+    fn without(m: &Model, f: impl Fn(&mut Spec)) -> Model { let mut sp = m.spec.clone(); f(&mut sp); Model::new(sp, m.w.clone()).unwrap() }
 
     #[test]
     fn cached_decoding_equals_full_recomputation_for_mha_gqa_and_mqa() {
-        for (heads, kv, tied) in [(4, 4, false), (4, 2, true), (4, 1, false)] {
-            let m = tiny(heads, kv, tied);
-            let toks = [3usize, 7, 1, 19, 0, 7, 12];
-            let mut st = m.new_state();
-            for (i, &t) in toks.iter().enumerate() {
-                let got = m.forward(&mut st, t).unwrap();
-                let want = reference_logits(&m, &toks[..=i]);
-                for (a, b) in got.iter().zip(&want) { assert!((a - b).abs() < 1e-4, "heads {heads} kv {kv} step {i}: {a} vs {b}"); }
-            }
+        for (heads, kv, tied) in [(4, 4, false), (4, 2, true), (4, 1, false)] { check("plain", &tiny(heads, kv, tied), None); }
+    }
+
+    #[test]
+    fn biases_everywhere() {
+        let mut sp = base_spec(4, 2, false);
+        sp.qkv_bias = true;
+        let m = model_of(sp, true);
+        let mut base = m.w.clone();
+        for l in &mut base.layers { l.bq = None; l.bk = None; l.bv = None; l.bo = None; l.b_gate = None; l.b_up = None; l.b_down = None; }
+        base.lm_head_b = None;
+        let mut bs = m.spec.clone(); bs.qkv_bias = false;
+        check("biases", &m, Some(&Model::new(bs, base).unwrap()));
+    }
+
+    #[test]
+    fn qwen2_qkv_bias_only() {
+        let mut sp = base_spec(4, 2, true);
+        sp.qkv_bias = true;
+        let m = model_of(sp, false);
+        let mut w = m.w.clone();
+        for l in &mut w.layers { l.bq = None; l.bk = None; l.bv = None; }
+        let mut bs = m.spec.clone(); bs.qkv_bias = false;
+        check("qwen2", &m, Some(&Model::new(bs, w).unwrap()));
+    }
+
+    #[test]
+    fn qk_norm_per_head() {
+        let mut sp = base_spec(4, 2, false);
+        sp.qk_norm = true;
+        let m = model_of(sp, false);
+        let mut w = m.w.clone();
+        for l in &mut w.layers { l.q_norm = None; l.k_norm = None; }
+        let mut bs = m.spec.clone(); bs.qk_norm = false;
+        check("qk_norm", &m, Some(&Model::new(bs, w).unwrap()));
+    }
+
+    #[test]
+    fn gemma_family_everything_at_once() {
+        let mut sp = base_spec(4, 2, true);
+        sp.family = "gemma2".into();
+        sp.norm_offset = true; sp.act = Act::GeluTanh; sp.embed_scale = 4.0; sp.post_norms = true;
+        sp.attn_softcap = 5.0; sp.final_softcap = 3.0; sp.attn_scale = 0.2;
+        sp.sliding_window = 3; sp.sliding_layers = vec![true, false, true]; sp.rope_theta_local = 500.0;
+        let m = model_of(sp, false);
+        check("gemma", &m, None);
+        for (what, f) in [("offset", Box::new(|s: &mut Spec| s.norm_offset = false) as Box<dyn Fn(&mut Spec)>),
+            ("gelu", Box::new(|s| s.act = Act::Silu)), ("embed scale", Box::new(|s| s.embed_scale = 1.0)),
+            ("softcap", Box::new(|s| s.attn_softcap = 0.0)), ("final softcap", Box::new(|s| s.final_softcap = 0.0)),
+            ("window", Box::new(|s| s.sliding_layers = vec![false; 3])), ("local theta", Box::new(|s| s.rope_theta_local = 0.0)),
+            ("scale", Box::new(|s| s.attn_scale = 0.0))] {
+            let b = without(&m, &*f);
+            let d = decode(&m).iter().zip(decode(&b)).flat_map(|(x, y)| x.iter().zip(y).map(|(a, b)| (a - b).abs()).collect::<Vec<_>>()).fold(0.0, f32::max);
+            assert!(d > 1e-4, "{what} had no effect ({d})");
         }
+    }
+
+    #[test]
+    fn sliding_window_really_forgets_old_tokens() {
+        let mut sp = base_spec(4, 2, false);
+        sp.sliding_window = 2; sp.sliding_layers = vec![true; 3];
+        let m = model_of(sp, false);
+        check("window", &m, None);
+        // logits after [A, x, y] must not depend on A when every layer sees only 2 tokens... through one layer only:
+        let mut one = base_spec(4, 2, false);
+        one.layers = 1; one.sliding_window = 2; one.sliding_layers = vec![true];
+        let m1 = model_of(one, false);
+        let run = |first: usize| { let mut st = m1.new_state(); [first, 4, 6].iter().map(|&t| m1.forward(&mut st, t).unwrap()).last().unwrap() };
+        assert_eq!(run(1), run(9));
+        let full = model_of({ let mut f = base_spec(4, 2, false); f.layers = 1; f }, false);
+        let runf = |first: usize| { let mut st = full.new_state(); [first, 4, 6].iter().map(|&t| full.forward(&mut st, t).unwrap()).last().unwrap() };
+        assert_ne!(runf(1), runf(9));
+    }
+
+    #[test]
+    fn layer_norm_with_plain_mlp_and_parallel_residual() {
+        let mut sp = base_spec(4, 4, false);
+        sp.norm = NormKind::Layer; sp.gated_mlp = false; sp.act = Act::Gelu; sp.parallel_residual = true;
+        let m = model_of(sp, true);
+        check("neox", &m, Some(&without(&m, |s| s.parallel_residual = false)));
+        let mut sq = base_spec(4, 2, true);
+        sq.norm = NormKind::Layer; sq.gated_mlp = false; sq.act = Act::GeluTanh; sq.qkv_bias = true;
+        let m = model_of(sq, true);
+        check("starcoder2", &m, Some(&without(&m, |s| s.norm = NormKind::Rms)));
+    }
+
+    #[test]
+    fn partial_rotary_leaves_the_tail_untouched() {
+        let mut sp = base_spec(4, 2, false);
+        sp.rotary_dim = 4;
+        let m = model_of(sp, false);
+        check("partial rotary", &m, Some(&without(&m, |s| s.rotary_dim = 8)));
+        let (inv, ms) = rope_inv_freq(10_000.0, 4, RopeScaling::None);
+        let mut head = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        rope_apply(&mut head, 11, &(inv, ms));
+        assert_eq!(&head[4..], &[5.0, 6.0, 7.0, 8.0]);
+        assert_ne!(&head[..4], &[1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn explicit_head_dim_and_attention_scale() {
+        // hidden 16, 4 heads but head_dim 8 already differs from 16/4; also try 4 heads x 6
+        let mut sp = Spec::dense("qwen3", 2, 16, 4, 2, 6, 24, 20, 32);
+        sp.qk_norm = true;
+        let m = model_of(sp, false);
+        check("head_dim 6", &m, None);
+        let mut sc = base_spec(4, 2, false);
+        sc.attn_scale = 0.9;
+        let m = model_of(sc, false);
+        check("scale", &m, Some(&without(&m, |s| s.attn_scale = 0.0)));
+    }
+
+    #[test]
+    fn rope_scaling_variants_alter_the_model_and_follow_their_formulas() {
+        let (base, _) = rope_inv_freq(10_000.0, 8, RopeScaling::None);
+        let (lin, _) = rope_inv_freq(10_000.0, 8, RopeScaling::Linear { factor: 4.0 });
+        for (a, b) in base.iter().zip(&lin) { assert!((a / 4.0 - b).abs() < 1e-12); }
+        // llama3: the highest-frequency pair is untouched, the lowest is divided by the factor
+        let l3 = RopeScaling::Llama3 { factor: 8.0, low_freq_factor: 1.0, high_freq_factor: 4.0, original_max: 8192.0 };
+        let (b64, _) = rope_inv_freq(500_000.0, 64, RopeScaling::None);
+        let (s64, _) = rope_inv_freq(500_000.0, 64, l3);
+        assert_eq!(b64[0], s64[0]);
+        assert!((b64[31] / 8.0 - s64[31]).abs() < 1e-18);
+        assert!(s64.iter().zip(&b64).all(|(s, b)| s <= b && *s >= b / 8.0 - 1e-18));
+        // yarn: high-frequency end untouched, low-frequency end interpolated, magnitude factor kept
+        let yr = RopeScaling::Yarn { factor: 4.0, original_max: 4096.0, beta_fast: 32.0, beta_slow: 1.0, mscale: 1.2 };
+        let (y, ms) = rope_inv_freq(10_000.0, 64, yr);
+        let (b, _) = rope_inv_freq(10_000.0, 64, RopeScaling::None);
+        assert_eq!(ms, 1.2);
+        assert!((y[0] - b[0]).abs() < 1e-12);
+        assert!((y[31] - b[31] / 4.0).abs() < 1e-12);
+        // head_dim 8 is tiny, so use settings that bite there (long wavelengths, small original window)
+        let l3_small = RopeScaling::Llama3 { factor: 16.0, low_freq_factor: 1.0, high_freq_factor: 4.0, original_max: 64.0 };
+        for scaling in [RopeScaling::Linear { factor: 16.0 }, l3_small, RopeScaling::Yarn { factor: 16.0, original_max: 16.0, beta_fast: 32.0, beta_slow: 1.0, mscale: 1.1 }] {
+            let mut sp = base_spec(4, 2, false);
+            sp.rope_scaling = scaling;
+            let m = model_of(sp, false);
+            check("rope scaling", &m, Some(&without(&m, |s| s.rope_scaling = RopeScaling::None)));
+        }
+    }
+
+    #[test]
+    fn activations_match_known_values() {
+        assert!((activate(Act::Silu, 1.0) - 0.731_058_6).abs() < 1e-6);
+        assert!((activate(Act::Gelu, 1.0) - 0.841_344_7).abs() < 1e-6);
+        assert!((activate(Act::GeluTanh, 1.0) - 0.841_192).abs() < 1e-5);
+        assert!((activate(Act::Gelu, -3.0) + 0.004_049_7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn norms_match_known_values() {
+        let mut sp = base_spec(4, 2, false);
+        sp.norm_eps = 0.0;
+        let mut o = [0.0; 2];
+        norm(&sp, &[3.0, 4.0], &[0.0, 1.0], None, &mut o);
+        let k = 1.0 / 12.5f32.sqrt();
+        assert!((o[0] - 0.0).abs() < 1e-6 && (o[1] - 4.0 * k).abs() < 1e-6);
+        sp.norm_offset = true; // weight applied as 1 + w
+        norm(&sp, &[3.0, 4.0], &[0.0, 1.0], None, &mut o);
+        assert!((o[0] - 3.0 * k).abs() < 1e-6 && (o[1] - 8.0 * k).abs() < 1e-6);
+        sp.norm = NormKind::Layer;
+        norm(&sp, &[1.0, 3.0], &[1.0, 1.0], Some(&[10.0, 20.0]), &mut o);
+        assert!((o[0] - 9.0).abs() < 1e-5 && (o[1] - 21.0).abs() < 1e-5);
     }
 
     #[test]
@@ -231,8 +1046,16 @@ pub(crate) mod tests {
         for _ in 0..32 { m.forward(&mut st, 1).unwrap(); }
         assert_eq!(m.forward(&mut st, 1), Err(ModelError::ContextFull(32)));
         let mut bad = tiny(4, 2, false);
-        bad.w.layers[1].wq.pop();
+        bad.w.layers[1].wq = Weight::Dense(vec![0.0]);
         assert!(matches!(Model::new(bad.spec.clone(), bad.w), Err(ModelError::Shape(_))));
+        // required-but-missing pieces
+        let mut sp = base_spec(4, 2, false);
+        sp.qk_norm = true;
+        let w = random_weights(&base_spec(4, 2, false), 1, false);
+        assert!(matches!(Model::new(sp, w), Err(ModelError::Shape(e)) if e.contains("q_norm")));
+        let mut sp = base_spec(4, 2, false);
+        sp.rotary_dim = 5;
+        assert!(Model::new(sp, random_weights(&base_spec(4, 2, false), 1, false)).is_err());
     }
 
     #[test]
@@ -244,5 +1067,310 @@ pub(crate) mod tests {
         let logits = [0.0, 5.0, 4.0, -3.0, 1.0];
         let mut s = Sampler::new(1.0, 2, 42);
         for _ in 0..200 { assert!(matches!(s.sample(&logits), 1 | 2)); }
+    }
+
+    // ------------------------------------------------------------ quantised weights, KV cache, batching
+
+    pub fn q8_0_encode(w: &[f32]) -> Vec<u8> {
+        let mut o = vec![];
+        for blk in w.chunks(32) {
+            let d = blk.iter().fold(0f32, |a, v| a.max(v.abs())) / 127.0;
+            let dh = f32_to_f16(d);
+            let dd = crate::quant::f16_to_f32(dh);
+            o.extend(dh.to_le_bytes());
+            for v in blk { o.push(if dd > 0.0 { (v / dd).round().clamp(-127.0, 127.0) } else { 0.0 } as i8 as u8); }
+        }
+        o
+    }
+    pub fn bf16_encode(w: &[f32]) -> Vec<u8> { w.iter().flat_map(|x| ((x.to_bits() >> 16) as u16).to_le_bytes()).collect() }
+    fn requant(w: &Weight, rows: usize, cols: usize, dt: DType) -> Weight {
+        let v = w.as_dense().unwrap();
+        if v.is_empty() { return w.clone(); }
+        let bytes = if dt == DType::Q8_0 { q8_0_encode(v) } else { bf16_encode(v) };
+        Weight::Quant(QWeight::new(dt, rows, cols, Bytes::owned(bytes)).unwrap())
+    }
+    /// The same model with every big matrix stored as `dt` (Q8_0 or BF16). Needs hidden/ffn/qd multiples of 32 for Q8_0.
+    pub fn requantise(m: &Model, dt: DType) -> Model {
+        let s = &m.spec;
+        let (h, qd, kd, ff, v) = (s.hidden as usize, (s.heads * s.head_dim) as usize, (s.kv_heads * s.head_dim) as usize, s.ffn as usize, s.vocab as usize);
+        let mut w = m.w.clone();
+        w.embed = requant(&w.embed, v, h, dt);
+        if let Some(l) = &w.lm_head { w.lm_head = Some(requant(l, v, h, dt)); }
+        for l in &mut w.layers {
+            l.wq = requant(&l.wq, qd, h, dt); l.wk = requant(&l.wk, kd, h, dt); l.wv = requant(&l.wv, kd, h, dt); l.wo = requant(&l.wo, h, qd, dt);
+            l.w_gate = requant(&l.w_gate, if s.gated_mlp { ff } else { 0 }, h, dt);
+            l.w_up = requant(&l.w_up, ff, h, dt); l.w_down = requant(&l.w_down, h, ff, dt);
+        }
+        Model::new(m.spec.clone(), w).unwrap()
+    }
+    fn wide_spec(tied: bool) -> Spec {
+        let mut sp = Spec::dense("llama", 2, 32, 4, 2, 8, 64, 40, 300);
+        sp.tied_embeddings = tied;
+        sp
+    }
+    fn seq_logits(m: &Model, toks: &[usize]) -> Vec<f32> {
+        let mut st = m.new_state();
+        let mut last = vec![];
+        for &t in toks { last = m.forward(&mut st, t).unwrap(); }
+        last
+    }
+    fn rel_diff(a: &[f32], b: &[f32]) -> f32 {
+        let scale = b.iter().fold(1e-6f32, |m, v| m.max(v.abs()));
+        a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f32::max) / scale
+    }
+
+    #[test]
+    fn half_precision_conversion() {
+        for h in 0..=u16::MAX {
+            let f = crate::quant::f16_to_f32(h);
+            if f.is_nan() { assert!(crate::quant::f16_to_f32(f32_to_f16(f)).is_nan()); } else { assert_eq!(f32_to_f16(f), h, "{h:#06x}"); }
+        }
+        for i in -2000..2000 {
+            let x = i as f32 * 0.0137;
+            let r = crate::quant::f16_to_f32(f32_to_f16(x));
+            assert!((r - x).abs() <= x.abs() * 6e-4 + 1e-7, "{x} -> {r}");
+        }
+        assert_eq!(f32_to_f16(1e9), 0x7c00);
+        assert_eq!(f32_to_f16(-1e9), 0xfc00);
+        assert_eq!(f32_to_f16(1e-9), 0);
+        assert_eq!(f32_to_f16(65519.0), 0x7bff);
+        assert_eq!(f32_to_f16(65520.0), 0x7c00);
+    }
+
+    #[test]
+    fn dot8_and_threaded_matmat_match_plain_loops() {
+        for n in [0usize, 1, 7, 8, 9, 33, 100] {
+            let (a, b): (Vec<f32>, Vec<f32>) = (0..n).map(|i| ((i as f32).sin(), (i as f32 * 0.3).cos())).unzip();
+            let want: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
+            assert!((dot8(&a, &b) - want).abs() < 1e-4, "{n}");
+        }
+        let (rows, cols, bt) = (1024usize, 512usize, 8usize);
+        let w: Vec<f32> = (0..rows * cols).map(|i| ((i * 31 % 17) as f32 - 8.0) * 0.01).collect();
+        let x: Vec<f32> = (0..bt * cols).map(|i| (i as f32 * 0.01).sin()).collect();
+        let wt = Weight::Dense(w.clone());
+        let (mut out, mut yt) = (vec![0.0; bt * rows], vec![]);
+        wt.matmat(cols, &x, bt, &mut out, &mut yt).unwrap();
+        for t in 0..bt {
+            let mut one = vec![0.0; rows];
+            wt.matvec(cols, &x[t * cols..(t + 1) * cols], &mut one).unwrap();
+            assert_eq!(&out[t * rows..(t + 1) * rows], &one[..], "token {t}");
+            let r = 77;
+            let naive: f32 = (0..cols).map(|c| w[r * cols + c] * x[t * cols + c]).sum();
+            assert!((one[r] - naive).abs() < 1e-3);
+        }
+        assert!(wt.matvec(cols, &x[..cols - 1], &mut vec![0.0; rows]).is_err());
+        assert!(wt.matmat(cols, &x, 0, &mut [], &mut yt).is_err());
+    }
+
+    #[test]
+    fn quantised_weights_track_the_dense_model_and_use_less_memory() {
+        for tied in [false, true] {
+            let dense = model_of(wide_spec(tied), false);
+            let toks = [3usize, 7, 1, 19, 0, 7, 12, 5, 9, 31];
+            let want = seq_logits(&dense, &toks);
+            let q8 = requantise(&dense, DType::Q8_0);
+            assert!(q8.w.layers[0].wq.as_dense().is_none());
+            let got = seq_logits(&q8, &toks);
+            let d = rel_diff(&got, &want);
+            assert!(d < 0.06, "q8 tied={tied}: relative error {d}");
+            assert!(q8.weight_bytes() * 10 < dense.weight_bytes() * 3, "{} vs {}", q8.weight_bytes(), dense.weight_bytes());
+            // batched prefill decodes each row once; it must agree with token-by-token on the same quantised weights
+            let mut st = q8.new_state();
+            let b = q8.forward_batch(&mut st, &toks).unwrap();
+            assert!(rel_diff(&b, &got) < 0.05, "quantised batch vs sequential: {}", rel_diff(&b, &got));
+            // BF16 kept as raw halves is exact against a dense model holding the same rounded numbers
+            let mut rounded = dense.w.clone();
+            let rd = |w: &mut Weight| if let Weight::Dense(v) = w { v.iter_mut().for_each(|x| *x = f32::from_bits((x.to_bits() >> 16) << 16)); };
+            rd(&mut rounded.embed);
+            if let Some(l) = &mut rounded.lm_head { rd(l); }
+            for l in &mut rounded.layers { for w in [&mut l.wq, &mut l.wk, &mut l.wv, &mut l.wo, &mut l.w_gate, &mut l.w_up, &mut l.w_down] { rd(w); } }
+            let bf_dense = Model::new(dense.spec.clone(), rounded).unwrap();
+            let bf = requantise(&bf_dense, DType::BF16);
+            assert!(rel_diff(&seq_logits(&bf, &toks), &seq_logits(&bf_dense, &toks)) < 1e-4);
+            assert!(bf.weight_bytes() * 2 <= dense.weight_bytes() + 8);
+        }
+    }
+
+    #[test]
+    fn quantised_shapes_are_checked() {
+        let dense = model_of(wide_spec(false), false);
+        let q8 = requantise(&dense, DType::Q8_0);
+        // wrong stored shape for a layer
+        let mut w = q8.w.clone();
+        if let Weight::Quant(q) = &mut w.layers[0].wq { q.rows -= 1; }
+        assert!(matches!(Model::new(q8.spec.clone(), w), Err(ModelError::Shape(_))));
+        // rows that are not whole blocks, or bytes that do not add up, never construct
+        assert!(QWeight::new(DType::Q8_0, 2, 33, Bytes::owned(vec![0; 200])).is_err());
+        assert!(QWeight::new(DType::Q8_0, 2, 32, Bytes::owned(vec![0; 67])).is_err());
+        assert!(QWeight::new(DType::Other(99), 1, 32, Bytes::owned(vec![0; 32])).is_err());
+        assert!(QWeight::new(DType::Q8_0, usize::MAX, 32, Bytes::owned(vec![0; 34])).is_err());
+        // an out-of-range token on a quantised embedding is a clean error
+        let mut st = q8.new_state();
+        assert_eq!(q8.forward(&mut st, 40), Err(ModelError::Token(40)));
+        assert!(Bytes::owned(vec![1, 2, 3]).slice(2, 2).is_none());
+        assert_eq!(Bytes::owned(vec![1, 2, 3]).slice(1, 2).unwrap().as_slice(), &[2, 3]);
+    }
+
+    #[test]
+    fn kv_cache_precisions_trade_memory_for_accuracy() {
+        let m = tiny(4, 2, false);
+        let toks: Vec<usize> = (0..24).map(|i| (i * 7 + 3) % 20).collect();
+        let run = |kind| {
+            let mut st = m.new_state_with(kind);
+            let mut last = vec![];
+            for &t in &toks { last = m.forward(&mut st, t).unwrap(); }
+            (last, st.kv_bytes())
+        };
+        let (base, b32) = run(KvKind::F32);
+        let (h, b16) = run(KvKind::F16);
+        let (q, b8) = run(KvKind::Q8);
+        assert_eq!(b32, 3 * 2 * 24 * 16 * 4);
+        assert_eq!(b16 * 2, b32);
+        assert!(b8 * 5 < b32 * 2, "{b8} vs {b32}");
+        let (dh, dq) = (rel_diff(&h, &base), rel_diff(&q, &base));
+        assert!(dh < 2e-3, "f16 kv: {dh}");
+        assert!(dq < 3e-2, "q8 kv: {dq}");
+        assert!(dh > 0.0 && dq > dh, "lower precision must actually change something ({dh}, {dq})");
+        // the default is exact
+        assert_eq!(run(KvKind::default()).0, base);
+    }
+
+    #[test]
+    fn sliding_layers_keep_only_their_window_and_still_match_the_reference() {
+        let mut sp = base_spec(4, 2, true);
+        sp.sliding_window = 3; sp.sliding_layers = vec![true, false, true]; sp.rope_theta_local = 500.0;
+        let m = model_of(sp, false);
+        let toks: Vec<usize> = (0..30).map(|i| (i * 5 + 1) % 20).collect();
+        let mut st = m.new_state();
+        for (i, &t) in toks.iter().enumerate() {
+            let got = m.forward(&mut st, t).unwrap();
+            if [3usize, 9, 20, 29].contains(&i) {
+                let want = reference_logits(&m, &toks[..=i]);
+                for (a, b) in got.iter().zip(&want) { assert!((a - b).abs() < 3e-4, "step {i}: {a} vs {b}"); }
+            }
+        }
+        // two ring layers of 3 positions and one full layer of 30, K and V, 2 kv heads x 8 dims, f32
+        assert_eq!(st.kv_bytes(), (3 + 30 + 3) * 2 * 16 * 4);
+    }
+
+    #[test]
+    fn batched_prefill_equals_token_by_token() {
+        let mut gem = base_spec(4, 2, true);
+        gem.norm_offset = true; gem.act = Act::GeluTanh; gem.embed_scale = 4.0; gem.post_norms = true; gem.qk_norm = true;
+        gem.attn_softcap = 5.0; gem.final_softcap = 3.0; gem.sliding_window = 3; gem.sliding_layers = vec![true, false, true]; gem.rope_theta_local = 500.0;
+        let mut neox = base_spec(4, 4, false);
+        neox.norm = NormKind::Layer; neox.gated_mlp = false; neox.act = Act::Gelu; neox.parallel_residual = true;
+        for (name, m) in [("plain", tiny(4, 2, false)), ("gemma", model_of(gem, true)), ("neox", model_of(neox, true)), ("mqa", tiny(4, 1, true))] {
+            let toks = [3usize, 7, 1, 19, 0, 7, 12, 5, 9, 2, 8, 14];
+            let want = seq_logits(&m, &toks);
+            let mut st = m.new_state();
+            let all = m.forward_batch(&mut st, &toks).unwrap();
+            assert_eq!(st.pos, toks.len());
+            assert!(rel_diff(&all, &want) < 2e-4, "{name}: {}", rel_diff(&all, &want));
+            // split into uneven batches, then continue one token at a time
+            let mut st2 = m.new_state();
+            m.forward_batch(&mut st2, &toks[..5]).unwrap();
+            m.forward_batch(&mut st2, &toks[5..6]).unwrap();
+            let split = m.forward_batch(&mut st2, &toks[6..]).unwrap();
+            assert!(rel_diff(&split, &want) < 2e-4, "{name} split: {}", rel_diff(&split, &want));
+            let next_a = m.forward(&mut st, 4).unwrap();
+            let next_b = m.forward(&mut st2, 4).unwrap();
+            assert!(rel_diff(&next_a, &next_b) < 2e-4, "{name} continuation");
+        }
+    }
+
+    #[test]
+    fn prefill_longer_than_one_chunk() {
+        let m = model_of(wide_spec(false), false);
+        let toks: Vec<usize> = (0..PREFILL_CHUNK + 22).map(|i| (i * 11 + 5) % 40).collect();
+        let want = seq_logits(&m, &toks);
+        let mut st = m.new_state();
+        let got = m.forward_batch(&mut st, &toks).unwrap();
+        assert!(rel_diff(&got, &want) < 1e-3, "{}", rel_diff(&got, &want));
+        assert_eq!(st.pos, toks.len());
+    }
+
+    #[test]
+    fn batch_errors_leave_the_state_untouched() {
+        let m = tiny(4, 2, false);
+        let mut st = m.new_state();
+        assert_eq!(m.forward_batch(&mut st, &[]), Err(ModelError::NoTokens));
+        assert_eq!(m.forward_batch(&mut st, &[1, 2, 99]), Err(ModelError::Token(99)));
+        assert_eq!(m.forward_batch(&mut st, &[1; 33]), Err(ModelError::ContextFull(32)));
+        assert_eq!(st.pos, 0);
+        assert_eq!(st.kv_bytes(), 0);
+        assert!(matches!(m.forward(&mut State::default(), 1), Err(ModelError::Shape(_))));
+        // after the failures the state still works and gives the usual answer
+        assert_eq!(m.forward(&mut st, 3).unwrap(), seq_logits(&m, &[3]));
+    }
+
+    #[test]
+    fn generate_stops_for_every_reason() {
+        let m = tiny(4, 2, false);
+        let prompt = [3usize, 7, 1];
+        let run = |opts: &GenerateOptions, cb: &mut dyn FnMut(usize) -> bool| {
+            let mut st = m.new_state();
+            let mut s = Sampler::new(0.0, 0, 1);
+            m.generate(&mut st, &prompt, &mut s, opts, cb).unwrap()
+        };
+        let mut got = vec![];
+        let st = run(&GenerateOptions { max_tokens: 6, ..Default::default() }, &mut |t| { got.push(t); true });
+        assert_eq!((st.generated, st.stop, st.prompt_tokens), (6, StopReason::MaxTokens, 3));
+        // identical to driving the model by hand
+        let mut state = m.new_state();
+        let mut logits = m.forward_batch(&mut state, &prompt).unwrap();
+        let mut by_hand = vec![];
+        for _ in 0..6 { let t = Sampler::new(0.0, 0, 1).sample(&logits); by_hand.push(t); logits = m.forward(&mut state, t).unwrap(); }
+        assert_eq!(got, by_hand);
+        // a stop token ends the run and is not reported
+        let mut seen = vec![];
+        let st = run(&GenerateOptions { max_tokens: 6, stop_tokens: vec![got[2]], ..Default::default() }, &mut |t| { seen.push(t); true });
+        assert_eq!(st.stop, StopReason::StopToken);
+        assert_eq!(seen, got[..got.iter().position(|&t| t == got[2]).unwrap()].to_vec());
+        // callback can stop it
+        let mut n = 0;
+        let st = run(&GenerateOptions::default(), &mut |_| { n += 1; n < 2 });
+        assert_eq!((st.generated, st.stop), (2, StopReason::Callback));
+        // cancellation before the first token
+        let flag = AtomicBool::new(true);
+        let st = run(&GenerateOptions { cancel: Some(&flag), ..Default::default() }, &mut |_| true);
+        assert_eq!((st.generated, st.stop), (0, StopReason::Cancelled));
+        // a full context ends the run quietly
+        let mut st = m.new_state();
+        let long = vec![1usize; 30];
+        let r = m.generate(&mut st, &long, &mut Sampler::new(0.0, 0, 1), &GenerateOptions { max_tokens: 100, ..Default::default() }, &mut |_| true).unwrap();
+        assert_eq!((r.generated, r.stop, st.pos), (3, StopReason::ContextFull, 32));
+        // a prompt that does not fit is an error, an empty one too
+        assert_eq!(m.generate(&mut m.new_state(), &[1; 40], &mut Sampler::new(0.0, 0, 1), &GenerateOptions::default(), &mut |_| true).err(), Some(ModelError::ContextFull(32)));
+        assert_eq!(m.generate(&mut m.new_state(), &[], &mut Sampler::new(0.0, 0, 1), &GenerateOptions::default(), &mut |_| true).err(), Some(ModelError::NoTokens));
+    }
+
+    #[test]
+    fn sampler_top_p_and_repetition_penalty() {
+        let logits = [10.0, 9.0, 0.0, 0.0, 0.0];
+        let mut s = Sampler::new(1.0, 0, 7).with_top_p(0.5);
+        for _ in 0..100 { assert_eq!(s.sample(&logits), 0); }
+        let mut s = Sampler::new(1.0, 0, 7).with_top_p(0.9);
+        let seen: std::collections::HashSet<usize> = (0..300).map(|_| s.sample(&logits)).collect();
+        assert!(seen.is_subset(&[0usize, 1].into_iter().collect()) && seen.len() == 2, "{seen:?}");
+        // greedy with a penalty moves off a repeated token, for positive and negative logits
+        let mut g = Sampler::new(0.0, 0, 1).with_repetition_penalty(2.0, 8);
+        assert_eq!(g.sample(&[2.0, 1.9]), 0);
+        g.observe(0);
+        assert_eq!(g.sample(&[2.0, 1.9]), 1);
+        assert_eq!(g.sample(&[-1.0, -1.1]), 1);
+        // only the last n tokens count
+        let mut g = Sampler::new(0.0, 0, 1).with_repetition_penalty(2.0, 1);
+        g.observe_all(&[0, 1]);
+        assert_eq!(g.sample(&[2.0, 1.9]), 0);
+        g.clear_history();
+        assert_eq!(g.sample(&[2.0, 1.9]), 0);
+        // degenerate logits do not panic
+        assert_eq!(Sampler::new(1.0, 0, 1).sample(&[f32::NAN, f32::NAN]), 0);
+        assert_eq!(Sampler::new(1.0, 3, 1).sample(&[]), 0);
+        // top-k on a big vocabulary only ever returns one of the k best
+        let big: Vec<f32> = (0..50_000).map(|i| ((i * 7919) % 50_000) as f32).collect();
+        let mut s = Sampler::new(1.0, 5, 3);
+        for _ in 0..50 { assert!(big[s.sample(&big)] >= 49_995.0); }
     }
 }
