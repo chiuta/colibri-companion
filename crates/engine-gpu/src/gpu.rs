@@ -11,8 +11,10 @@
 //!   budget — is kept on the CPU backend (`on_device == false`) and computed there; the hidden
 //!   state crosses the boundary only for those tensors. Together with
 //!   `companion_engine::backend::offload_plan` this gives partial offload.
+use crate::caps::{self, AdapterInfo, Api, DeviceClass, Limits, Selection};
 use crate::layout::{self, Format};
-use crate::{plan, shaders};
+use crate::timing::SubmitStats;
+use crate::{plan, report, shaders};
 use companion_engine::backend::*;
 use companion_engine::quant::DType;
 use std::borrow::Cow;
@@ -20,6 +22,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 fn dev<E: Display>(e: E) -> BackendError { BackendError::Device(e.to_string()) }
 fn bytes_of(v: &[f32]) -> Vec<u8> { v.iter().flat_map(|f| f.to_le_bytes()).collect() }
@@ -31,12 +34,16 @@ pub struct GpuOptions {
     /// not report VRAM; pass the figure from `hw::HardwareProfile` when it is known).
     pub vram_budget: Option<u64>,
     pub backends: wgpu::Backends,
-    /// Accept a software (CPU) adapter such as llvmpipe; off by default because it is slower than
-    /// the engine's own CPU kernels.
-    pub allow_software: bool,
+    /// Which adapter to take (`ENGINE_GPU*`), and whether a software (CPU) adapter such as
+    /// llvmpipe is acceptable; it is not by default, because it is slower than the engine's own
+    /// CPU kernels.
+    pub selection: Selection,
+    /// The hardware profile, used to look up the chosen adapter's memory when `vram_budget` is
+    /// `None` (wgpu itself does not report VRAM).
+    pub profile: Option<companion_engine::hw::HardwareProfile>,
 }
 impl Default for GpuOptions {
-    fn default() -> Self { GpuOptions { vram_budget: None, backends: wgpu::Backends::all(), allow_software: false } }
+    fn default() -> Self { GpuOptions { vram_budget: None, backends: wgpu::Backends::all(), selection: Selection::default(), profile: None } }
 }
 
 struct GpuBuf { buffer: wgpu::Buffer }
@@ -55,17 +62,53 @@ pub struct GpuBackend {
     pipes: Mutex<HashMap<String, Arc<wgpu::ComputePipeline>>>,
     pending: Mutex<Pending>,
     cpu: CpuBackend,
+    info: AdapterInfo,
+    stats: Mutex<SubmitStats>,
 }
 
 pub struct AdapterSummary { pub name: String, pub backend: String, pub kind: String, pub max_binding: u64, pub max_buffer: u64 }
 
-/// Every adapter wgpu can see, for diagnostics.
-pub fn adapters(backends: wgpu::Backends) -> Vec<AdapterSummary> {
+fn api_of(b: wgpu::Backend) -> Api {
+    match b { wgpu::Backend::Vulkan => Api::Vulkan, wgpu::Backend::Metal => Api::Metal, wgpu::Backend::Dx12 => Api::Dx12, wgpu::Backend::Gl => Api::Gl, _ => Api::Other }
+}
+fn class_of(t: wgpu::DeviceType) -> DeviceClass {
+    match t { wgpu::DeviceType::DiscreteGpu => DeviceClass::Discrete, wgpu::DeviceType::IntegratedGpu => DeviceClass::Integrated, wgpu::DeviceType::VirtualGpu => DeviceClass::Virtual, wgpu::DeviceType::Cpu => DeviceClass::Software, _ => DeviceClass::Unknown }
+}
+
+/// Every adapter wgpu can see, with the limits the engine cares about, in the driver's order (the
+/// index the `ENGINE_GPU` variable and [`caps::select`] refer to).
+fn enumerate(backends: wgpu::Backends) -> Vec<(wgpu::Adapter, AdapterInfo)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends, ..wgpu::InstanceDescriptor::new_without_display_handle() });
     pollster::block_on(instance.enumerate_adapters(backends)).into_iter().map(|a| {
         let (i, l) = (a.get_info(), a.limits());
-        AdapterSummary { name: i.name, backend: format!("{:?}", i.backend), kind: format!("{:?}", i.device_type), max_binding: l.max_storage_buffer_binding_size, max_buffer: l.max_buffer_size }
+        let info = AdapterInfo {
+            name: i.name.clone(),
+            api: api_of(i.backend),
+            class: class_of(i.device_type),
+            driver: format!("{} {}", i.driver, i.driver_info).trim().to_string(),
+            vendor_id: i.vendor,
+            limits: Limits {
+                max_storage_binding: l.max_storage_buffer_binding_size,
+                max_buffer: l.max_buffer_size,
+                max_workgroup_size_x: l.max_compute_workgroup_size_x,
+                max_invocations: l.max_compute_invocations_per_workgroup,
+                max_workgroups_per_dim: l.max_compute_workgroups_per_dimension,
+                max_storage_buffers_per_stage: l.max_storage_buffers_per_shader_stage,
+                shader_f16: a.features().contains(wgpu::Features::SHADER_F16),
+                subgroup_min: i.subgroup_min_size,
+                subgroup_max: i.subgroup_max_size,
+            },
+        };
+        (a, info)
     }).collect()
+}
+
+/// The adapters in the engine's own description, for the capability report.
+pub fn adapter_infos(backends: wgpu::Backends) -> Vec<AdapterInfo> { enumerate(backends).into_iter().map(|(_, i)| i).collect() }
+
+/// Every adapter wgpu can see, for diagnostics.
+pub fn adapters(backends: wgpu::Backends) -> Vec<AdapterSummary> {
+    adapter_infos(backends).into_iter().map(|a| AdapterSummary { name: a.name, backend: a.api.name().to_string(), kind: a.class.name().to_string(), max_binding: a.limits.max_storage_binding, max_buffer: a.limits.max_buffer }).collect()
 }
 
 /// A factory for `companion_engine::backend::build`.
@@ -73,23 +116,33 @@ pub fn create(opts: GpuOptions) -> Result<Box<dyn Backend>> { Ok(Box::new(GpuBac
 
 impl GpuBackend {
     pub fn new(opts: GpuOptions) -> Result<GpuBackend> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: opts.backends, ..wgpu::InstanceDescriptor::new_without_display_handle() });
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() })).map_err(dev)?;
-        let info = adapter.get_info();
-        if info.device_type == wgpu::DeviceType::Cpu && !opts.allow_software { return Err(BackendError::Device(format!("only a software adapter was found ({})", info.name))); }
+        let mut found = enumerate(opts.backends);
+        let infos: Vec<AdapterInfo> = found.iter().map(|(_, i)| i.clone()).collect();
+        let pick = caps::select(&infos, &opts.selection, std::env::consts::OS).map_err(|e| BackendError::Device(format!("no usable GPU adapter: {e}")))?;
+        let (adapter, info) = found.swap_remove(pick);
         let limits = adapter.limits();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("engine"), required_limits: limits.clone(), ..Default::default() })).map_err(dev)?;
+        let budget = opts.vram_budget.or_else(|| opts.profile.as_ref().and_then(|p| report::vram_budget(p, &info.name))).unwrap_or(4 << 30);
         Ok(GpuBackend {
             device, queue,
-            name: format!("gpu: {} ({:?})", info.name, info.backend),
-            max_binding: limits.max_storage_buffer_binding_size.min(limits.max_buffer_size).min(1 << 31),
-            budget: opts.vram_budget.unwrap_or(4 << 30),
+            name: format!("gpu: {} ({})", info.name, info.api.name()),
+            max_binding: info.limits.usable_binding(),
+            budget,
             used: AtomicU64::new(0),
             pipes: Mutex::new(HashMap::new()),
             pending: Mutex::new(Pending::default()),
             cpu: CpuBackend::new(),
+            info,
+            stats: Mutex::new(SubmitStats::default()),
         })
     }
+
+    /// The adapter this backend runs on.
+    pub fn adapter(&self) -> &AdapterInfo { &self.info }
+    /// Submission counters since creation (or the last [`GpuBackend::reset_stats`]).
+    pub fn stats(&self) -> SubmitStats { self.stats.lock().map(|s| *s).unwrap_or_default() }
+    pub fn reset_stats(&self) { if let Ok(mut s) = self.stats.lock() { *s = SubmitStats::default(); } }
+    fn bump(&self, f: impl FnOnce(&mut SubmitStats)) { if let Ok(mut s) = self.stats.lock() { f(&mut s); } }
 
     fn storage(&self, bytes: u64) -> wgpu::Buffer {
         self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: bytes.max(4).next_multiple_of(4), usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false })
@@ -131,11 +184,18 @@ impl GpuBackend {
                 pass.dispatch_workgroups(groups.0, groups.1, groups.2);
             }
             keep.push(pb);
-        })
+        })?;
+        self.bump(|s| s.dispatches += 1);
+        Ok(())
     }
     fn flush(&self) -> Result<()> {
+        let t = Instant::now();
         let mut p = self.pending.lock().map_err(dev)?;
-        if let Some(enc) = p.enc.take() { self.queue.submit(std::iter::once(enc.finish())); }
+        if let Some(enc) = p.enc.take() {
+            self.queue.submit(std::iter::once(enc.finish()));
+            let d = t.elapsed();
+            self.bump(|s| { s.submits += 1; s.submit_time += d; });
+        }
         p.keep.clear();
         Ok(())
     }
@@ -171,6 +231,7 @@ impl Backend for GpuBackend {
     fn write(&self, dst: &Buf, src: &[f32]) -> Result<()> {
         if dst.len != src.len() { return Err(BackendError::Shape(format!("write of {} values into a buffer of {}", src.len(), dst.len))); }
         self.queue.write_buffer(self.gpu_buf(dst)?, 0, &bytes_of(src));
+        self.bump(|s| s.bytes_up += src.len() as u64 * 4);
         Ok(())
     }
     fn read(&self, src: &Buf, dst: &mut [f32]) -> Result<()> {
@@ -178,6 +239,7 @@ impl Backend for GpuBackend {
         self.flush()?;
         let size = src.len as u64 * 4;
         if size == 0 { return Ok(()); }
+        let waited = Instant::now();
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         enc.copy_buffer_to_buffer(self.gpu_buf(src)?, 0, &staging, 0, size);
@@ -192,6 +254,8 @@ impl Backend for GpuBackend {
             for (o, c) in dst.iter_mut().zip(data.chunks_exact(4)) { *o = f32::from_le_bytes([c[0], c[1], c[2], c[3]]); }
         }
         staging.unmap();
+        let d = waited.elapsed();
+        self.bump(|s| { s.bytes_down += size; s.wait_time += d; });
         Ok(())
     }
 
@@ -204,6 +268,7 @@ impl Backend for GpuBackend {
         if self.reserve(device_bytes).is_err() { return self.cpu.upload(w); }
         let Some(ranges) = plan::chunk_rows(w.rows, row_words as u64 * 4, self.max_binding) else { self.used.fetch_sub(device_bytes, Ordering::Relaxed); return self.cpu.upload(w); };
         let words = layout::repack(dt, w.rows, w.cols, &raw).map_err(|e| BackendError::Unsupported(e.to_string()))?;
+        self.bump(|s| s.bytes_up += device_bytes);
         let chunks = ranges.into_iter().map(|(s, n)| {
             let buf = self.storage((n * row_words * 4) as u64);
             self.queue.write_buffer(&buf, 0, &words_bytes(&words[s * row_words..(s + n) * row_words]));
@@ -277,7 +342,10 @@ impl Backend for GpuBackend {
     }
     fn synchronize(&self) -> Result<()> {
         self.flush()?;
+        let t = Instant::now();
         self.device.poll(wgpu::PollType::wait_indefinitely()).map_err(dev)?;
+        let d = t.elapsed();
+        self.bump(|s| s.wait_time += d);
         Ok(())
     }
 }
@@ -287,7 +355,7 @@ mod tests {
     use super::*;
 
     /// Needs a real (or software) adapter: skipped cleanly when there is none.
-    fn backend() -> Option<GpuBackend> { GpuBackend::new(GpuOptions { allow_software: true, ..Default::default() }).ok() }
+    fn backend() -> Option<GpuBackend> { GpuBackend::new(GpuOptions { selection: Selection { allow_software: true, ..Default::default() }, ..Default::default() }).ok() }
 
     #[test]
     fn device_matvec_and_attention_match_the_cpu_backend() {

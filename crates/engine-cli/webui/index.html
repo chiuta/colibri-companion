@@ -1,0 +1,1461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src http: https:; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>corbul</title>
+<style>
+:root{
+  --hh:3.5rem;
+  --bg:#ffffff;--bg2:#f3f5f8;--bg3:#e6eaf0;--fg:#1b1f24;--muted:#444d59;--line:#8a94a3;--line2:#c9d0da;
+  --accent:#0b57d0;--accent-fg:#ffffff;--focus:#0b57d0;
+  --ok:#0a6b2e;--okbg:#e7f5ec;--warn:#7a4200;--warnbg:#fff3e0;--bad:#a31515;--badbg:#fdeaea;
+  --user:#e8effc;--code:#f1f3f6;
+}
+:root[data-theme=dark]{
+  --bg:#12151a;--bg2:#1a1f26;--bg3:#262d37;--fg:#e8ebf0;--muted:#b4bdca;--line:#8590a0;--line2:#3a4350;
+  --accent:#8ab4f8;--accent-fg:#0b0f14;--focus:#8ab4f8;
+  --ok:#7ddc9a;--okbg:#14301f;--warn:#f2b35e;--warnbg:#33260f;--bad:#ff9a9a;--badbg:#3a1818;
+  --user:#1d2a44;--code:#0e1116;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]):not([data-theme=dark]){
+    --bg:#12151a;--bg2:#1a1f26;--bg3:#262d37;--fg:#e8ebf0;--muted:#b4bdca;--line:#8590a0;--line2:#3a4350;
+    --accent:#8ab4f8;--accent-fg:#0b0f14;--focus:#8ab4f8;
+    --ok:#7ddc9a;--okbg:#14301f;--warn:#f2b35e;--warnbg:#33260f;--bad:#ff9a9a;--badbg:#3a1818;
+    --user:#1d2a44;--code:#0e1116;
+  }
+}
+@media (prefers-contrast:more){
+  :root{--line:#000;--line2:#333;--muted:#000;--fg:#000}
+  :root[data-theme=dark]{--line:#fff;--line2:#ddd;--muted:#fff;--fg:#fff}
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:1rem/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",sans-serif;overflow:hidden}
+.sr{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.skip{position:absolute;left:.5rem;top:-4rem;background:var(--accent);color:var(--accent-fg);padding:.5rem .75rem;z-index:20;border-radius:.4rem}
+.skip:focus{top:.5rem}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:var(--bg2);border:1px solid var(--line);border-radius:.5rem;padding:.35rem .7rem;min-height:2.25rem}
+button:hover{background:var(--bg3)}
+button[disabled]{opacity:.55;cursor:not-allowed}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+button.primary:hover{filter:brightness(1.08)}
+button.link{background:none;border:0;text-decoration:underline;padding:.1rem .3rem;min-height:0}
+input[type=text],input[type=number],input[type=password],input[type=url],select,textarea{background:var(--bg);border:1px solid var(--line);border-radius:.45rem;padding:.35rem .5rem;width:100%;min-height:2.25rem}
+textarea{resize:vertical}
+input[type=checkbox],input[type=radio]{width:1.15rem;height:1.15rem;accent-color:var(--accent)}
+label{display:block;font-weight:600;margin:.55rem 0 .15rem}
+label.inline{display:inline-flex;align-items:center;gap:.4rem;font-weight:400;margin:.2rem 0}
+.hint{color:var(--muted);font-size:.875rem;margin:.2rem 0}
+header.top{height:var(--hh);display:flex;align-items:center;gap:.6rem;padding:0 .75rem;border-bottom:1px solid var(--line2);background:var(--bg2)}
+header.top h1{font-size:1.15rem;margin:0}
+header.top .spacer{flex:1}
+header.top select{width:auto}
+header.top label{margin:0;display:flex;align-items:center;gap:.3rem;font-weight:400;font-size:.9rem}
+.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:0 .55rem;font-size:.8rem;color:var(--muted);max-width:14rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot{display:inline-block;width:.7rem;height:.7rem;border-radius:50%;border:2px solid var(--line);margin-right:.35rem;vertical-align:middle}
+.dot.on{background:var(--ok);border-color:var(--ok)}
+.dot.off{background:transparent;border-color:var(--bad)}
+.layout{display:grid;grid-template-columns:16rem minmax(0,1fr) 23rem;height:calc(100% - var(--hh))}
+#side,#aside{overflow:auto;padding:.75rem;background:var(--bg2)}
+#side{border-right:1px solid var(--line2)}
+#aside{border-left:1px solid var(--line2)}
+#side h2,#aside summary{font-size:1rem}
+#convlist{list-style:none;margin:.5rem 0;padding:0}
+#convlist li{display:flex;gap:.25rem;margin:.2rem 0}
+#convlist li button.pick{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#convlist li[data-current=true] button.pick{border-color:var(--accent);border-width:2px;font-weight:600}
+.row{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
+.col2{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+details{border:1px solid var(--line2);border-radius:.6rem;margin:.5rem 0;padding:.25rem .6rem;background:var(--bg)}
+details>summary{cursor:pointer;font-weight:700;padding:.35rem 0;min-height:2.25rem}
+main#chat{display:flex;flex-direction:column;min-width:0;min-height:0}
+.chathead{display:flex;gap:.5rem;align-items:center;padding:.5rem .9rem;border-bottom:1px solid var(--line2)}
+.chathead h2{margin:0;font-size:1rem;flex:0 0 auto}
+.chathead input{flex:1}
+#banner{margin:.5rem .9rem 0;padding:.5rem .75rem;border:2px solid var(--warn);background:var(--warnbg);border-radius:.5rem;display:flex;gap:.5rem;align-items:flex-start}
+#banner[hidden]{display:none}
+#banner.err{border-color:var(--bad);background:var(--badbg)}
+#banner span{flex:1;white-space:pre-wrap}
+#log{flex:1;overflow:auto;padding:.75rem .9rem;scroll-padding-bottom:1rem}
+.empty{color:var(--muted);text-align:center;margin-top:3rem}
+article.msg{border:1px solid var(--line2);border-radius:.8rem;padding:.55rem .8rem;margin:.6rem 0;max-width:60rem}
+article.msg.role-user{background:var(--user);margin-left:auto;border-color:var(--line)}
+article.msg.role-assistant{background:var(--bg2)}
+article.msg h3{margin:0 0 .2rem;font-size:.85rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.mc{overflow-wrap:anywhere}
+.mc p{margin:.4rem 0}
+.mc h4,.mc h5,.mc h6{margin:.7rem 0 .3rem}
+.mc ul,.mc ol{margin:.4rem 0;padding-left:1.5rem}
+.mc blockquote{margin:.5rem 0;padding:.1rem .8rem;border-left:4px solid var(--line)}
+.mc code{background:var(--code);border-radius:.3rem;padding:.05rem .3rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}
+.mc hr{border:0;border-top:1px solid var(--line2);margin:.8rem 0}
+.mc a{color:var(--accent)}
+.user-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.codewrap{margin:.5rem 0;border:1px solid var(--line2);border-radius:.5rem;overflow:hidden;background:var(--code)}
+.codewrap .bar{display:flex;justify-content:space-between;align-items:center;padding:.1rem .4rem;background:var(--bg3);font-size:.8rem}
+.codewrap pre{margin:0;padding:.6rem;overflow:auto}
+.codewrap pre code{background:none;padding:0}
+.cite{display:inline;border:2px solid var(--line);border-radius:.35rem;padding:0 .25rem;background:var(--bg);box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.cite small{font-size:.72em;margin-right:.25rem;color:var(--muted);font-weight:700}
+.cite.st-verbatim{border-color:var(--ok);background:var(--okbg)}
+.cite.st-verbatim::before{content:"\2713\00a0";color:var(--ok);font-weight:700}
+.cite.st-wrong_source,.cite.st-truncated,.cite.st-merged{border-color:var(--warn);background:var(--warnbg);border-style:dashed}
+.cite.st-wrong_source::before,.cite.st-truncated::before,.cite.st-merged::before{content:"\007e\00a0";color:var(--warn);font-weight:700}
+.cite.st-altered,.cite.st-unsupported{border-color:var(--bad);background:var(--badbg);border-style:dotted}
+.cite.st-altered::before,.cite.st-unsupported::before{content:"\2717\00a0";color:var(--bad);font-weight:700}
+.cite.st-unchecked{border-style:dashed}
+.cite.open::after{content:"\2026";color:var(--muted)}
+.acts{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.4rem}
+.acts button{font-size:.85rem;min-height:2rem;padding:.15rem .55rem}
+.stats{color:var(--muted);font-size:.82rem;margin:.3rem 0 0}
+.qcheck{margin-top:.4rem;font-size:.9rem;border-style:solid;border-color:var(--line2)}
+.qcheck ul{margin:.3rem 0;padding-left:1.2rem}
+.err-text{color:var(--bad);font-weight:600;white-space:pre-wrap}
+.typing::after{content:"\258d";color:var(--muted)}
+@media (prefers-reduced-motion:no-preference){.typing::after{animation:blink 1s steps(2) infinite}}
+@keyframes blink{50%{opacity:0}}
+#composer{border-top:1px solid var(--line2);padding:.6rem .9rem;background:var(--bg2)}
+#composer .box{display:flex;gap:.5rem;align-items:flex-end}
+#composer textarea{flex:1;min-height:3rem;max-height:40vh}
+.srcitem{border:1px solid var(--line2);border-radius:.5rem;padding:.4rem;margin:.4rem 0;list-style:none}
+ul.plain{list-style:none;padding:0;margin:.3rem 0}
+.mlist li{border:1px solid var(--line2);border-radius:.5rem;padding:.4rem;margin:.3rem 0}
+.mlist .pill{font-size:.78rem;border:1px solid var(--line);border-radius:999px;padding:0 .45rem;margin-left:.3rem}
+.mlist .pill.on{border-color:var(--ok);color:var(--ok)}
+dl.kv{display:grid;grid-template-columns:auto 1fr;gap:.15rem .7rem;margin:.3rem 0;font-size:.9rem}
+dl.kv dt{color:var(--muted)}
+dl.kv dd{margin:0;overflow-wrap:anywhere}
+pre.metrics{max-height:14rem;overflow:auto;background:var(--code);padding:.5rem;border-radius:.4rem;font-size:.78rem}
+.nav-btn,#btn-panels{display:none}
+@media (max-width:1100px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .nav-btn,#btn-panels{display:inline-flex}
+  #side,#aside{display:none;position:fixed;top:var(--hh);bottom:0;width:min(23rem,94vw);z-index:10;box-shadow:0 0 0 100vmax rgba(0,0,0,.35)}
+  #side{left:0}
+  #aside{right:0;left:auto}
+  #side.open,#aside.open{display:block}
+}
+@media (max-width:560px){header.top .opt{display:none}.badge{max-width:7rem}}
+@media (forced-colors:active){
+  .cite,button,details,article.msg{border:2px solid CanvasText}
+  :focus-visible{outline:3px solid Highlight}
+  .cite.st-verbatim{border-style:solid}.cite.st-altered,.cite.st-unsupported{border-style:dotted}
+}
+@media print{header.top,#side,#aside,#composer,.acts{display:none}.layout{display:block;height:auto}body{overflow:visible}#log{overflow:visible}}
+</style>
+</head>
+<body>
+<a class="skip" href="#chat" data-i18n="skip">Skip to chat</a>
+<header class="top">
+  <button type="button" id="btn-nav" class="nav-btn" aria-expanded="false" aria-controls="side"><span aria-hidden="true">&#9776;</span><span class="sr" data-i18n="chatsNav">Conversation list</span></button>
+  <h1>corbul</h1>
+  <span id="modelBadge" class="badge" hidden></span>
+  <span class="spacer"></span>
+  <span id="statusText" role="status"><span id="statusDot" class="dot off" aria-hidden="true"></span><span id="statusLabel"></span></span>
+  <label class="opt"><span data-i18n="lang">Language</span>
+    <select id="langSel"></select></label>
+  <label class="opt"><span data-i18n="theme">Theme</span>
+    <select id="themeSel">
+      <option value="auto" data-i18n="tAuto">Automatic</option>
+      <option value="light" data-i18n="tLight">Light</option>
+      <option value="dark" data-i18n="tDark">Dark</option>
+    </select></label>
+  <button type="button" id="btn-panels" aria-expanded="false" aria-controls="aside"><span aria-hidden="true">&#9881;</span> <span data-i18n="panels">Settings and sources</span></button>
+</header>
+<div class="layout">
+  <nav id="side" aria-labelledby="chatsH">
+    <h2 id="chatsH" data-i18n="chats">Conversations</h2>
+    <button type="button" id="btn-new" class="primary" data-i18n="newChat">New chat</button>
+    <ul id="convlist"></ul>
+    <div class="row">
+      <button type="button" id="btn-exp-json" data-i18n="exportJson">Export JSON</button>
+      <button type="button" id="btn-exp-md" data-i18n="exportMd">Export Markdown</button>
+      <button type="button" id="btn-imp" data-i18n="importFile">Import JSON</button>
+    </div>
+    <input type="file" id="impfile" accept="application/json,.json" class="sr" tabindex="-1" aria-hidden="true">
+  </nav>
+  <main id="chat" tabindex="-1">
+    <div class="chathead">
+      <h2 id="titleH"><label for="titleIn" class="sr" data-i18n="rename">Title</label></h2>
+      <input type="text" id="titleIn" maxlength="200" autocomplete="off">
+    </div>
+    <div id="banner" hidden><span id="bannerText"></span><button type="button" id="bannerX" class="link" data-i18n="close">Close</button></div>
+    <div id="log" role="log" aria-live="off" aria-labelledby="titleH"></div>
+    <form id="composer" autocomplete="off">
+      <label for="prompt" class="sr" data-i18n="msgLabel">Message</label>
+      <div class="box">
+        <textarea id="prompt" rows="2" data-i18n-ph="ph" maxlength="200000"></textarea>
+        <button type="submit" class="primary" id="btn-send" data-i18n="send">Send</button>
+        <button type="button" id="btn-stop" hidden data-i18n="stop">Stop</button>
+      </div>
+    </form>
+    <div id="live" class="sr" role="status" aria-live="polite"></div>
+  </main>
+  <aside id="aside" aria-labelledby="asideH">
+    <h2 id="asideH" class="sr" data-i18n="panels">Settings and sources</h2>
+
+    <details id="d-server" open>
+      <summary data-i18n="server">Server</summary>
+      <label for="baseUrl" data-i18n="baseUrl">Server address</label>
+      <input type="url" id="baseUrl" inputmode="url" autocomplete="off" spellcheck="false">
+      <label for="tokenIn" data-i18n="token">Access token</label>
+      <input type="password" id="tokenIn" autocomplete="off" spellcheck="false">
+      <p class="hint" data-i18n="tokenHelp"></p>
+      <div class="row"><button type="button" id="btn-connect" class="primary" data-i18n="connect">Connect</button></div>
+      <p class="hint" id="corsHint" hidden data-i18n="corsHint"></p>
+    </details>
+
+    <details id="d-models" open>
+      <summary data-i18n="models">Models</summary>
+      <div class="row"><button type="button" id="btn-models" data-i18n="refresh">Refresh</button></div>
+      <ul id="mlist" class="plain mlist"></ul>
+    </details>
+
+    <details id="d-settings" open>
+      <summary data-i18n="settings">Generation settings</summary>
+      <div class="col2">
+        <div><label for="s-temperature" data-i18n="temp">Temperature</label><input type="number" id="s-temperature" min="0" max="5" step="0.05"></div>
+        <div><label for="s-top_p">Top-p</label><input type="number" id="s-top_p" min="0" max="1" step="0.01"></div>
+        <div><label for="s-top_k">Top-k</label><input type="number" id="s-top_k" min="0" max="1000" step="1"></div>
+        <div><label for="s-min_p">Min-p</label><input type="number" id="s-min_p" min="0" max="1" step="0.01" aria-describedby="minpHint"></div>
+        <div><label for="s-repeat" data-i18n="rep">Repeat penalty</label><input type="number" id="s-repeat" min="0.5" max="2" step="0.01"></div>
+        <div><label for="s-max_tokens" data-i18n="maxTok">Max tokens</label><input type="number" id="s-max_tokens" min="1" max="1000000" step="1"></div>
+      </div>
+      <p class="hint" id="minpHint" data-i18n="minPNote"></p>
+      <label for="s-seed" data-i18n="seed">Seed</label>
+      <input type="number" id="s-seed" min="0" step="1">
+      <label for="s-structured" data-i18n="structured">Structured output</label>
+      <select id="s-structured">
+        <option value="off" data-i18n="st_off">Free text</option>
+        <option value="json" data-i18n="st_json">JSON object</option>
+        <option value="schema" data-i18n="st_schema">JSON schema</option>
+        <option value="regex" data-i18n="st_regex">Regular expression</option>
+        <option value="grammar" data-i18n="st_grammar">GBNF grammar</option>
+      </select>
+      <label for="s-structValue" data-i18n="stValue">Schema / expression / grammar</label>
+      <textarea id="s-structValue" rows="4" spellcheck="false"></textarea>
+    </details>
+
+    <details id="d-system">
+      <summary data-i18n="sysPrompt">System prompt</summary>
+      <label for="sysIn" class="sr" data-i18n="sysPrompt">System prompt</label>
+      <textarea id="sysIn" rows="5"></textarea>
+    </details>
+
+    <details id="d-sources" open>
+      <summary data-i18n="sources">Sources (quote lock)</summary>
+      <p class="hint" data-i18n="srcHelp"></p>
+      <label class="inline"><input type="checkbox" id="lockCb"> <span data-i18n="lock">Lock quotes while generating</span></label>
+      <div class="row">
+        <button type="button" id="btn-addsrc" data-i18n="addSrc">Add source</button>
+        <button type="button" id="btn-srcfile" data-i18n="fromFile">From text file…</button>
+        <input type="file" id="srcfile" accept="text/*,.txt,.md,.json,.csv,.html,.xml" multiple class="sr" tabindex="-1" aria-hidden="true">
+      </div>
+      <ul id="srclist" class="plain"></ul>
+    </details>
+
+    <details id="d-info">
+      <summary data-i18n="info">Server info</summary>
+      <div id="infoBox"></div>
+    </details>
+
+    <details id="d-caps" hidden>
+      <summary data-i18n="caps">Capabilities and hardware</summary>
+      <div id="capsBox"></div>
+    </details>
+
+    <details id="d-metrics" hidden>
+      <summary data-i18n="metricsT">Metrics</summary>
+      <pre id="metricsBox" class="metrics" tabindex="0"></pre>
+    </details>
+  </aside>
+</div>
+
+<script>
+'use strict';
+/* PURE:START — logic without DOM access (tested in Node) */
+const LANGS = ['en', 'ro', 'fr', 'it', 'es', 'pt', 'de', 'hu'];
+const LANG_NAMES = { en: 'English', ro: 'Română', fr: 'Français', it: 'Italiano', es: 'Español', pt: 'Português', de: 'Deutsch', hu: 'Magyar' };
+// every row: en, ro, fr, it, es, pt, de, hu
+const T = {
+  skip: ['Skip to chat', 'Treci la conversație', 'Aller à la conversation', 'Vai alla conversazione', 'Ir a la conversación', 'Ir para a conversa', 'Zum Chat springen', 'Ugrás a beszélgetéshez'],
+  chatsNav: ['Conversation list', 'Lista conversațiilor', 'Liste des conversations', 'Elenco conversazioni', 'Lista de conversaciones', 'Lista de conversas', 'Unterhaltungsliste', 'Beszélgetéslista'],
+  newChat: ['New chat', 'Conversație nouă', 'Nouvelle conversation', 'Nuova conversazione', 'Nueva conversación', 'Nova conversa', 'Neuer Chat', 'Új beszélgetés'],
+  chats: ['Conversations', 'Conversații', 'Conversations', 'Conversazioni', 'Conversaciones', 'Conversas', 'Unterhaltungen', 'Beszélgetések'],
+  untitled: ['New conversation', 'Conversație nouă', 'Nouvelle conversation', 'Nuova conversazione', 'Nueva conversación', 'Nova conversa', 'Neue Unterhaltung', 'Új beszélgetés'],
+  del: ['Delete', 'Șterge', 'Supprimer', 'Elimina', 'Eliminar', 'Eliminar', 'Löschen', 'Törlés'],
+  delConfirm: ['Delete this conversation?', 'Ștergi această conversație?', 'Supprimer cette conversation ?', 'Eliminare questa conversazione?', '¿Eliminar esta conversación?', 'Eliminar esta conversa?', 'Diese Unterhaltung löschen?', 'Törlöd ezt a beszélgetést?'],
+  delMsg: ['Delete message', 'Șterge mesajul', 'Supprimer le message', 'Elimina messaggio', 'Eliminar mensaje', 'Eliminar mensagem', 'Nachricht löschen', 'Üzenet törlése'],
+  exportJson: ['Export JSON', 'Exportă JSON', 'Exporter en JSON', 'Esporta JSON', 'Exportar JSON', 'Exportar JSON', 'JSON exportieren', 'JSON exportálása'],
+  exportMd: ['Export Markdown', 'Exportă Markdown', 'Exporter en Markdown', 'Esporta Markdown', 'Exportar Markdown', 'Exportar Markdown', 'Markdown exportieren', 'Markdown exportálása'],
+  importFile: ['Import JSON', 'Importă JSON', 'Importer un JSON', 'Importa JSON', 'Importar JSON', 'Importar JSON', 'JSON importieren', 'JSON importálása'],
+  importOk: ['Imported {n} conversation(s).', 'Am importat {n} conversație/conversații.', '{n} conversation(s) importée(s).', 'Importate {n} conversazioni.', 'Se importaron {n} conversación(es).', 'Importadas {n} conversa(s).', '{n} Unterhaltung(en) importiert.', '{n} beszélgetés importálva.'],
+  importBad: ['This file is not a valid corbul export.', 'Fișierul nu este un export corbul valid.', 'Ce fichier n’est pas un export corbul valide.', 'Questo file non è un export corbul valido.', 'Este archivo no es una exportación corbul válida.', 'Este ficheiro não é uma exportação corbul válida.', 'Diese Datei ist kein gültiger corbul-Export.', 'Ez a fájl nem érvényes corbul-export.'],
+  rename: ['Title', 'Titlu', 'Titre', 'Titolo', 'Título', 'Título', 'Titel', 'Cím'],
+  send: ['Send', 'Trimite', 'Envoyer', 'Invia', 'Enviar', 'Enviar', 'Senden', 'Küldés'],
+  stop: ['Stop', 'Oprește', 'Arrêter', 'Ferma', 'Detener', 'Parar', 'Stopp', 'Leállítás'],
+  regen: ['Regenerate', 'Regenerează', 'Régénérer', 'Rigenera', 'Regenerar', 'Regenerar', 'Neu generieren', 'Újragenerálás'],
+  copy: ['Copy', 'Copiază', 'Copier', 'Copia', 'Copiar', 'Copiar', 'Kopieren', 'Másolás'],
+  copied: ['Copied', 'Copiat', 'Copié', 'Copiato', 'Copiado', 'Copiado', 'Kopiert', 'Másolva'],
+  you: ['You', 'Tu', 'Vous', 'Tu', 'Tú', 'Você', 'Du', 'Te'],
+  assistant: ['Assistant', 'Asistent', 'Assistant', 'Assistente', 'Asistente', 'Assistente', 'Assistent', 'Asszisztens'],
+  msgLabel: ['Message', 'Mesaj', 'Message', 'Messaggio', 'Mensaje', 'Mensagem', 'Nachricht', 'Üzenet'],
+  ph: ['Write a message… (Enter sends, Shift+Enter = new line)', 'Scrie un mesaj… (Enter trimite, Shift+Enter = rând nou)', 'Écrivez un message… (Entrée envoie, Maj+Entrée = nouvelle ligne)', 'Scrivi un messaggio… (Invio invia, Maiusc+Invio = a capo)', 'Escribe un mensaje… (Intro envía, Mayús+Intro = nueva línea)', 'Escreva uma mensagem… (Enter envia, Shift+Enter = nova linha)', 'Nachricht schreiben … (Enter sendet, Umschalt+Enter = neue Zeile)', 'Írj egy üzenetet… (Enter küld, Shift+Enter = új sor)'],
+  empty: ['Ask something. Everything stays on your machine.', 'Întreabă ceva. Totul rămâne pe calculatorul tău.', 'Posez une question. Tout reste sur votre machine.', 'Fai una domanda. Tutto resta sul tuo computer.', 'Pregunta algo. Todo se queda en tu equipo.', 'Faça uma pergunta. Tudo fica no seu computador.', 'Stell eine Frage. Alles bleibt auf deinem Rechner.', 'Kérdezz valamit. Minden a te gépeden marad.'],
+  panels: ['Settings and sources', 'Setări și surse', 'Réglages et sources', 'Impostazioni e fonti', 'Ajustes y fuentes', 'Definições e fontes', 'Einstellungen und Quellen', 'Beállítások és források'],
+  close: ['Close', 'Închide', 'Fermer', 'Chiudi', 'Cerrar', 'Fechar', 'Schließen', 'Bezárás'],
+  settings: ['Generation settings', 'Setări de generare', 'Réglages de génération', 'Impostazioni di generazione', 'Ajustes de generación', 'Definições de geração', 'Generierungseinstellungen', 'Generálási beállítások'],
+  temp: ['Temperature', 'Temperatură', 'Température', 'Temperatura', 'Temperatura', 'Temperatura', 'Temperatur', 'Hőmérséklet'],
+  minPNote: ['Min-p is sent only above 0; this server build may ignore it.', 'Min-p se trimite doar peste 0; această versiune a serverului îl poate ignora.', 'Min-p n’est envoyé qu’au-dessus de 0 ; cette version du serveur peut l’ignorer.', 'Min-p viene inviato solo sopra 0; questa versione del server potrebbe ignorarlo.', 'Min-p solo se envía por encima de 0; esta versión del servidor puede ignorarlo.', 'O min-p só é enviado acima de 0; esta versão do servidor pode ignorá-lo.', 'Min-p wird nur über 0 gesendet; diese Serverversion ignoriert es eventuell.', 'A min-p-t csak 0 felett küldjük; ez a szerververzió figyelmen kívül hagyhatja.'],
+  rep: ['Repeat penalty', 'Penalizare repetiții', 'Pénalité de répétition', 'Penalità di ripetizione', 'Penalización por repetición', 'Penalização de repetição', 'Wiederholungsstrafe', 'Ismétlési büntetés'],
+  seed: ['Seed (empty = random)', 'Sămânță (gol = aleatoare)', 'Graine (vide = aléatoire)', 'Seed (vuoto = casuale)', 'Semilla (vacío = aleatoria)', 'Semente (vazio = aleatória)', 'Seed (leer = zufällig)', 'Seed (üres = véletlen)'],
+  maxTok: ['Max tokens', 'Tokeni maximi', 'Tokens max.', 'Token massimi', 'Tokens máximos', 'Tokens máximos', 'Max. Tokens', 'Max. tokenek'],
+  structured: ['Structured output', 'Ieșire structurată', 'Sortie structurée', 'Output strutturato', 'Salida estructurada', 'Saída estruturada', 'Strukturierte Ausgabe', 'Strukturált kimenet'],
+  st_off: ['Free text', 'Text liber', 'Texte libre', 'Testo libero', 'Texto libre', 'Texto livre', 'Freitext', 'Szabad szöveg'],
+  st_json: ['JSON object', 'Obiect JSON', 'Objet JSON', 'Oggetto JSON', 'Objeto JSON', 'Objeto JSON', 'JSON-Objekt', 'JSON-objektum'],
+  st_schema: ['JSON schema', 'Schemă JSON', 'Schéma JSON', 'Schema JSON', 'Esquema JSON', 'Esquema JSON', 'JSON-Schema', 'JSON-séma'],
+  st_regex: ['Regular expression', 'Expresie regulată', 'Expression régulière', 'Espressione regolare', 'Expresión regular', 'Expressão regular', 'Regulärer Ausdruck', 'Reguláris kifejezés'],
+  st_grammar: ['GBNF grammar', 'Gramatică GBNF', 'Grammaire GBNF', 'Grammatica GBNF', 'Gramática GBNF', 'Gramática GBNF', 'GBNF-Grammatik', 'GBNF-nyelvtan'],
+  stValue: ['Schema / expression / grammar', 'Schemă / expresie / gramatică', 'Schéma / expression / grammaire', 'Schema / espressione / grammatica', 'Esquema / expresión / gramática', 'Esquema / expressão / gramática', 'Schema / Ausdruck / Grammatik', 'Séma / kifejezés / nyelvtan'],
+  stConflict: ['Quote lock is active, so structured output is not sent (the server rejects both together).', 'Blocarea citatelor e activă, deci ieșirea structurată nu se trimite (serverul le respinge împreună).', 'Le verrouillage des citations est actif : la sortie structurée n’est donc pas envoyée (le serveur refuse les deux ensemble).', 'Il blocco delle citazioni è attivo: l’output strutturato non viene inviato (il server rifiuta entrambi insieme).', 'El bloqueo de citas está activo, así que no se envía la salida estructurada (el servidor rechaza ambas a la vez).', 'O bloqueio de citações está ativo, por isso a saída estruturada não é enviada (o servidor rejeita ambas em conjunto).', 'Die Zitatsperre ist aktiv, daher wird keine strukturierte Ausgabe gesendet (der Server lehnt beides zusammen ab).', 'Az idézetzár aktív, ezért a strukturált kimenetet nem küldjük (a szerver a kettőt együtt elutasítja).'],
+  badStruct: ['Fill in the schema / expression / grammar field (a schema must be valid JSON). Sending as free text.', 'Completează câmpul schemă / expresie / gramatică (schema trebuie să fie JSON valid). Se trimite ca text liber.', 'Remplissez le champ schéma / expression / grammaire (un schéma doit être du JSON valide). Envoi en texte libre.', 'Compila il campo schema / espressione / grammatica (lo schema deve essere JSON valido). Invio come testo libero.', 'Rellena el campo esquema / expresión / gramática (el esquema debe ser JSON válido). Se envía como texto libre.', 'Preencha o campo esquema / expressão / gramática (o esquema deve ser JSON válido). A enviar como texto livre.', 'Fülle das Feld Schema / Ausdruck / Grammatik aus (ein Schema muss gültiges JSON sein). Wird als Freitext gesendet.', 'Töltsd ki a séma / kifejezés / nyelvtan mezőt (a sémának érvényes JSON-nak kell lennie). Szabad szövegként küldjük.'],
+  sysPrompt: ['System prompt', 'Prompt de sistem', 'Prompt système', 'Prompt di sistema', 'Prompt del sistema', 'Prompt do sistema', 'Systemprompt', 'Rendszerprompt'],
+  sources: ['Sources (quote lock)', 'Surse (citate blocate)', 'Sources (citations verrouillées)', 'Fonti (citazioni bloccate)', 'Fuentes (citas bloqueadas)', 'Fontes (citações bloqueadas)', 'Quellen (Zitatsperre)', 'Források (idézetzár)'],
+  srcHelp: ['The model may only quote these texts word for word, between « and ». Each quote is checked afterwards.', 'Modelul poate cita doar aceste texte, cuvânt cu cuvânt, între « și ». Fiecare citat e verificat după aceea.', 'Le modèle ne peut citer ces textes que mot pour mot, entre « et ». Chaque citation est vérifiée ensuite.', 'Il modello può citare questi testi solo parola per parola, tra « e ». Ogni citazione viene poi verificata.', 'El modelo solo puede citar estos textos palabra por palabra, entre « y ». Cada cita se verifica después.', 'O modelo só pode citar estes textos palavra por palavra, entre « e ». Cada citação é verificada depois.', 'Das Modell darf diese Texte nur wörtlich zwischen « und » zitieren. Jedes Zitat wird danach geprüft.', 'A modell csak szó szerint, « és » között idézheti ezeket a szövegeket. Minden idézetet utólag ellenőrzünk.'],
+  lock: ['Lock quotes while generating', 'Blochează citatele în timpul generării', 'Verrouiller les citations pendant la génération', 'Blocca le citazioni durante la generazione', 'Bloquear citas durante la generación', 'Bloquear citações durante a geração', 'Zitate beim Generieren sperren', 'Idézetek zárolása generálás közben'],
+  addSrc: ['Add source', 'Adaugă sursă', 'Ajouter une source', 'Aggiungi fonte', 'Añadir fuente', 'Adicionar fonte', 'Quelle hinzufügen', 'Forrás hozzáadása'],
+  fromFile: ['From text file…', 'Dintr-un fișier text…', 'Depuis un fichier texte…', 'Da file di testo…', 'Desde un archivo de texto…', 'De um ficheiro de texto…', 'Aus Textdatei …', 'Szövegfájlból…'],
+  srcTitle: ['Source title', 'Titlul sursei', 'Titre de la source', 'Titolo della fonte', 'Título de la fuente', 'Título da fonte', 'Titel der Quelle', 'Forrás címe'],
+  srcText: ['Source text', 'Textul sursei', 'Texte de la source', 'Testo della fonte', 'Texto de la fuente', 'Texto da fonte', 'Text der Quelle', 'A forrás szövege'],
+  useSrc: ['Use', 'Folosește', 'Utiliser', 'Usa', 'Usar', 'Usar', 'Verwenden', 'Használ'],
+  noSrc: ['No sources yet.', 'Nicio sursă încă.', 'Aucune source pour l’instant.', 'Ancora nessuna fonte.', 'Aún no hay fuentes.', 'Ainda sem fontes.', 'Noch keine Quellen.', 'Még nincs forrás.'],
+  sourceN: ['Source', 'Sursa', 'Source', 'Fonte', 'Fuente', 'Fonte', 'Quelle', 'Forrás'],
+  verify: ['Verify quotes', 'Verifică citatele', 'Vérifier les citations', 'Verifica le citazioni', 'Verificar citas', 'Verificar citações', 'Zitate prüfen', 'Idézetek ellenőrzése'],
+  verifying: ['Verifying…', 'Se verifică…', 'Vérification…', 'Verifica in corso…', 'Verificando…', 'A verificar…', 'Prüfe …', 'Ellenőrzés…'],
+  quoteCheck: ['Quote check', 'Verificarea citatelor', 'Contrôle des citations', 'Controllo citazioni', 'Comprobación de citas', 'Verificação de citações', 'Zitatprüfung', 'Idézetellenőrzés'],
+  q_verbatim: ['verbatim', 'literal', 'littéral', 'letterale', 'literal', 'literal', 'wörtlich', 'szó szerinti'],
+  q_wrong_source: ['wrong source', 'sursă greșită', 'mauvaise source', 'fonte errata', 'fuente errónea', 'fonte errada', 'falsche Quelle', 'rossz forrás'],
+  q_truncated: ['truncated', 'trunchiat', 'tronqué', 'troncato', 'truncado', 'truncado', 'abgeschnitten', 'megcsonkított'],
+  q_altered: ['altered', 'modificat', 'modifié', 'alterato', 'alterado', 'alterado', 'verändert', 'módosított'],
+  q_merged: ['merged', 'îmbinat', 'fusionné', 'unito', 'fusionado', 'fundido', 'verschmolzen', 'összevont'],
+  q_unsupported: ['unsupported', 'fără susținere', 'non étayé', 'non supportato', 'sin respaldo', 'sem suporte', 'nicht belegt', 'alátámasztatlan'],
+  q_unchecked: ['not checked', 'neverificat', 'non vérifié', 'non verificato', 'sin comprobar', 'não verificado', 'ungeprüft', 'nincs ellenőrizve'],
+  allVerbatim: ['All quotes are verbatim.', 'Toate citatele sunt literale.', 'Toutes les citations sont littérales.', 'Tutte le citazioni sono letterali.', 'Todas las citas son literales.', 'Todas as citações são literais.', 'Alle Zitate sind wörtlich.', 'Minden idézet szó szerinti.'],
+  someNot: ['Some quotes did not check out.', 'Unele citate nu au trecut verificarea.', 'Certaines citations n’ont pas été validées.', 'Alcune citazioni non hanno superato la verifica.', 'Algunas citas no pasaron la verificación.', 'Algumas citações não passaram na verificação.', 'Einige Zitate haben die Prüfung nicht bestanden.', 'Néhány idézet nem felelt meg az ellenőrzésnek.'],
+  noQuotes: ['No quotes in this answer.', 'Niciun citat în acest răspuns.', 'Aucune citation dans cette réponse.', 'Nessuna citazione in questa risposta.', 'Ninguna cita en esta respuesta.', 'Nenhuma citação nesta resposta.', 'Keine Zitate in dieser Antwort.', 'Nincs idézet ebben a válaszban.'],
+  verifyFail: ['The server could not verify the quotes.', 'Serverul nu a putut verifica citatele.', 'Le serveur n’a pas pu vérifier les citations.', 'Il server non ha potuto verificare le citazioni.', 'El servidor no pudo verificar las citas.', 'O servidor não conseguiu verificar as citações.', 'Der Server konnte die Zitate nicht prüfen.', 'A szerver nem tudta ellenőrizni az idézeteket.'],
+  models: ['Models', 'Modele', 'Modèles', 'Modelli', 'Modelos', 'Modelos', 'Modelle', 'Modellek'],
+  refresh: ['Refresh', 'Reîmprospătează', 'Actualiser', 'Aggiorna', 'Actualizar', 'Atualizar', 'Aktualisieren', 'Frissítés'],
+  load: ['Load', 'Încarcă', 'Charger', 'Carica', 'Cargar', 'Carregar', 'Laden', 'Betöltés'],
+  unload: ['Unload', 'Descarcă din memorie', 'Décharger', 'Scarica', 'Descargar', 'Descarregar', 'Entladen', 'Kiürítés'],
+  loadedL: ['loaded', 'încărcat', 'chargé', 'caricato', 'cargado', 'carregado', 'geladen', 'betöltve'],
+  idleL: ['not loaded', 'neîncărcat', 'non chargé', 'non caricato', 'no cargado', 'não carregado', 'nicht geladen', 'nincs betöltve'],
+  useModel: ['Use this model', 'Folosește acest model', 'Utiliser ce modèle', 'Usa questo modello', 'Usar este modelo', 'Usar este modelo', 'Dieses Modell verwenden', 'Ezt a modellt használom'],
+  noModels: ['No models listed (the server may be offline).', 'Niciun model listat (serverul poate fi oprit).', 'Aucun modèle listé (le serveur est peut-être hors ligne).', 'Nessun modello elencato (il server potrebbe essere offline).', 'Ningún modelo listado (puede que el servidor esté desconectado).', 'Nenhum modelo listado (o servidor pode estar desligado).', 'Keine Modelle gelistet (der Server ist evtl. offline).', 'Nincs listázott modell (a szerver lehet, hogy nem fut).'],
+  server: ['Server', 'Server', 'Serveur', 'Server', 'Servidor', 'Servidor', 'Server', 'Szerver'],
+  baseUrl: ['Server address', 'Adresa serverului', 'Adresse du serveur', 'Indirizzo del server', 'Dirección del servidor', 'Endereço do servidor', 'Serveradresse', 'Szervercím'],
+  token: ['Access token (optional)', 'Token de acces (opțional)', 'Jeton d’accès (facultatif)', 'Token di accesso (facoltativo)', 'Token de acceso (opcional)', 'Token de acesso (opcional)', 'Zugriffstoken (optional)', 'Hozzáférési token (opcionális)'],
+  tokenHelp: ['Kept in memory only; never saved.', 'Rămâne doar în memorie; nu se salvează.', 'Gardé en mémoire uniquement ; jamais enregistré.', 'Resta solo in memoria; non viene salvato.', 'Solo en memoria; nunca se guarda.', 'Fica só em memória; nunca é guardado.', 'Nur im Speicher; wird nie gespeichert.', 'Csak a memóriában marad; soha nem mentjük.'],
+  connect: ['Connect', 'Conectează', 'Connecter', 'Connetti', 'Conectar', 'Ligar', 'Verbinden', 'Csatlakozás'],
+  online: ['Connected', 'Conectat', 'Connecté', 'Connesso', 'Conectado', 'Ligado', 'Verbunden', 'Csatlakozva'],
+  offline: ['Not reachable', 'Indisponibil', 'Injoignable', 'Non raggiungibile', 'No disponible', 'Inacessível', 'Nicht erreichbar', 'Nem elérhető'],
+  corsHint: ['If this page was opened as a file, start the server with --cors.', 'Dacă pagina a fost deschisă ca fișier, pornește serverul cu --cors.', 'Si cette page a été ouverte comme fichier, démarrez le serveur avec --cors.', 'Se la pagina è stata aperta come file, avvia il server con --cors.', 'Si la página se abrió como archivo, inicia el servidor con --cors.', 'Se a página foi aberta como ficheiro, inicie o servidor com --cors.', 'Wurde die Seite als Datei geöffnet, starte den Server mit --cors.', 'Ha az oldalt fájlként nyitottad meg, indítsd a szervert --cors kapcsolóval.'],
+  info: ['Server info', 'Informații server', 'Infos serveur', 'Info server', 'Info del servidor', 'Informações do servidor', 'Serverinfo', 'Szerverinfó'],
+  caps: ['Capabilities and hardware', 'Capacități și hardware', 'Capacités et matériel', 'Capacità e hardware', 'Capacidades y hardware', 'Capacidades e hardware', 'Fähigkeiten und Hardware', 'Képességek és hardver'],
+  metricsT: ['Metrics', 'Metrici', 'Métriques', 'Metriche', 'Métricas', 'Métricas', 'Metriken', 'Metrikák'],
+  nothing: ['Nothing to show.', 'Nimic de afișat.', 'Rien à afficher.', 'Niente da mostrare.', 'Nada que mostrar.', 'Nada para mostrar.', 'Nichts anzuzeigen.', 'Nincs megjeleníthető adat.'],
+  theme: ['Theme', 'Temă', 'Thème', 'Tema', 'Tema', 'Tema', 'Design', 'Téma'],
+  tAuto: ['Automatic', 'Automată', 'Automatique', 'Automatico', 'Automático', 'Automático', 'Automatisch', 'Automatikus'],
+  tLight: ['Light', 'Luminoasă', 'Clair', 'Chiaro', 'Claro', 'Claro', 'Hell', 'Világos'],
+  tDark: ['Dark', 'Întunecată', 'Sombre', 'Scuro', 'Oscuro', 'Escuro', 'Dunkel', 'Sötét'],
+  lang: ['Language', 'Limbă', 'Langue', 'Lingua', 'Idioma', 'Idioma', 'Sprache', 'Nyelv'],
+  speed: ['tokens/s', 'tokeni/s', 'tokens/s', 'token/s', 'tokens/s', 'tokens/s', 'Tokens/s', 'token/s'],
+  ttft: ['first token', 'primul token', 'premier token', 'primo token', 'primer token', 'primeiro token', 'erstes Token', 'első token'],
+  tokensL: ['tokens', 'tokeni', 'tokens', 'token', 'tokens', 'tokens', 'Tokens', 'token'],
+  promptT: ['prompt', 'prompt', 'prompt', 'prompt', 'prompt', 'prompt', 'Prompt', 'prompt'],
+  complT: ['reply', 'răspuns', 'réponse', 'risposta', 'respuesta', 'resposta', 'Antwort', 'válasz'],
+  err: ['Error', 'Eroare', 'Erreur', 'Errore', 'Error', 'Erro', 'Fehler', 'Hiba'],
+  generating: ['Generating…', 'Se generează…', 'Génération…', 'Generazione…', 'Generando…', 'A gerar…', 'Generiere …', 'Generálás…'],
+  done: ['Reply finished.', 'Răspuns terminat.', 'Réponse terminée.', 'Risposta completata.', 'Respuesta terminada.', 'Resposta concluída.', 'Antwort fertig.', 'A válasz elkészült.'],
+  stopped: ['stopped', 'oprit', 'arrêté', 'interrotto', 'detenido', 'parado', 'gestoppt', 'leállítva'],
+  storeFail: ['Browser storage is unavailable or full: conversations will not be kept after closing this page. Use Export.', 'Stocarea din browser e indisponibilă sau plină: conversațiile nu se păstrează după închiderea paginii. Folosește Exportă.', 'Le stockage du navigateur est indisponible ou plein : les conversations ne seront pas conservées. Utilisez Exporter.', 'L’archiviazione del browser non è disponibile o è piena: le conversazioni non verranno conservate. Usa Esporta.', 'El almacenamiento del navegador no está disponible o está lleno: las conversaciones no se conservarán. Usa Exportar.', 'O armazenamento do navegador não está disponível ou está cheio: as conversas não serão guardadas. Use Exportar.', 'Der Browserspeicher ist nicht verfügbar oder voll: Unterhaltungen bleiben nicht erhalten. Nutze den Export.', 'A böngészőtár nem elérhető vagy megtelt: a beszélgetések nem maradnak meg. Használd az exportálást.']
+};
+
+function tr(lang, key, vars) {
+  const i = Math.max(0, LANGS.indexOf(lang));
+  const row = T[key];
+  let s = row ? (row[i] || row[0]) : key;
+  if (vars) s = s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  return s;
+}
+function detectLang(nav) {
+  const l = String(nav || 'en').slice(0, 2).toLowerCase();
+  return LANGS.includes(l) ? l : 'en';
+}
+
+function safeUrl(u) {
+  u = String(u == null ? '' : u).trim();
+  return /^(https?:\/\/|mailto:)[^\s\u0000-\u001f<>"']+$/i.test(u) ? u : null;
+}
+
+/* --- Markdown: parse to a plain-object tree; DOM is built elsewhere with textContent only --- */
+const RE_CITE = /\[S(\d{1,3})\]\s*«/y;
+const RE_LINK = /\[([^\]\n]{1,300})\]\(([^)\s]{1,2000})\)/y;
+function parseInline(s, d) {
+  d = d || 0;
+  const out = [];
+  let buf = '';
+  let i = 0;
+  const n = s.length;
+  const flush = () => { if (buf) { out.push({ t: 'text', v: buf }); buf = ''; } };
+  const isAl = (ch) => !!ch && /[\p{L}\p{N}]/u.test(ch);
+  while (i < n) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < n && '\\`*_[]()«»#>-'.indexOf(s[i + 1]) >= 0) { buf += s[i + 1]; i += 2; continue; }
+    if (c === '\n') { flush(); out.push({ t: 'br' }); i++; continue; }
+    if (c === '`') {
+      const j = s.indexOf('`', i + 1);
+      if (j > i + 1) { flush(); out.push({ t: 'code', v: s.slice(i + 1, j) }); i = j + 1; continue; }
+    }
+    if (c === '«' || c === '[') {
+      let tag = null, start = -1;
+      if (c === '«') { start = i + 1; }
+      else {
+        RE_CITE.lastIndex = i;
+        const m = RE_CITE.exec(s);
+        if (m) { tag = parseInt(m[1], 10); start = i + m[0].length; }
+      }
+      if (start >= 0) {
+        const j = s.indexOf('»', start);
+        flush();
+        out.push({ t: 'cite', tag, v: s.slice(start, j < 0 ? n : j), closed: j >= 0 });
+        i = j < 0 ? n : j + 1;
+        continue;
+      }
+      RE_LINK.lastIndex = i;
+      const m2 = RE_LINK.exec(s);
+      if (m2 && d < 6) {
+        const href = safeUrl(m2[2]);
+        if (href) { flush(); out.push({ t: 'a', href, c: parseInline(m2[1], d + 1) }); i += m2[0].length; continue; }
+      }
+    }
+    if (d < 6 && (c === '*' || c === '_')) {
+      if (s.startsWith(c + c, i)) {
+        const j = s.indexOf(c + c, i + 2);
+        if (j > i + 2 && (c === '*' || (!isAl(s[i - 1]) && !isAl(s[j + 2])))) {
+          flush(); out.push({ t: 'b', c: parseInline(s.slice(i + 2, j), d + 1) }); i = j + 2; continue;
+        }
+      } else if (s[i + 1] && !/\s/.test(s[i + 1]) && !(c === '_' && isAl(s[i - 1]))) {
+        let j = i + 1;
+        for (;;) {
+          j = s.indexOf(c, j);
+          if (j < 0) break;
+          if (s[j + 1] === c) { j += 2; continue; }
+          break;
+        }
+        if (j > i + 1 && !/\s/.test(s[j - 1]) && (c === '*' || !isAl(s[j + 1]))) {
+          flush(); out.push({ t: 'i', c: parseInline(s.slice(i + 1, j), d + 1) }); i = j + 1; continue;
+        }
+      }
+    }
+    buf += c; i++;
+  }
+  flush();
+  return out;
+}
+
+function parseMarkdown(src, depth) {
+  depth = depth || 0;
+  const lines = String(src == null ? '' : src).replace(/\r\n?/g, '\n').split('\n');
+  const blocks = [];
+  const blockStart = (l) => /^\s{0,3}(#{1,6}\s|>|```|[-*+]\s|\d{1,9}\.\s|(-{3,}|\*{3,}|_{3,})\s*$)/.test(l);
+  let i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^\s*$/.test(l)) { i++; continue; }
+    let m;
+    if ((m = /^\s{0,3}```\s*([\w+#.-]{0,30})\s*$/.exec(l))) {
+      const body = []; i++;
+      let closed = false;
+      while (i < lines.length) {
+        if (/^\s{0,3}```\s*$/.test(lines[i])) { closed = true; i++; break; }
+        body.push(lines[i]); i++;
+      }
+      blocks.push({ t: 'code', lang: m[1], text: body.join('\n'), closed });
+      continue;
+    }
+    if ((m = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l))) { blocks.push({ t: 'h', n: m[1].length, c: parseInline(m[2]) }); i++; continue; }
+    if (/^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { blocks.push({ t: 'hr' }); i++; continue; }
+    if (/^\s{0,3}>/.test(l) && depth < 6) {
+      const q = [];
+      while (i < lines.length && /^\s{0,3}>/.test(lines[i])) { q.push(lines[i].replace(/^\s{0,3}>\s?/, '')); i++; }
+      blocks.push({ t: 'quote', c: parseMarkdown(q.join('\n'), depth + 1) });
+      continue;
+    }
+    const isUl = /^\s{0,3}[-*+]\s+/.test(l);
+    const isOl = /^\s{0,3}\d{1,9}\.\s+/.test(l);
+    if (isUl || isOl) {
+      const re = isOl ? /^\s{0,3}\d{1,9}\.\s+(.*)$/ : /^\s{0,3}[-*+]\s+(.*)$/;
+      const items = [];
+      let mm;
+      while (i < lines.length && (mm = re.exec(lines[i]))) {
+        let text = mm[1]; i++;
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !re.test(lines[i])) { text += '\n' + lines[i].trim(); i++; }
+        items.push(parseInline(text));
+      }
+      blocks.push({ t: isOl ? 'ol' : 'ul', items });
+      continue;
+    }
+    const para = [l]; i++;
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !blockStart(lines[i])) { para.push(lines[i]); i++; }
+    blocks.push({ t: 'p', c: parseInline(para.join('\n')) });
+  }
+  return blocks;
+}
+
+/* Collect the « » citations of a parsed tree, in reading order. */
+function collectCites(blocks, acc) {
+  acc = acc || [];
+  const inl = (list) => { for (const x of list) { if (x.t === 'cite') acc.push(x); else if (x.c && x.t !== 'code') inl(x.c); } };
+  for (const b of blocks) {
+    if (b.c && b.t === 'quote') collectCites(b.c, acc);
+    else if (b.c) inl(b.c);
+    else if (b.items) for (const it of b.items) inl(it);
+  }
+  return acc;
+}
+/* Match parsed citations with the server's quote report: by order when counts agree, else by text. */
+function matchCitations(cites, quotes) {
+  const res = new Array(cites.length).fill(null);
+  if (!Array.isArray(quotes)) return res;
+  if (quotes.length === cites.length) { for (let k = 0; k < cites.length; k++) res[k] = quotes[k]; return res; }
+  const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
+  const used = new Set();
+  for (let k = 0; k < cites.length; k++) {
+    const want = norm(cites[k].v);
+    const idx = quotes.findIndex((q, j) => !used.has(j) && norm(q && q.text) === want);
+    if (idx >= 0) { used.add(idx); res[k] = quotes[idx]; }
+  }
+  return res;
+}
+function summariseReport(rep) {
+  if (!rep || typeof rep !== 'object' || !Array.isArray(rep.quotes)) return null;
+  const c = rep.counts && typeof rep.counts === 'object' ? rep.counts : {};
+  return { total: rep.quotes.length, allVerbatim: rep.all_verbatim === true, counts: c };
+}
+
+/* --- Server-sent events --- */
+function makeSSE(onData) {
+  let raw = '';
+  const emit = (block) => {
+    const data = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('data:')) data.push(line.slice(line.charAt(5) === ' ' ? 6 : 5));
+    }
+    if (data.length) onData(data.join('\n'));
+  };
+  return {
+    push(chunk) {
+      raw += chunk;
+      let tail = '';
+      if (raw.endsWith('\r')) { tail = '\r'; raw = raw.slice(0, -1); }
+      const norm = raw.replace(/\r\n?/g, '\n');
+      const parts = norm.split('\n\n');
+      raw = parts.pop() + tail;
+      for (const p of parts) emit(p);
+    },
+    flush() {
+      const rest = raw.replace(/\r\n?/g, '\n');
+      raw = '';
+      if (rest.trim()) emit(rest);
+    }
+  };
+}
+function newStream() { return { text: '', chunks: 0, finish: null, usage: null, error: null, done: false }; }
+function applyData(st, data) {
+  if (data === '[DONE]') { st.done = true; return false; }
+  let o;
+  try { o = JSON.parse(data); } catch (e) { return false; }
+  if (!o || typeof o !== 'object') return false;
+  if (o.error) { st.error = typeof o.error === 'string' ? o.error : (o.error.message || JSON.stringify(o.error)); return true; }
+  let changed = false;
+  const ch = Array.isArray(o.choices) ? o.choices[0] : null;
+  if (ch) {
+    const piece = ch.delta && typeof ch.delta.content === 'string' ? ch.delta.content : (typeof ch.text === 'string' ? ch.text : '');
+    if (piece) { st.text += piece; st.chunks++; changed = true; }
+    if (ch.finish_reason) st.finish = ch.finish_reason;
+  }
+  if (o.usage && typeof o.usage === 'object') st.usage = o.usage;
+  return changed;
+}
+function calcStats(t0, tFirst, tEnd, usage, chunks) {
+  const hasU = !!usage && Number.isFinite(usage.completion_tokens);
+  const completion = hasU ? usage.completion_tokens : chunks;
+  const dur = tFirst != null && tEnd > tFirst ? (tEnd - tFirst) / 1000 : 0;
+  return {
+    ttft: tFirst != null ? Math.max(0, Math.round(tFirst - t0)) : null,
+    tokS: dur > 0 && completion > 1 ? (completion - 1) / dur : null,
+    prompt: usage && Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : null,
+    completion,
+    approx: !hasU
+  };
+}
+
+/* --- Request building --- */
+function numOr(v, dflt, lo, hi) {
+  const x = typeof v === 'number' ? v : parseFloat(v);
+  if (!Number.isFinite(x)) return dflt;
+  return Math.min(hi, Math.max(lo, x));
+}
+function defaultSettings() {
+  return { temperature: 0.7, top_p: 0.95, top_k: 40, min_p: 0, repeat: 1, max_tokens: 512, seed: '', structured: 'off', structValue: '', lock: true };
+}
+function usableSources(conv) {
+  return (conv.sources || []).filter((s) => s && s.on !== false && typeof s.text === 'string' && s.text.trim());
+}
+function buildRequest(conv, S, model) {
+  const warnings = [];
+  const messages = [];
+  const sys = String(conv.system || '').trim();
+  if (sys) messages.push({ role: 'system', content: sys });
+  for (const m of conv.messages || []) {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
+    if (m.error || !String(m.content || '').trim()) continue;
+    messages.push({ role: m.role, content: m.content });
+  }
+  const body = { messages, stream: true, stream_options: { include_usage: true } };
+  if (model) body.model = model;
+  body.temperature = numOr(S.temperature, 0.7, 0, 5);
+  body.top_p = numOr(S.top_p, 0.95, 0, 1);
+  body.top_k = Math.round(numOr(S.top_k, 40, 0, 1000));
+  const minp = numOr(S.min_p, 0, 0, 1);
+  if (minp > 0) body.min_p = minp;
+  const rep = numOr(S.repeat, 1, 0.5, 2);
+  if (rep !== 1) body.repeat_penalty = rep;
+  body.max_tokens = Math.round(numOr(S.max_tokens, 512, 1, 1000000));
+  if (S.seed !== '' && S.seed != null && Number.isFinite(parseFloat(S.seed))) body.seed = Math.max(0, Math.floor(parseFloat(S.seed)));
+  const srcs = usableSources(conv);
+  const srcIds = srcs.map((s) => s.id);
+  if (srcs.length) {
+    body.sources = srcs.map((s) => s.text);
+    if (S.lock === false) body.quote_lock = false;
+  }
+  const mode = S.structured || 'off';
+  if (mode !== 'off') {
+    if (srcs.length) warnings.push('stConflict');
+    else if (mode === 'json') body.response_format = { type: 'json_object' };
+    else {
+      const v = String(S.structValue || '').trim();
+      if (!v) warnings.push('badStruct');
+      else if (mode === 'schema') {
+        try {
+          const sch = JSON.parse(v);
+          if (!sch || typeof sch !== 'object' || Array.isArray(sch)) throw new Error('schema');
+          body.response_format = { type: 'json_schema', json_schema: { name: 'reply', schema: sch } };
+        } catch (e) { warnings.push('badStruct'); }
+      } else if (mode === 'regex') body.regex = v;
+      else if (mode === 'grammar') body.grammar = v;
+    }
+  }
+  return { body, warnings, srcIds };
+}
+
+/* --- Conversations: ids, titles, export/import --- */
+function newId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+function titleFrom(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  return t.length > 48 ? t.slice(0, 47) + '…' : t;
+}
+function slug(s) {
+  return String(s || 'chat').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'chat';
+}
+function conversationToMarkdown(conv, L) {
+  const out = ['# ' + (conv.title || L.untitled), ''];
+  if (conv.system && conv.system.trim()) out.push('**' + L.system + ':** ' + conv.system.trim().replace(/\n/g, '\n> '), '');
+  const srcs = conv.sources || [];
+  if (srcs.length) {
+    out.push('## ' + L.sources, '');
+    srcs.forEach((s, i) => { out.push('- **' + (s.title || (L.source + ' ' + (i + 1))) + '**' + (s.on === false ? '' : ' [S' + (srcs.slice(0, i + 1).filter((x) => x.on !== false).length) + ']')); });
+    out.push('');
+  }
+  for (const m of conv.messages || []) {
+    out.push('## ' + (m.role === 'user' ? L.you : L.assistant), '', String(m.content || ''), '');
+    if (m.citations && m.citations.quotes) {
+      const q = m.citations.quotes;
+      out.push('*' + L.quoteCheck + ': ' + (q.length ? (m.citations.all_verbatim ? L.allVerbatim : L.someNot) : L.noQuotes) + '*', '');
+    }
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}
+function conversationsToJSON(list) {
+  return JSON.stringify({ format: 'corbul-webui', version: 1, exported: new Date().toISOString(), conversations: list }, null, 2);
+}
+const CAP = 2000000;
+function cleanStr(v, max) { return typeof v === 'string' ? v.slice(0, max == null ? CAP : max) : ''; }
+function sanitizeConversation(c) {
+  if (!c || typeof c !== 'object') return null;
+  const msgs = Array.isArray(c.messages) ? c.messages.slice(0, 5000) : [];
+  const out = {
+    id: newId(),
+    title: cleanStr(c.title, 200),
+    created: Number.isFinite(c.created) ? c.created : Date.now(),
+    updated: Number.isFinite(c.updated) ? c.updated : Date.now(),
+    system: cleanStr(c.system, 100000),
+    sources: [],
+    messages: []
+  };
+  const srcs = Array.isArray(c.sources) ? c.sources.slice(0, 64) : [];
+  for (const s of srcs) {
+    if (!s || typeof s !== 'object') continue;
+    out.sources.push({ id: cleanStr(s.id, 40) || newId(), title: cleanStr(s.title, 200), text: cleanStr(s.text), on: s.on !== false });
+  }
+  for (const m of msgs) {
+    if (!m || typeof m !== 'object' || (m.role !== 'user' && m.role !== 'assistant')) continue;
+    const mm = { role: m.role, content: cleanStr(m.content), ts: Number.isFinite(m.ts) ? m.ts : Date.now() };
+    if (m.error) mm.error = cleanStr(m.error, 5000);
+    if (m.stopped === true) mm.stopped = true;
+    if (typeof m.model === 'string') mm.model = cleanStr(m.model, 200);
+    if (Array.isArray(m.srcIds)) mm.srcIds = m.srcIds.filter((x) => typeof x === 'string').slice(0, 64).map((x) => x.slice(0, 40));
+    if (m.stats && typeof m.stats === 'object') {
+      mm.stats = {};
+      for (const k of ['ttft', 'tokS', 'prompt', 'completion']) if (Number.isFinite(m.stats[k])) mm.stats[k] = m.stats[k];
+      mm.stats.approx = m.stats.approx === true;
+    }
+    if (m.citations && typeof m.citations === 'object' && Array.isArray(m.citations.quotes)) {
+      try { if (JSON.stringify(m.citations).length < 1000000) mm.citations = JSON.parse(JSON.stringify(m.citations)); } catch (e) { /* skip */ }
+    }
+    out.messages.push(mm);
+  }
+  return out;
+}
+function validateImport(text) {
+  let o;
+  try { o = JSON.parse(text); } catch (e) { return { ok: false }; }
+  if (!o || typeof o !== 'object') return { ok: false };
+  let list = null;
+  if (o.format === 'corbul-webui' && Array.isArray(o.conversations)) list = o.conversations;
+  else if (Array.isArray(o.messages)) list = [o];
+  if (!list) return { ok: false };
+  const convs = list.slice(0, 500).map(sanitizeConversation).filter(Boolean);
+  return convs.length ? { ok: true, convs } : { ok: false };
+}
+function fmtNum(x, d) { return Number.isFinite(x) ? x.toFixed(d == null ? 1 : d) : '–'; }
+const PURE = { LANGS, LANG_NAMES, T, tr, detectLang, safeUrl, parseInline, parseMarkdown, collectCites, matchCitations, summariseReport, makeSSE, newStream, applyData, calcStats, defaultSettings, usableSources, buildRequest, newId, titleFrom, slug, conversationToMarkdown, conversationsToJSON, validateImport, sanitizeConversation, fmtNum };
+/* PURE:END */
+
+if (typeof document !== 'undefined') (function () {
+  const $ = (id) => document.getElementById(id);
+  const KEY_CONV = 'corbul.webui.v1.conversations';
+  const KEY_SET = 'corbul.webui.v1.settings';
+  const KEY_LANG = 'corbul.webui.v1.lang';
+  const KEY_THEME = 'corbul.webui.v1.theme';
+  const KEY_SERVER = 'corbul.webui.v1.server';
+
+  const LS = {
+    get(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { window.localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  };
+  const readJSON = (k) => { const v = LS.get(k); if (!v) return null; try { return JSON.parse(v); } catch (e) { return null; } };
+
+  const defBase = /^https?:$/.test(location.protocol) ? '' : 'http://127.0.0.1:8080';
+  const state = {
+    lang: LS.get(KEY_LANG) && LANGS.includes(LS.get(KEY_LANG)) ? LS.get(KEY_LANG) : detectLang(navigator.language),
+    theme: LS.get(KEY_THEME) || 'auto',
+    convs: [],
+    cur: null,
+    settings: Object.assign(defaultSettings(), readJSON(KEY_SET) || {}),
+    hadSettings: !!readJSON(KEY_SET),
+    base: (readJSON(KEY_SERVER) || {}).base != null ? String((readJSON(KEY_SERVER) || {}).base) : defBase,
+    token: '',
+    online: false,
+    models: [],
+    model: '',
+    busy: false,
+    abort: null,
+    storageOk: true,
+    verifying: new Set()
+  };
+  const t = (k, v) => tr(state.lang, k, v);
+
+  /* ---------- DOM helpers (text only, never innerHTML) ---------- */
+  function h(tag, props) {
+    const e = document.createElement(tag);
+    if (props) {
+      for (const k of Object.keys(props)) {
+        const v = props[k];
+        if (v == null || v === false) continue;
+        if (k === 'class') e.className = v;
+        else if (k === 'text') e.textContent = v;
+        else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+        else if (k === 'value' || k === 'checked' || k === 'disabled' || k === 'hidden' || k === 'rows' || k === 'min' || k === 'max') e[k] = v;
+        else e.setAttribute(k, v === true ? '' : String(v));
+      }
+    }
+    for (let i = 2; i < arguments.length; i++) {
+      const kids = Array.isArray(arguments[i]) ? arguments[i] : [arguments[i]];
+      for (const kid of kids) { if (kid == null || kid === false) continue; e.append(kid.nodeType ? kid : document.createTextNode(String(kid))); }
+    }
+    return e;
+  }
+  const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
+  const live = (txt) => { const l = $('live'); l.textContent = ''; setTimeout(() => { l.textContent = txt; }, 30); };
+
+  function showBanner(text, kind) {
+    const b = $('banner');
+    $('bannerText').textContent = text;
+    b.className = kind === 'err' ? 'err' : '';
+    b.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+    b.hidden = false;
+  }
+  function hideBanner() { $('banner').hidden = true; }
+
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall through */ }
+    try {
+      const ta = h('textarea', { 'aria-hidden': 'true', tabindex: '-1' });
+      ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.append(ta); ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch (e) { return false; }
+  }
+  function copyButton(getText, label) {
+    const b = h('button', { type: 'button', text: label || t('copy') });
+    b.addEventListener('click', async () => {
+      const ok = await copyText(getText());
+      const old = label || t('copy');
+      b.textContent = ok ? t('copied') : t('err');
+      live(ok ? t('copied') : t('err'));
+      setTimeout(() => { b.textContent = old; }, 1500);
+    });
+    return b;
+  }
+
+  /* ---------- Storage ---------- */
+  let saveTimer = 0;
+  function persistNow() {
+    const data = JSON.stringify(state.convs);
+    const ok = LS.set(KEY_CONV, data);
+    if (!ok && state.storageOk) { state.storageOk = false; showBanner(t('storeFail'), 'warn'); }
+    if (ok) state.storageOk = true;
+  }
+  function save() { clearTimeout(saveTimer); saveTimer = setTimeout(persistNow, 250); }
+  function saveSettings() { LS.set(KEY_SET, JSON.stringify(state.settings)); }
+
+  function load() {
+    const raw = readJSON(KEY_CONV);
+    if (Array.isArray(raw)) {
+      state.convs = raw.map((c) => {
+        const s = sanitizeConversation(c);
+        if (s && c && typeof c.id === 'string') s.id = c.id.slice(0, 40);
+        return s;
+      }).filter(Boolean);
+    }
+    if (!state.convs.length) state.convs.push(blankConv());
+    state.cur = state.convs[0].id;
+  }
+  function blankConv() { return { id: newId(), title: '', created: Date.now(), updated: Date.now(), system: '', sources: [], messages: [] }; }
+  const cur = () => state.convs.find((c) => c.id === state.cur) || state.convs[0];
+
+  /* ---------- API ---------- */
+  function api(path, opts) {
+    opts = opts || {};
+    const headers = Object.assign({}, opts.headers);
+    if (opts.body != null) headers['Content-Type'] = 'application/json';
+    if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    return fetch(state.base.replace(/\/+$/, '') + path, Object.assign({}, opts, { headers, cache: 'no-store', referrerPolicy: 'no-referrer' }));
+  }
+  async function httpError(res) {
+    let msg = res.status + ' ' + (res.statusText || '');
+    try {
+      const txt = await res.text();
+      try { const j = JSON.parse(txt); msg = (j.error && (j.error.message || j.error)) || j.message || msg; } catch (e) { if (txt) msg = txt.slice(0, 500); }
+    } catch (e) { /* keep status text */ }
+    return new Error(String(msg));
+  }
+  async function getJSON(path) {
+    const res = await api(path);
+    if (!res.ok) throw await httpError(res);
+    return res.json();
+  }
+
+  /* ---------- Markdown to DOM ---------- */
+  function renderInline(list, parent, ctx) {
+    for (const x of list) {
+      switch (x.t) {
+        case 'text': parent.append(document.createTextNode(x.v)); break;
+        case 'br': parent.append(document.createElement('br')); break;
+        case 'code': parent.append(h('code', { text: x.v })); break;
+        case 'b': { const e = document.createElement('strong'); renderInline(x.c, e, ctx); parent.append(e); break; }
+        case 'i': { const e = document.createElement('em'); renderInline(x.c, e, ctx); parent.append(e); break; }
+        case 'a': { const e = h('a', { href: x.href, rel: 'noopener noreferrer nofollow', target: '_blank' }); renderInline(x.c, e, ctx); parent.append(e); break; }
+        case 'cite': parent.append(citeNode(x, ctx)); break;
+        default: break;
+      }
+    }
+  }
+  function citeNode(x, ctx) {
+    const k = ctx.n++;
+    const q = ctx.matches ? ctx.matches[k] : null;
+    const status = q && typeof q.status === 'string' ? q.status : null;
+    const cls = 'cite ' + (status ? 'st-' + status.replace(/[^a-z_]/g, '') : 'st-unchecked') + (x.closed ? '' : ' open');
+    const label = status ? t('q_' + status) : t('q_unchecked');
+    const e = h('span', { class: cls, title: label });
+    if (x.tag != null) e.append(h('small', { text: '[S' + x.tag + ']' }));
+    e.append(document.createTextNode('«' + x.v + (x.closed ? '»' : '')));
+    e.append(h('span', { class: 'sr', text: ' (' + label + ')' }));
+    return e;
+  }
+  function renderBlocks(blocks, parent, ctx) {
+    for (const b of blocks) {
+      switch (b.t) {
+        case 'p': { const e = h('p'); renderInline(b.c, e, ctx); parent.append(e); break; }
+        case 'h': { const e = h('h' + Math.min(6, b.n + 3)); renderInline(b.c, e, ctx); parent.append(e); break; }
+        case 'hr': parent.append(h('hr')); break;
+        case 'quote': { const e = h('blockquote'); renderBlocks(b.c, e, ctx); parent.append(e); break; }
+        case 'ul': case 'ol': {
+          const e = h(b.t);
+          for (const it of b.items) { const li = h('li'); renderInline(it, li, ctx); e.append(li); }
+          parent.append(e); break;
+        }
+        case 'code': {
+          const bar = h('div', { class: 'bar' }, h('span', { text: b.lang || 'text' }), copyButton(() => b.text));
+          parent.append(h('div', { class: 'codewrap' }, bar, h('pre', { tabindex: '0' }, h('code', { text: b.text }))));
+          break;
+        }
+        default: break;
+      }
+    }
+  }
+  function renderMarkdownInto(el, text, report) {
+    const blocks = parseMarkdown(text);
+    const cites = collectCites(blocks);
+    const ctx = { n: 0, matches: report && report.quotes ? matchCitations(cites, report.quotes) : null };
+    clear(el);
+    renderBlocks(blocks, el, ctx);
+  }
+
+  /* ---------- Messages ---------- */
+  const logEl = () => $('log');
+  const nearBottom = () => { const l = logEl(); return l.scrollHeight - l.scrollTop - l.clientHeight < 80; };
+  const toBottom = () => { const l = logEl(); l.scrollTop = l.scrollHeight; };
+
+  function statsLine(m) {
+    const s = m.stats;
+    if (!s) return '';
+    const parts = [];
+    if (s.tokS != null) parts.push((s.approx ? '≈' : '') + fmtNum(s.tokS, 1) + ' ' + t('speed'));
+    if (s.ttft != null) parts.push(fmtNum(s.ttft / 1000, 2) + ' s ' + t('ttft'));
+    if (s.prompt != null) parts.push(s.prompt + ' ' + t('tokensL') + ' (' + t('promptT') + ')');
+    if (s.completion != null) parts.push((s.approx ? '≈' : '') + s.completion + ' ' + t('tokensL') + ' (' + t('complT') + ')');
+    if (m.stopped) parts.push(t('stopped'));
+    return parts.join(' · ');
+  }
+  function quoteCheckNode(m) {
+    const rep = m.citations;
+    const wrap = h('div', { class: 'qcheck' });
+    const sum = summariseReport(rep);
+    if (!sum) return wrap;
+    const head = h('p', { class: 'hint', text: t('quoteCheck') + ': ' + (sum.total ? (sum.allVerbatim ? t('allVerbatim') : t('someNot')) : t('noQuotes')) });
+    wrap.append(head);
+    if (sum.total) {
+      const ul = h('ul');
+      for (const q of rep.quotes) {
+        const st = typeof q.status === 'string' ? q.status : 'unsupported';
+        const src = Number.isFinite(q.source) ? ' [S' + q.source + ']' : (Number.isFinite(q.found_in) ? ' → [S' + q.found_in + ']' : '');
+        ul.append(h('li', { text: (q.tag != null ? '[S' + q.tag + '] ' : '') + '«' + String(q.text || '').slice(0, 300) + '» — ' + t('q_' + st) + src }));
+      }
+      wrap.append(ul);
+    }
+    return wrap;
+  }
+  function renderMessageContent(el, m) {
+    if (m.role === 'user') { el.className = 'mc user-text'; el.textContent = m.content; return; }
+    el.className = 'mc';
+    renderMarkdownInto(el, m.content, m.citations);
+    if (m.pending) el.classList.add('typing');
+  }
+  function messageNode(c, m, idx, isLast) {
+    const art = h('article', { class: 'msg role-' + m.role, 'data-i': idx, 'aria-busy': m.pending ? 'true' : null });
+    art.append(h('h3', { text: m.role === 'user' ? t('you') : t('assistant') + (m.model ? ' · ' + m.model : '') }));
+    const body = h('div');
+    renderMessageContent(body, m);
+    art.append(body);
+    if (m.error) art.append(h('p', { class: 'err-text', role: 'alert', text: t('err') + ': ' + m.error }));
+    const sl = statsLine(m);
+    if (sl) art.append(h('p', { class: 'stats', text: sl }));
+    if (m.citations) art.append(quoteCheckNode(m));
+    if (!m.pending) {
+      const acts = h('div', { class: 'acts' });
+      acts.append(copyButton(() => m.content));
+      if (m.role === 'assistant' && m.srcIds && m.srcIds.length && m.content) {
+        const vb = h('button', { type: 'button', text: state.verifying.has(m) ? t('verifying') : t('verify'), disabled: state.verifying.has(m) });
+        vb.addEventListener('click', () => verifyMessage(c, m));
+        acts.append(vb);
+      }
+      if (m.role === 'assistant' && isLast && !state.busy) {
+        const rb = h('button', { type: 'button', text: t('regen') });
+        rb.addEventListener('click', () => regenerate());
+        acts.append(rb);
+      }
+      const db = h('button', { type: 'button', text: t('delMsg') });
+      db.addEventListener('click', () => { c.messages.splice(idx, 1); c.updated = Date.now(); save(); renderLog(); });
+      acts.append(db);
+      art.append(acts);
+    }
+    return art;
+  }
+  function renderLog(keepScroll) {
+    const c = cur();
+    const l = logEl();
+    const pinned = keepScroll ? nearBottom() : true;
+    clear(l);
+    if (!c.messages.length) l.append(h('p', { class: 'empty', text: t('empty') }));
+    c.messages.forEach((m, i) => l.append(messageNode(c, m, i, i === c.messages.length - 1)));
+    if (pinned) toBottom();
+  }
+  let rafPending = false;
+  function scheduleStreamRender(m) {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      const c = cur();
+      const idx = c.messages.indexOf(m);
+      const art = idx >= 0 ? logEl().querySelector('article[data-i="' + idx + '"]') : null;
+      if (!art) return;
+      const pinned = nearBottom();
+      renderMessageContent(art.children[1], m);
+      if (pinned) toBottom();
+    });
+  }
+
+  /* ---------- Generation ---------- */
+  function setBusy(b) {
+    state.busy = b;
+    $('btn-send').hidden = b;
+    $('btn-stop').hidden = !b;
+    $('prompt').setAttribute('aria-busy', b ? 'true' : 'false');
+  }
+  async function generate() {
+    if (state.busy) return;
+    const c = cur();
+    const { body, warnings, srcIds } = buildRequest(c, state.settings, state.model);
+    if (!body.messages.some((m) => m.role === 'user')) return;
+    if (warnings.length) showBanner(warnings.map((w) => t(w)).join('\n'), 'warn'); else hideBanner();
+    const m = { role: 'assistant', content: '', ts: Date.now(), model: state.model || '', srcIds, pending: true };
+    c.messages.push(m);
+    c.updated = Date.now();
+    setBusy(true);
+    renderLog();
+    live(t('generating'));
+    const ctl = new AbortController();
+    state.abort = ctl;
+    const st = newStream();
+    const t0 = performance.now();
+    let tFirst = null;
+    const sse = makeSSE((d) => { if (applyData(st, d)) { if (tFirst == null) tFirst = performance.now(); m.content = st.text; scheduleStreamRender(m); } });
+    let aborted = false;
+    try {
+      const res = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify(body), signal: ctl.signal });
+      if (!res.ok) throw await httpError(res);
+      if (res.body && res.body.getReader) {
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        for (;;) {
+          const r = await reader.read();
+          if (r.done) break;
+          sse.push(dec.decode(r.value, { stream: true }));
+        }
+        sse.push(dec.decode());
+      } else {
+        sse.push(await res.text());
+      }
+      sse.flush();
+      if (st.error) throw new Error(st.error);
+    } catch (e) {
+      if (ctl.signal.aborted) aborted = true;
+      else { m.error = e && e.message ? e.message : String(e); if (/Failed to fetch|NetworkError|Load failed/i.test(m.error)) m.error += '\n' + t('corsHint'); }
+    }
+    m.content = st.text;
+    m.pending = false;
+    if (aborted) m.stopped = true;
+    m.stats = calcStats(t0, tFirst, performance.now(), st.usage, st.chunks);
+    if (!m.content && !m.error && !aborted) m.content = '';
+    if (!c.title) { const u = c.messages.find((x) => x.role === 'user'); if (u) c.title = titleFrom(u.content); }
+    c.updated = Date.now();
+    state.abort = null;
+    setBusy(false);
+    save();
+    renderConvList();
+    $('titleIn').value = c.title;
+    renderLog(true);
+    live(m.error ? t('err') + ': ' + m.error : t('done'));
+    if (!m.error && m.content && srcIds.length) verifyMessage(c, m, true);
+    refreshSlots();
+  }
+  function stop() { if (state.abort) state.abort.abort(); }
+  function regenerate() {
+    const c = cur();
+    while (c.messages.length && c.messages[c.messages.length - 1].role === 'assistant') c.messages.pop();
+    generate();
+  }
+  async function verifyMessage(c, m, quiet) {
+    const srcs = (m.srcIds || []).map((id) => (c.sources || []).find((s) => s.id === id)).filter(Boolean).map((s) => s.text);
+    if (!srcs.length || !m.content) return;
+    state.verifying.add(m);
+    renderLog(true);
+    try {
+      const res = await api('/v1/quotes/verify', { method: 'POST', body: JSON.stringify({ text: m.content, sources: srcs }) });
+      if (!res.ok) throw await httpError(res);
+      m.citations = await res.json();
+      save();
+    } catch (e) {
+      if (!quiet) showBanner(t('verifyFail') + ' ' + (e && e.message ? e.message : ''), 'err');
+    }
+    state.verifying.delete(m);
+    renderLog(true);
+  }
+
+  /* ---------- Conversation list ---------- */
+  function renderConvList() {
+    const ul = $('convlist');
+    clear(ul);
+    for (const c of state.convs) {
+      const li = h('li', { 'data-current': c.id === state.cur ? 'true' : 'false' });
+      const pick = h('button', { type: 'button', class: 'pick', text: c.title || t('untitled'), 'aria-current': c.id === state.cur ? 'true' : null, title: c.title || t('untitled') });
+      pick.addEventListener('click', () => { switchTo(c.id); closeDrawers(); });
+      const del = h('button', { type: 'button', text: '×', 'aria-label': t('del') + ': ' + (c.title || t('untitled')), title: t('del') });
+      del.addEventListener('click', () => {
+        if (!window.confirm(t('delConfirm'))) return;
+        if (state.busy && c.id === state.cur) stop();
+        state.convs = state.convs.filter((x) => x.id !== c.id);
+        if (!state.convs.length) state.convs.push(blankConv());
+        if (c.id === state.cur) state.cur = state.convs[0].id;
+        save(); switchTo(state.cur);
+      });
+      li.append(pick, del);
+      ul.append(li);
+    }
+  }
+  function switchTo(id) {
+    if (state.busy) return;
+    state.cur = id;
+    const c = cur();
+    $('titleIn').value = c.title;
+    $('sysIn').value = c.system || '';
+    renderConvList(); renderLog(); renderSources();
+    $('prompt').focus();
+  }
+  function newChat() {
+    if (state.busy) return;
+    const cc = cur();
+    if (cc && !cc.messages.length && !cc.title) { closeDrawers(); $('prompt').focus(); return; }
+    const c = blankConv();
+    state.convs.unshift(c);
+    state.cur = c.id;
+    save(); switchTo(c.id); closeDrawers();
+  }
+
+  /* ---------- Export / import ---------- */
+  function download(name, text, mime) {
+    const url = URL.createObjectURL(new Blob([text], { type: mime }));
+    const a = h('a', { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  function labels() {
+    return { you: t('you'), assistant: t('assistant'), system: t('sysPrompt'), sources: t('sources'), source: t('sourceN'), untitled: t('untitled'), quoteCheck: t('quoteCheck'), allVerbatim: t('allVerbatim'), someNot: t('someNot'), noQuotes: t('noQuotes') };
+  }
+  function exportJSON() { download('corbul-' + slug(cur().title) + '.json', conversationsToJSON([cur()]), 'application/json'); }
+  function exportAll() { download('corbul-all.json', conversationsToJSON(state.convs), 'application/json'); }
+  function exportMD() { download('corbul-' + slug(cur().title) + '.md', conversationToMarkdown(cur(), labels()), 'text/markdown'); }
+  async function importFile(file) {
+    if (!file) return;
+    if (file.size > 50 * 1024 * 1024) { showBanner(t('importBad'), 'err'); return; }
+    const v = validateImport(await file.text());
+    if (!v.ok) { showBanner(t('importBad'), 'err'); return; }
+    state.convs.unshift(...v.convs);
+    state.cur = v.convs[0].id;
+    save(); switchTo(state.cur);
+    showBanner(t('importOk', { n: v.convs.length }), 'warn');
+  }
+
+  /* ---------- Sources ---------- */
+  function renderSources() {
+    const c = cur();
+    const ul = $('srclist');
+    clear(ul);
+    if (!c.sources.length) { ul.append(h('li', { class: 'hint', text: t('noSrc') })); return; }
+    let n = 0;
+    c.sources.forEach((s, i) => {
+      const num = s.on !== false ? ++n : null;
+      const idp = 'src-' + i;
+      const lab = h('label', { class: 'inline', for: idp + '-on' });
+      const cb = h('input', { type: 'checkbox', id: idp + '-on', checked: s.on !== false });
+      cb.addEventListener('change', () => { s.on = cb.checked; save(); renderSources(); });
+      lab.append(cb, h('span', { text: t('useSrc') + (num ? ' [S' + num + ']' : '') }));
+      const title = h('input', { type: 'text', id: idp + '-t', 'aria-label': t('srcTitle'), placeholder: t('srcTitle'), value: s.title || '', maxlength: 200 });
+      title.addEventListener('input', () => { s.title = title.value; save(); });
+      const text = h('textarea', { id: idp + '-x', 'aria-label': t('srcText'), placeholder: t('srcText'), rows: 4, value: s.text || '' });
+      text.addEventListener('input', () => { s.text = text.value; save(); });
+      const rm = h('button', { type: 'button', text: t('del'), 'aria-label': t('del') + ': ' + (s.title || t('sourceN') + ' ' + (i + 1)) });
+      rm.addEventListener('click', () => { c.sources.splice(i, 1); save(); renderSources(); });
+      ul.append(h('li', { class: 'srcitem' }, h('div', { class: 'row' }, lab, rm), title, text));
+    });
+  }
+  function addSource(title, text) {
+    const c = cur();
+    if (c.sources.length >= 64) return;
+    c.sources.push({ id: newId(), title: title || '', text: text || '', on: true });
+    save(); renderSources();
+  }
+  async function addSourceFiles(files) {
+    for (const f of Array.from(files || [])) {
+      if (f.size > 2 * 1024 * 1024) continue;
+      addSource(f.name, await f.text());
+    }
+  }
+
+  /* ---------- Server panels ---------- */
+  function setStatus(on) {
+    state.online = on;
+    $('statusDot').className = 'dot ' + (on ? 'on' : 'off');
+    $('statusLabel').textContent = on ? t('online') : t('offline');
+    $('corsHint').hidden = on;
+  }
+  async function connect() {
+    state.base = $('baseUrl').value.trim();
+    state.token = $('tokenIn').value;
+    LS.set(KEY_SERVER, JSON.stringify({ base: state.base }));
+    try {
+      const res = await api('/health');
+      setStatus(res.ok);
+    } catch (e) { setStatus(false); }
+    await refreshModels();
+    if (state.online) { await Promise.all([refreshInfo(), refreshCaps(), refreshMetrics()]); }
+  }
+  async function refreshModels() {
+    try {
+      const j = await getJSON('/v1/models');
+      state.models = Array.isArray(j.data) ? j.data.filter((x) => x && typeof x.id === 'string') : [];
+      if (!state.models.some((x) => x.id === state.model)) state.model = (state.models.find((x) => x.loaded) || state.models[0] || {}).id || '';
+      if (!state.online) setStatus(true);
+    } catch (e) { state.models = []; }
+    renderModels();
+  }
+  function renderModels() {
+    const ul = $('mlist');
+    clear(ul);
+    const badge = $('modelBadge');
+    badge.hidden = !state.model;
+    badge.textContent = state.model;
+    if (!state.models.length) { ul.append(h('li', { class: 'hint', text: t('noModels') })); return; }
+    state.models.forEach((mo, i) => {
+      const rid = 'model-' + i;
+      const radio = h('input', { type: 'radio', name: 'model', id: rid, checked: mo.id === state.model });
+      radio.addEventListener('change', () => { state.model = mo.id; badge.hidden = false; badge.textContent = mo.id; refreshInfo(); });
+      const lab = h('label', { class: 'inline', for: rid }, h('span', { text: mo.id }), h('span', { class: 'pill' + (mo.loaded ? ' on' : ''), text: mo.loaded ? t('loadedL') : t('idleL') }));
+      const act = h('button', { type: 'button', text: mo.loaded ? t('unload') : t('load') });
+      act.addEventListener('click', async () => {
+        act.disabled = true;
+        try {
+          const res = await api(mo.loaded ? '/models/unload' : '/models/load', { method: 'POST', body: JSON.stringify({ model: mo.id }) });
+          if (!res.ok) throw await httpError(res);
+        } catch (e) { showBanner(t('err') + ': ' + (e && e.message ? e.message : e), 'err'); }
+        await refreshModels(); refreshInfo();
+      });
+      ul.append(h('li', {}, h('div', { class: 'row' }, radio, lab, act), h('span', { class: 'sr', text: t('useModel') })));
+    });
+  }
+  function kvList(obj, depth) {
+    const dl = h('dl', { class: 'kv' });
+    for (const k of Object.keys(obj).slice(0, 60)) {
+      const v = obj[k];
+      dl.append(h('dt', { text: k }));
+      const dd = h('dd');
+      if (v && typeof v === 'object' && depth < 3) dd.append(Array.isArray(v) ? h('span', { text: JSON.stringify(v).slice(0, 400) }) : kvList(v, depth + 1));
+      else dd.textContent = typeof v === 'string' ? v : JSON.stringify(v);
+      dl.append(dd);
+    }
+    return dl;
+  }
+  async function refreshInfo() {
+    const box = $('infoBox');
+    clear(box);
+    try {
+      const p = await getJSON('/props' + (state.model ? '?model=' + encodeURIComponent(state.model) : ''));
+      const d = p.default_generation_settings && p.default_generation_settings.params;
+      if (d && !state.hadSettings) {
+        if (Number.isFinite(d.temperature)) state.settings.temperature = d.temperature;
+        if (Number.isFinite(d.top_p)) state.settings.top_p = d.top_p;
+        if (Number.isFinite(d.top_k)) state.settings.top_k = d.top_k;
+        if (Number.isFinite(d.n_predict)) state.settings.max_tokens = d.n_predict;
+        state.hadSettings = true; saveSettings(); bindSettings();
+      }
+      const view = {};
+      for (const k of ['model', 'n_ctx', 'n_vocab', 'chat_template', 'build_info', 'total_slots', 'modalities', 'tools']) if (k in p) view[k] = p[k];
+      box.append(kvList(view, 0));
+    } catch (e) { box.append(h('p', { class: 'hint', text: t('nothing') })); }
+    refreshSlots();
+  }
+  async function refreshSlots() {
+    const box = $('infoBox');
+    box.querySelectorAll('[data-slots]').forEach((n) => n.remove());
+    try {
+      const s = await getJSON('/slots');
+      if (Array.isArray(s) && s.length) {
+        const wrap = h('div', { 'data-slots': '1' });
+        for (const x of s.slice(0, 8)) wrap.append(kvList({ model: x.model, n_ctx: x.n_ctx, n_cached: x.n_cached, is_processing: x.is_processing }, 0));
+        box.append(wrap);
+      }
+    } catch (e) { /* optional */ }
+  }
+  async function refreshCaps() {
+    const det = $('d-caps'), box = $('capsBox');
+    clear(box);
+    let shown = false;
+    for (const path of ['/capabilities', '/v1/capabilities']) {
+      try {
+        const res = await api(path);
+        if (!res.ok) continue;
+        const j = await res.json();
+        if (j && typeof j === 'object') { box.append(kvList(j, 0)); shown = true; break; }
+      } catch (e) { /* endpoint not present */ }
+    }
+    det.hidden = !shown;
+  }
+  async function refreshMetrics() {
+    const det = $('d-metrics');
+    try {
+      const res = await api('/metrics');
+      if (!res.ok) throw new Error('x');
+      const txt = await res.text();
+      const lines = txt.split('\n').filter((l) => l && l[0] !== '#').slice(0, 60);
+      $('metricsBox').textContent = lines.join('\n');
+      det.hidden = !lines.length;
+    } catch (e) { det.hidden = true; }
+  }
+
+  /* ---------- Settings binding ---------- */
+  const FIELDS = [['temperature', 'number'], ['top_p', 'number'], ['top_k', 'number'], ['min_p', 'number'], ['repeat', 'number'], ['max_tokens', 'number'], ['seed', 'number'], ['structured', 'select'], ['structValue', 'text']];
+  function bindSettings() {
+    for (const [k] of FIELDS) { const el = $('s-' + k); el.value = state.settings[k] == null ? '' : state.settings[k]; }
+    $('lockCb').checked = state.settings.lock !== false;
+    syncStruct();
+  }
+  function syncStruct() {
+    const mode = state.settings.structured;
+    $('s-structValue').disabled = mode === 'off' || mode === 'json';
+  }
+  function initSettings() {
+    for (const [k, type] of FIELDS) {
+      const el = $('s-' + k);
+      const upd = () => {
+        state.settings[k] = type === 'number' ? (el.value === '' ? '' : parseFloat(el.value)) : el.value;
+        if (type === 'number' && Number.isNaN(state.settings[k])) state.settings[k] = '';
+        if (k === 'structured') syncStruct();
+        saveSettings();
+      };
+      el.addEventListener('input', upd); el.addEventListener('change', upd);
+    }
+    $('lockCb').addEventListener('change', () => { state.settings.lock = $('lockCb').checked; saveSettings(); });
+    bindSettings();
+  }
+
+  /* ---------- i18n / theme / drawers ---------- */
+  function applyLang() {
+    document.documentElement.lang = state.lang;
+    document.title = 'corbul';
+    document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.getAttribute('data-i18n')); });
+    document.querySelectorAll('[data-i18n-ph]').forEach((el) => { el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph'))); });
+    setStatus(state.online);
+    renderConvList(); renderLog(true); renderSources(); renderModels();
+  }
+  function applyTheme() {
+    if (state.theme === 'light' || state.theme === 'dark') document.documentElement.setAttribute('data-theme', state.theme);
+    else document.documentElement.removeAttribute('data-theme');
+    $('themeSel').value = state.theme;
+  }
+  function closeDrawers() {
+    for (const [btn, el] of [['btn-nav', 'side'], ['btn-panels', 'aside']]) { $(el).classList.remove('open'); $(btn).setAttribute('aria-expanded', 'false'); }
+  }
+  function toggleDrawer(btn, el, other) {
+    const open = !$(el).classList.contains('open');
+    closeDrawers();
+    if (open) { $(el).classList.add('open'); $(btn).setAttribute('aria-expanded', 'true'); const f = $(el).querySelector('button, input, select, textarea, summary'); if (f) f.focus(); }
+  }
+
+  /* ---------- Wiring ---------- */
+  function init() {
+    load();
+    const ls = $('langSel');
+    for (const l of LANGS) ls.append(h('option', { value: l, text: LANG_NAMES[l] }));
+    ls.value = state.lang;
+    ls.addEventListener('change', () => { state.lang = ls.value; LS.set(KEY_LANG, state.lang); applyLang(); });
+    $('themeSel').addEventListener('change', () => { state.theme = $('themeSel').value; LS.set(KEY_THEME, state.theme); applyTheme(); });
+    $('baseUrl').value = state.base;
+    $('btn-connect').addEventListener('click', connect);
+    $('btn-models').addEventListener('click', refreshModels);
+    $('btn-new').addEventListener('click', newChat);
+    $('btn-exp-json').addEventListener('click', exportJSON);
+    $('btn-exp-md').addEventListener('click', exportMD);
+    $('btn-imp').addEventListener('click', () => $('impfile').click());
+    $('impfile').addEventListener('change', async (e) => { await importFile(e.target.files[0]); e.target.value = ''; });
+    $('btn-addsrc').addEventListener('click', () => addSource('', ''));
+    $('btn-srcfile').addEventListener('click', () => $('srcfile').click());
+    $('srcfile').addEventListener('change', async (e) => { await addSourceFiles(e.target.files); e.target.value = ''; });
+    $('bannerX').addEventListener('click', hideBanner);
+    $('btn-nav').addEventListener('click', () => toggleDrawer('btn-nav', 'side'));
+    $('btn-panels').addEventListener('click', () => toggleDrawer('btn-panels', 'aside'));
+    $('titleIn').addEventListener('input', () => { cur().title = $('titleIn').value; save(); renderConvList(); });
+    $('sysIn').addEventListener('input', () => { cur().system = $('sysIn').value; save(); });
+    $('btn-stop').addEventListener('click', stop);
+    $('composer').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (state.busy) return;
+      const ta = $('prompt');
+      const text = ta.value.trim();
+      if (!text) return;
+      const c = cur();
+      c.messages.push({ role: 'user', content: text, ts: Date.now() });
+      if (!c.title) { c.title = titleFrom(text); $('titleIn').value = c.title; renderConvList(); }
+      ta.value = ''; autosize();
+      generate();
+    });
+    const ta = $('prompt');
+    const autosize = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, window.innerHeight * 0.4) + 'px'; };
+    ta.addEventListener('input', autosize);
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { if (state.busy) stop(); closeDrawers(); }
+    });
+    // drop text files onto the sources list
+    const dz = $('d-sources');
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); });
+    dz.addEventListener('drop', (e) => { e.preventDefault(); addSourceFiles(e.dataTransfer && e.dataTransfer.files); });
+    initSettings();
+    applyTheme();
+    applyLang();
+    $('titleIn').value = cur().title;
+    $('sysIn').value = cur().system || '';
+    if (!LS.set('corbul.webui.v1.probe', '1')) { state.storageOk = false; showBanner(t('storeFail'), 'warn'); }
+    connect();
+  }
+  init();
+})();
+</script>
+</body>
+</html>

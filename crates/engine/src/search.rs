@@ -399,7 +399,12 @@ pub fn last_number(s: &str) -> Option<String> {
     let mut j = i;
     while j > 0 && (chars[j - 1].is_ascii_digit() || (matches!(chars[j - 1], '.' | ',') && j >= 2 && chars[j - 2].is_ascii_digit() && j < chars.len() && chars[j].is_ascii_digit())) { j -= 1; }
     let neg = j > 0 && chars[j - 1] == '-' && (j == 1 || !chars[j - 2].is_alphanumeric());
-    let mut num: String = chars[j..i].iter().filter(|&&c| c != ',').collect();
+    let raw: String = chars[j..i].iter().collect();
+    // "1,234" and "1,234.5" use the comma as a thousands separator; "3,5" and "12,75" (Romanian,
+    // French, German…) use it as the decimal mark.
+    let decimal_comma = !raw.contains('.') && raw.matches(',').count() == 1
+        && raw.rsplit(',').next().is_some_and(|f| f.len() != 3);
+    let mut num: String = if decimal_comma { raw.replace(',', ".") } else { raw.replace(',', "") };
     if num.contains('.') { num = num.trim_end_matches('0').trim_end_matches('.').to_string(); }
     let num = num.trim_start_matches('0');
     let num = if num.is_empty() || num.starts_with('.') { format!("0{num}") } else { num.to_string() };
@@ -655,7 +660,8 @@ impl<'m, M: SeqModel + ?Sized> Tree<'m, M> {
     /// Greedy continuation of `id` as one new node (stops at a stop token, which is not added).
     pub fn extend_greedy(&mut self, id: NodeId, max_new: usize, stop: &[u32]) -> Result<NodeId, SearchError> {
         let len = self.node(id)?.path.len();
-        let limit = max_new.min(self.m.context() - len.min(self.m.context()) + 1);
+        // a node's logits require its last token to be fed, so the path may not exceed the context
+        let limit = max_new.min(self.m.context() - len.min(self.m.context()));
         let mut st = self.state_upto(id, len)?;
         let (mut logits, mut path, mut lps) = (self.nodes[id].logits.clone(), self.nodes[id].path.clone(), self.nodes[id].lps.clone());
         let mut added = 0;
@@ -902,6 +908,9 @@ mod tests {
         assert_eq!(last_number("0.50"), Some("0.5".into()));
         assert_eq!(last_number("a-b 5"), Some("5".into()));
         assert_eq!(last_number("1,000 and 12"), Some("12".into()));
+        assert_eq!(last_number("raspuns: 3,5"), Some("3.5".into()));
+        assert_eq!(last_number("total 12,75 lei"), Some("12.75".into()));
+        assert_eq!(last_number("1,234,567"), Some("1234567".into()));
     }
 
     #[test]

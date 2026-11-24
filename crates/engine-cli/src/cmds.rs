@@ -77,15 +77,15 @@ pub fn prompt_ids(prep: &Prepared, msgs: &[Message], raw: Option<&str>) -> Resul
     Ok(ids.into_iter().map(|i| i as usize).collect())
 }
 
-fn read_sources(args: &Args) -> Result<Vec<String>, String> {
+pub(crate) fn read_sources(args: &Args) -> Result<Vec<String>, String> {
     args.all("sources").into_iter().map(|f| std::fs::read_to_string(f).map_err(|e| format!("--sources {f}: {e}"))).collect()
 }
 
 // ------------------------------------------------------------------------------ engines
 
-enum Mode { Local, Stream, Mesh }
+pub(crate) enum Mode { Local, Stream, Mesh }
 
-fn mode_of(args: &Args) -> Result<Mode, String> {
+pub(crate) fn mode_of(args: &Args) -> Result<Mode, String> {
     let (stream, mesh) = (args.flag("stream-layers"), args.get("workers").is_some() || args.flag("discover"));
     if stream && mesh { return Err("--stream-layers and --workers/--discover cannot be combined".into()); }
     Ok(if stream { Mode::Stream } else if mesh { Mode::Mesh } else { Mode::Local })
@@ -103,7 +103,7 @@ fn resolve_addrs(list: &str) -> Result<Vec<SocketAddr>, String> {
         .collect()
 }
 
-fn build_model_with_threads(prep: &Prepared, cfg: &LoadCfg, args: &Args) -> Result<Model, String> {
+pub(crate) fn build_model_with_threads(prep: &Prepared, cfg: &LoadCfg, args: &Args) -> Result<Model, String> {
     let t = std::time::Instant::now();
     let mut m = prep.build_model(cfg)?;
     if let Some(n) = args.num::<usize>("threads")? { m.set_threads(n); }
@@ -112,7 +112,7 @@ fn build_model_with_threads(prep: &Prepared, cfg: &LoadCfg, args: &Args) -> Resu
     Ok(m)
 }
 
-fn open_prepared(args: &Args) -> Result<(Prepared, LoadCfg), String> {
+pub(crate) fn open_prepared(args: &Args) -> Result<(Prepared, LoadCfg), String> {
     let path = args.pos.first().ok_or("give a model folder or .gguf file")?;
     let cfg = load_cfg(args)?;
     let prep = load::prepare(Path::new(path), &cfg)?;
@@ -221,6 +221,7 @@ pub fn finish_line(o: &GenOut) -> String {
 
 pub fn generate(args: &Args) -> Result<(), String> {
     apply_global(args);
+    if let Some(p) = args.pos.first() && crate::famrun::wants(std::path::Path::new(p)) { return crate::famrun::generate(args); }
     let (prep, cfg) = open_prepared(args)?;
     let raw_prompt = match (args.get("prompt"), args.get("prompt-file")) {
         (Some(p), _) => p.to_string(),
@@ -228,26 +229,41 @@ pub fn generate(args: &Args) -> Result<(), String> {
         _ => args.pos.get(1).cloned().ok_or("generate: give --prompt TEXT (or --prompt-file F)")?,
     };
     let sources = read_sources(args)?;
+    generate_run(args, &prep, &cfg, raw_prompt, sources)
+}
+
+/// Generation for one prompt and its (optional) quote-locked sources; `generate` and `rag ask` share it.
+pub(crate) fn generate_run(args: &Args, prep: &Prepared, cfg: &LoadCfg, raw_prompt: String, sources: Vec<String>) -> Result<(), String> {
     let out_spec = OutSpec::from_args(args)?;
     if !sources.is_empty() && out_spec.is_some() { return Err("--sources (quote lock) cannot be combined with --json/--json-schema/--regex/--grammar".into()); }
     let mut msgs = vec![];
     if !sources.is_empty() { msgs.push(Message::new("system", &quotes::instructions(&sources))); }
     msgs.push(Message::new("user", &raw_prompt));
-    let ids = prompt_ids(&prep, &msgs, args.flag("raw").then_some(raw_prompt.as_str()))?;
+    let ids = prompt_ids(prep, &msgs, args.flag("raw").then_some(raw_prompt.as_str()))?;
     let sampler = runner::sampler_params(args, 0.7)?;
     let gcfg = GenCfg { sampler: sampler.clone(), max_tokens: args.num("max-tokens")?.unwrap_or(512), stop_ids: prep.stop_ids.clone() };
     let cancel = AtomicBool::new(false);
 
     if let Some(path) = args.get("receipt") {
+        if args.get("watermark").is_some() { return Err("--watermark cannot be combined with --receipt (the receipt would not describe the biased sampling)".into()); }
         if out_spec.is_some() || !sources.is_empty() || args.get("kv-policy").is_some() || args.get("session").is_some() || !matches!(mode_of(args)?, Mode::Local) {
             return Err("--receipt records the plain generation loop: it cannot be combined with structured output, --sources, --kv-policy, --session or --stream-layers/--workers".into());
         }
-        return generate_receipt(args, &prep, &cfg, &ids, &sampler, gcfg.max_tokens, path);
+        return generate_receipt(args, prep, cfg, &ids, &sampler, gcfg.max_tokens, path);
+    }
+
+    if let Some(f) = crate::fast::from_args(args)? {
+        crate::fast::check_compatible(args, out_spec.is_some() || !sources.is_empty())?;
+        if !matches!(mode_of(args)?, Mode::Local) { return Err("speculative decoding runs the model in this process: it cannot be combined with --stream-layers or --workers".into()); }
+        let (o, st) = crate::fast::run(args, prep, cfg, &f, &ids, &sampler, gcfg.max_tokens, &gcfg.stop_ids)?;
+        outln!("{}", o.text);
+        if !args.flag("quiet") { eprintln!("{}\n{}", st.line(), finish_line(&o)); }
+        return Ok(());
     }
 
     let mut cons = None;
     let mut index = None;
-    let lang_lock = lang_constraint(args, &prep)?;
+    let lang_lock = lang_constraint(args, prep)?;
     if lang_lock.is_some() && (out_spec.is_some() || !sources.is_empty()) { return Err("--lang cannot be combined with structured output or --sources (only one constraint can steer the reply)".into()); }
     if let Some(l) = lang_lock { cons = Some(l); }
     if let Some(s) = &out_spec { cons = Some(constraint::build_standalone(&prep.tok, &prep.stop_ids, s)?); }
@@ -256,8 +272,13 @@ pub fn generate(args: &Args) -> Result<(), String> {
         if !args.flag("no-lock") { cons = Some(quotes::constraint(idx.clone(), quotes::vocab(&prep.tok))); }
         index = Some(idx);
     }
-    let o = generate_with(args, &prep, &cfg, &ids, &gcfg, cons, &cancel, true, None)?;
-    println!();
+    if let Some(key) = args.get("watermark") {
+        let wm = crate::wm::build(args, key, prep.stop_ids.iter().map(|&i| i as u32).collect())?;
+        eprintln!("watermark on (gamma {}, delta {}, context {}); check text with `corbul watermark detect`", wm.gamma(), wm.delta(), wm.context());
+        cons = Some(crate::wm::wrap(cons, wm));
+    }
+    let o = generate_with(args, prep, cfg, &ids, &gcfg, cons, &cancel, true, None)?;
+    outln!();
     if let Some(idx) = index {
         let rep = idx.verify(&o.text);
         eprintln!("quotes: {} verbatim, {} wrong source, {} truncated, {} altered, {} merged, {} unsupported", rep.verbatim, rep.wrong_source, rep.truncated, rep.altered, rep.merged, rep.unsupported);
@@ -270,7 +291,7 @@ pub fn generate(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-fn generate_receipt(args: &Args, prep: &Prepared, cfg: &LoadCfg, ids: &[usize], s: &companion_engine::sampling::SamplerParams, max_tokens: usize, path: &str) -> Result<(), String> {
+pub(crate) fn generate_receipt(args: &Args, prep: &Prepared, cfg: &LoadCfg, ids: &[usize], s: &companion_engine::sampling::SamplerParams, max_tokens: usize, path: &str) -> Result<(), String> {
     let model = build_model_with_threads(prep, cfg, args)?;
     let sp = receipt::SamplerParams { temperature: s.temperature, top_k: s.top_k as u64, top_p: s.top_p, repeat_penalty: s.repeat_penalty, repeat_last_n: s.repeat_last_n.max(0) as u64, seed: s.seed.unwrap_or(1) };
     let g = GenerateSpec { sampler: sp, max_tokens, stop_token: prep.stop_ids.first().copied() };
@@ -285,7 +306,7 @@ fn generate_receipt(args: &Args, prep: &Prepared, cfg: &LoadCfg, ids: &[usize], 
     if !simd::is_reproducible() { eprintln!("note: without --reproducible this receipt can only be replayed on the same machine and thread count"); }
     let (tokens, rc) = receipt::generate_with_receipt(&model, ids, &g, &o).map_err(|e| e.to_string())?;
     let text = prep.tok.decode(&tokens.iter().map(|&t| t as u32).collect::<Vec<_>>());
-    println!("{text}");
+    outln!("{text}");
     std::fs::write(path, rc.to_json()).map_err(|e| format!("{path}: {e}"))?;
     let side = format!("{path}.prompt");
     std::fs::write(&side, serde_json::to_string(ids).unwrap_or_default()).map_err(|e| format!("{side}: {e}"))?;
@@ -328,17 +349,17 @@ pub fn lang_cmd(args: &Args) -> Result<(), String> {
         "detect" => {
             let d = lang::detect(&text);
             match d.lang {
-                Some(l) => println!("{} (confidence {:.2}{})", l.code(), d.confidence, if d.reliable { "" } else { ", not reliable: too little text or too ambiguous" }),
-                None => println!("unknown (no evidence)"),
+                Some(l) => outln!("{} (confidence {:.2}{})", l.code(), d.confidence, if d.reliable { "" } else { ", not reliable: too little text or too ambiguous" }),
+                None => outln!("unknown (no evidence)"),
             }
-            for (l, p) in &d.scores { println!("  {:<4} {:.2}", l.code(), p); }
+            for (l, p) in &d.scores { outln!("  {:<4} {:.2}", l.code(), p); }
             Ok(())
         }
         "normalize" => {
             let n = lang::normalize(&text);
             if args.flag("verbose") { eprintln!("{}", n.report()); }
-            print!("{}", n.text);
-            if !n.text.ends_with('\n') { println!(); }
+            out!("{}", n.text);
+            if !n.text.ends_with('\n') { outln!(); }
             eprintln!("{} change(s){}", n.changes.len(), if n.is_unchanged() { "" } else { " (--verbose lists them)" });
             Ok(())
         }
@@ -351,6 +372,7 @@ pub fn lang_cmd(args: &Args) -> Result<(), String> {
 pub fn chat(args: &Args) -> Result<(), String> {
     use std::io::BufRead;
     apply_global(args);
+    if let Some(p) = args.pos.first() && crate::famrun::wants(std::path::Path::new(p)) { return crate::famrun::chat(args); }
     if !matches!(mode_of(args)?, Mode::Local) { return Err("chat runs in this process; use `generate` with --stream-layers or --workers".into()); }
     let (prep, cfg) = open_prepared(args)?;
     let model = build_model_with_threads(&prep, &cfg, args)?;
@@ -385,7 +407,7 @@ pub fn chat(args: &Args) -> Result<(), String> {
         let ids = prompt_ids(&prep, &history, None)?;
         let cons = match &out_spec { Some(s) => Some(constraint::build_standalone(&prep.tok, &prep.stop_ids, s)?), None => None };
         match generate_with(args, &prep, &cfg, &ids, &gcfg, cons, &cancel, true, Some(&mut engine)) {
-            Ok(o) => { println!(); history.push(Message::new("assistant", o.text.trim())); }
+            Ok(o) => { outln!(); history.push(Message::new("assistant", o.text.trim())); }
             Err(e) => {
                 eprintln!("\n{e}");
                 history.pop();
@@ -430,17 +452,17 @@ pub fn verify_receipt(args: &Args) -> Result<(), String> {
     let r = read_receipt(path)?;
     let key = args.get("key").map(|k| k.as_bytes());
     let v = r.verify(key).map_err(|e| format!("INVALID: {e}"))?;
-    println!("receipt is intact: digest ok{}", if v.authenticated { ", HMAC verified with the key" } else if r.mac.is_some() { " (it carries an HMAC; give --key to check it)" } else { " (no HMAC: anyone could have made it)" });
-    println!("engine {} · {} · reproducible {} · prompt {} tokens → output {} tokens", r.engine_version, r.hardware, r.reproducible, r.prompt_len, r.output_len);
-    println!("model fingerprint {}", r.model_fingerprint);
+    outln!("receipt is intact: digest ok{}", if v.authenticated { ", HMAC verified with the key" } else if r.mac.is_some() { " (it carries an HMAC; give --key to check it)" } else { " (no HMAC: anyone could have made it)" });
+    outln!("engine {} · {} · reproducible {} · prompt {} tokens → output {} tokens", r.engine_version, r.hardware, r.reproducible, r.prompt_len, r.output_len);
+    outln!("model fingerprint {}", r.model_fingerprint);
     if let Some(m) = args.get("model") {
         apply_global(args);
         let cfg = load_cfg(args)?;
         let prep = load::prepare(Path::new(m), &cfg)?;
         let model = prep.build_model(&cfg)?;
         receipt::verify_weights(&model, &r).map_err(|e| format!("the weights in {m} do NOT match: {e}"))?;
-        println!("the weights in {m} match the receipt");
-    } else { println!("(give --model PATH to check that a model's weights match)"); }
+        outln!("the weights in {m} match the receipt");
+    } else { outln!("(give --model PATH to check that a model's weights match)"); }
     Ok(())
 }
 
@@ -464,7 +486,7 @@ pub fn replay(args: &Args) -> Result<(), String> {
     };
     let model = prep.build_model(&cfg)?;
     let rep = receipt::replay(&r, &model, &ids, args.get("key").map(|k| k.as_bytes())).map_err(|e| format!("cannot replay: {e}"))?;
-    if rep.identical { println!("IDENTICAL: the same {} tokens, the same hash chain", rep.tokens.len()); Ok(()) }
+    if rep.identical { outln!("IDENTICAL: the same {} tokens, the same hash chain", rep.tokens.len()); Ok(()) }
     else { Err(format!("DIFFERENT output{}", rep.first_divergence.map_or(String::new(), |i| format!(" (first difference at output token {i})")))) }
 }
 
@@ -517,36 +539,36 @@ pub fn plan(args: &Args) -> Result<(), String> {
     let mut hp2 = hp.clone();
     if let Some(b) = args.get("ram-budget") { let b = parse_size(b)?; hp2.available_ram = Some(b); hp2.total_ram = Some(hp.total_ram.unwrap_or(b).max(b)); }
     let r = recommend(&hp2, cal, &spec, weights, ctx);
-    println!("{}  ({} weights on disk, {} experts, context asked {})", path, gib(weights), if spec.experts > 1 { spec.experts.to_string() } else { "no".into() }, ctx);
-    println!("verdict       {}", verdict_text(r.verdict));
-    println!("speed         about {:.2} tokens/s decoding, {:.1} tokens/s prompt processing", r.decode_tps, r.prefill_tps);
-    println!("memory        needs {} of a {} budget · largest context that stays resident: {}", gib(r.ram_needed), gib(r.ram_budget), r.max_context);
-    println!("advice        {} threads · prefill batch {} · KV {:?}{}", r.tuning.threads, r.tuning.prefill_batch, r.kv_precision, if r.disk_fraction > 0.0 { format!(" · {:.0}% of the weight traffic comes from disk", r.disk_fraction * 100.0) } else { String::new() });
-    for n in &r.notes { println!("note          {n}"); }
-    for s in &r.suggestions { println!("suggestion    {s}"); }
-    println!("honesty       speeds are {} estimates, not measurements of this model{}", if cal.source == companion_engine::governor::CalSource::Measured { "calibrated" } else { "heuristic" }, if args.flag("calibrate") { "" } else { " (add --calibrate to time this machine)" });
-    if matches!(r.kv_precision, KvPrecision::Q8) { println!("              (a Q8 KV cache is lossy: pass --kv q8 to use it)"); }
+    outln!("{}  ({} weights on disk, {} experts, context asked {})", path, gib(weights), if spec.experts > 1 { spec.experts.to_string() } else { "no".into() }, ctx);
+    outln!("verdict       {}", verdict_text(r.verdict));
+    outln!("speed         about {:.2} tokens/s decoding, {:.1} tokens/s prompt processing", r.decode_tps, r.prefill_tps);
+    outln!("memory        needs {} of a {} budget · largest context that stays resident: {}", gib(r.ram_needed), gib(r.ram_budget), r.max_context);
+    outln!("advice        {} threads · prefill batch {} · KV {:?}{}", r.tuning.threads, r.tuning.prefill_batch, r.kv_precision, if r.disk_fraction > 0.0 { format!(" · {:.0}% of the weight traffic comes from disk", r.disk_fraction * 100.0) } else { String::new() });
+    for n in &r.notes { outln!("note          {n}"); }
+    for s in &r.suggestions { outln!("suggestion    {s}"); }
+    outln!("honesty       speeds are {} estimates, not measurements of this model{}", if cal.source == companion_engine::governor::CalSource::Measured { "calibrated" } else { "heuristic" }, if args.flag("calibrate") { "" } else { " (add --calibrate to time this machine)" });
+    if matches!(r.kv_precision, KvPrecision::Q8) { outln!("              (a Q8 KV cache is lossy: pass --kv q8 to use it)"); }
     Ok(())
 }
 
 pub fn doctor(args: &Args) -> Result<(), String> {
     let hp = HardwareProfile::detect(args.pos.first().map(Path::new));
-    println!("corbul {}", env!("CARGO_PKG_VERSION"));
-    println!("system        {} {} · {} usable threads · NUMA nodes {}", hp.os, hp.arch, hp.usable_threads, hp.numa_nodes);
-    println!("cpu           {}", if hp.cpu.isa.is_empty() { "baseline instructions only".to_string() } else { hp.cpu.isa.join(" ") });
-    println!("kernels       {} (reproducible mode {})", simd::active(), if simd::is_reproducible() { "on" } else { "off" });
-    println!("memory        {} free of {}", hp.available_ram.map_or("?".into(), gib), hp.total_ram.map_or("?".into(), gib));
-    println!("disk          {:?}", hp.disk);
-    if hp.gpus.is_empty() { println!("gpu           none detected"); } else { for g in &hp.gpus { println!("gpu           {g:?}"); } }
-    println!("              (the engine computes on the CPU; the wgpu GPU backend is a separate crate and is not used by corbul)");
+    outln!("corbul {}", env!("CARGO_PKG_VERSION"));
+    outln!("system        {} {} · {} usable threads · NUMA nodes {}", hp.os, hp.arch, hp.usable_threads, hp.numa_nodes);
+    outln!("cpu           {}", if hp.cpu.isa.is_empty() { "baseline instructions only".to_string() } else { hp.cpu.isa.join(" ") });
+    outln!("kernels       {} (reproducible mode {})", simd::active(), if simd::is_reproducible() { "on" } else { "off" });
+    outln!("memory        {} free of {}", hp.available_ram.map_or("?".into(), gib), hp.total_ram.map_or("?".into(), gib));
+    outln!("disk          {:?}", hp.disk);
+    if hp.gpus.is_empty() { outln!("gpu           none detected"); } else { for g in &hp.gpus { outln!("gpu           {g:?}"); } }
+    outln!("              (the engine computes on the CPU; the wgpu GPU backend is a separate crate and is not used by corbul)");
     let r = SystemSensors.read();
-    println!("sensors       temperature {} · battery {} · memory {}", r.cpu_temp_c.map_or("n/a".into(), |t| format!("{t:.0} °C")),
+    outln!("sensors       temperature {} · battery {} · memory {}", r.cpu_temp_c.map_or("n/a".into(), |t| format!("{t:.0} °C")),
         r.battery_pct.map_or("n/a".into(), |p| format!("{p:.0}%{}", if r.on_battery == Some(true) { " (on battery)" } else { "" })), r.mem_available.map_or("n/a".into(), gib));
-    println!("energy meter  {}", if Meter::discover_rapl().is_some() { "RAPL counter readable" } else { "no readable counter; energy would be an assumption" });
+    outln!("energy meter  {}", if Meter::discover_rapl().is_some() { "RAPL counter readable" } else { "no readable counter; energy would be an assumption" });
     let cal = calibration(&hp, args);
-    println!("calibration   memory {:.1} GB/s · compute {:.1} GFLOP/s · disk {:.0} MB/s ({})", cal.mem_bw / 1e9, cal.flops / 1e9, cal.disk_bw / 1e6, if cal.source == companion_engine::governor::CalSource::Measured { "measured" } else { "heuristic" });
-    if let Some(m) = args.pos.first() { println!(); return plan(&Args { pos: vec![m.clone()], opts: args.opts.clone() }); }
-    println!("\ntip           `corbul doctor MODEL` also says whether that model will run here");
+    outln!("calibration   memory {:.1} GB/s · compute {:.1} GFLOP/s · disk {:.0} MB/s ({})", cal.mem_bw / 1e9, cal.flops / 1e9, cal.disk_bw / 1e6, if cal.source == companion_engine::governor::CalSource::Measured { "measured" } else { "heuristic" });
+    if let Some(m) = args.pos.first() { outln!(); return plan(&Args { pos: vec![m.clone()], opts: args.opts.clone() }); }
+    outln!("\ntip           `corbul doctor MODEL` also says whether that model will run here");
     Ok(())
 }
 
@@ -556,7 +578,8 @@ pub const CAPABILITIES: &[(&str, &str, &str)] = &[
     ("dense decoder models (Llama, Qwen, Gemma, Mistral, Phi…)", "yes", "safetensors and GGUF; quantised weights stay quantised"),
     ("mixture-of-experts (Mixtral, Qwen-MoE, GGUF stacked experts)", "yes", "--ram-budget streams routed experts from disk"),
     ("models larger than RAM (dense)", "yes", "--stream-layers --ram-budget SIZE; decoding is disk-bound; MoE layers are not streamed this way"),
-    ("state-space / RWKV / MLA / DeepSeek", "no", "in the engine library, not in corbul's loader yet"),
+    ("state-space and hybrid models (Mamba, Mamba-2, RWKV-6/7, Jamba-style)", "yes", "generate and chat through the family loader: plain-text continuation (no chat template), temperature/top-k/top-p only, no serve; native RWKV word-list vocabularies need a tokenizer.json; unverified on real checkpoints"),
+    ("MLA / DeepSeek", "no", "the attention variant exists in the engine library, the whole model is not assembled; corbul refuses it with a message"),
     ("LoRA adapters", "yes", "--lora PATH[:SCALE], merged while loading; matrices an adapter touches are held as f32"),
     ("structured output (JSON, schema, regex, GBNF)", "yes", "--json --json-schema --regex --grammar; server: response_format, grammar"),
     ("quote-locked citations", "yes", "--sources FILE (repeatable); server: `sources`, POST /v1/quotes/verify; streaming responses carry no citations block"),
@@ -567,6 +590,14 @@ pub const CAPABILITIES: &[(&str, &str, &str)] = &[
     ("distributed inference over a LAN", "yes", "worker / generate --workers or --discover --key; authenticated, not encrypted; tested on loopback only"),
     ("language tools", "yes", "corbul lang detect|normalize; --lang CODE forbids tokens of foreign scripts (Romanian: no ş ţ); not in the server"),
     ("hardware governor", "yes", "--governor; reads temperature, memory and battery on Linux"),
+    ("speculative decoding", "yes", "generate --draft MODEL | --lookahead | --self-spec [--skip-layers auto|LIST] [--draft-len N]; greedy output is the plain greedy output (up to float rounding), sampled output follows the same distribution; text appears at the end; no structured output, receipts, sessions or mesh with it"),
+    ("search (beam, best-of-N, voting)", "yes", "corbul search MODEL --method beam|best-of-n|vote; several model runs per answer, so slower"),
+    ("automatic mixed-precision quantisation", "yes", "corbul autoquant MODEL --budget … writes a recipe and a report, corbul quantize --recipe writes the GGUF; damage is estimated from the weights, not measured on outputs; HF folders only"),
+    ("model merging", "yes", "corbul merge CONFIG.json (linear, slerp, task, TIES, DARE, passthrough/slices); writes weights only"),
+    ("activation steering and logit lens", "yes", "corbul steer train|apply|lens; dense models only; tested on synthetic models"),
+    ("local document library (RAG)", "yes", "corbul rag add|search|ask; re-indexes on every call, hashing embedder by default; answers are quote-locked; no PDF/Office parsing"),
+    ("text watermark and detector", "yes", "generate --watermark KEY, corbul watermark detect; a statistical signal that paraphrasing removes; not with --receipt or speculation"),
+    ("web interface", "yes", "corbul serve opens it at / and /ui: chat, model and sampler panel, sources, receipts, hardware plan; needs the same token as the API"),
     ("GPU", "no", "the wgpu crate exists but corbul does not use it"),
     ("vision / audio inputs", "no", "text only"),
     ("embeddings, rerank endpoints", "no", "answered with `not implemented`"),
@@ -575,11 +606,11 @@ pub const CAPABILITIES: &[(&str, &str, &str)] = &[
 pub fn capabilities(args: &Args) -> Result<(), String> {
     if args.flag("json") {
         let v: Vec<_> = CAPABILITIES.iter().map(|(n, s, d)| serde_json::json!({"feature": n, "supported": *s == "yes", "notes": d})).collect();
-        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        outln!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
         return Ok(());
     }
-    for (n, s, d) in CAPABILITIES { println!("{:<4} {n}\n     {d}", if *s == "yes" { "yes" } else { "NO" }); }
-    println!("\nNothing here has been run on a real downloaded model by the authors of this build: the engine was tested on synthetic checkpoints.");
+    for (n, s, d) in CAPABILITIES { outln!("{:<4} {n}\n     {d}", if *s == "yes" { "yes" } else { "NO" }); }
+    outln!("\nNothing here has been run on a real downloaded model by the authors of this build: the engine was tested on synthetic checkpoints.");
     Ok(())
 }
 

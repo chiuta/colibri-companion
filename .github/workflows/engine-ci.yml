@@ -1,0 +1,263 @@
+name: engine-ci
+# Checks for the clean-room engine only (crates/engine, crates/engine-cli = corbul, crates/engine-gpu).
+# The desktop application keeps its own workflow in build.yml; nothing here changes it.
+#
+# Never run before it was committed: the first run is the first test of this file.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/engine/**'
+      - 'crates/engine-cli/**'
+      - 'crates/engine-gpu/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/engine-ci.yml'
+  pull_request:
+    paths:
+      - 'crates/engine/**'
+      - 'crates/engine-cli/**'
+      - 'crates/engine-gpu/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/engine-ci.yml'
+  workflow_dispatch:
+    inputs:
+      real_model:
+        description: "Also run the first-real-checkpoint validation (downloads a small public model from Hugging Face)"
+        type: boolean
+        default: false
+      model_repo:
+        description: "Hugging Face repository holding the model"
+        default: "ggml-org/tiny-llamas"
+      model_file:
+        description: "File inside that repository (a .gguf file)"
+        default: "stories260K.gguf"
+      adversarial_n:
+        description: "Random cases for the adversarial suite in the release-mode job"
+        default: "40000"
+permissions: { contents: read }
+# A newer push to a pull request replaces a run of it that is still going; everything else keeps
+# a result of its own (same rule as build.yml).
+concurrency:
+  group: engine-ci-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.sha, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # The three crates this workflow is about.
+  ENGINE_PKGS: "-p companion-engine -p colibri-rs-cli -p companion-engine-gpu"
+
+jobs:
+  licenses:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with: { command: check licenses bans sources }
+
+  fmt:
+    # The engine crates are not rustfmt-formatted yet (dense one-line style), so this is only a
+    # report until someone decides to run `cargo fmt` over them. It never fails the run.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: rustfmt }
+      - name: rustfmt --check on the engine crates
+        run: cargo fmt $ENGINE_PKGS --check
+
+  clippy:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy }
+      - uses: Swatinem/rust-cache@v2
+        with: { shared-key: engine-clippy }
+      # engine-gpu is built with its default features: the `wgpu` device runner stays off.
+      - run: cargo clippy $ENGINE_PKGS --all-targets --locked -- -D warnings
+
+  msrv:
+    # companion-engine and corbul declare rust-version 1.89: they must build with exactly that.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.89" }
+      - uses: Swatinem/rust-cache@v2
+        with: { shared-key: engine-msrv }
+      - run: cargo check -p companion-engine -p colibri-rs-cli --all-targets --locked
+
+  test:
+    name: test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-26.04,     name: linux-x86_64 }
+          - { os: ubuntu-26.04-arm, name: linux-aarch64 }
+          - { os: macos-latest,     name: macos-apple-silicon }
+          - { os: macos-15-intel,   name: macos-intel }
+          - { os: windows-latest,   name: windows-x86_64 }
+          # newest runner image of the list: a failure here is reported but does not fail the run
+          - { os: windows-11-arm,   name: windows-arm64, experimental: true }
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental == true }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { shared-key: "engine-test-${{ matrix.name }}" }
+      - name: Tests of the three crates (debug build)
+        run: cargo test $ENGINE_PKGS --locked
+
+  simd-variants:
+    # Runs the kernel and operator tests once per SIMD variant that ENGINE_SIMD can name. A name the
+    # CPU does not have falls back to the default variant, so the log lists what each run really used.
+    name: simd (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-26.04,     variants: "scalar avx2+fma avx512" }
+          - { os: ubuntu-26.04-arm, variants: "scalar neon neon+dotprod" }
+          - { os: macos-latest,     variants: "scalar neon neon+dotprod" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { shared-key: "engine-simd-${{ matrix.os }}" }
+      - name: Build the tests once
+        run: cargo test -p companion-engine --lib --locked --release --no-run
+      - name: "simd and ops tests under each variant"
+        shell: bash
+        env:
+          VARIANTS: ${{ matrix.variants }}
+        run: |
+          for v in $VARIANTS; do
+            echo "::group::ENGINE_SIMD=$v"
+            ENGINE_SIMD="$v" cargo test -p companion-engine --lib --locked --release -- simd:: ops::
+            echo "::endgroup::"
+          done
+
+  release-mode-suites:
+    # The adversarial and fuzz suites are far faster with optimisations on, which allows many more cases.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    env:
+      ADVERSARIAL_N: ${{ inputs.adversarial_n || '40000' }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { shared-key: engine-release-tests }
+      - name: Library tests (release)
+        run: cargo test -p companion-engine --lib --locked --release
+      - name: Integration suites with ADVERSARIAL_N cases (release)
+        run: cargo test -p companion-engine --tests --locked --release -- --nocapture --test-threads=2
+
+  real-model:
+    # First validation against a real checkpoint: manual runs only, because it downloads a model.
+    # A failing command leaves out/FAILED behind and the next steps still run, so the logs of the whole
+    # run end up in the artifact; the last step turns the job red if that marker exists.
+    if: github.event_name == 'workflow_dispatch' && inputs.real_model
+    name: real model (${{ matrix.name }})
+    needs: [clippy, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-26.04,     name: linux-x86_64,    variants: "scalar avx2+fma avx512" }
+          - { os: ubuntu-26.04-arm, name: linux-aarch64,   variants: "scalar neon neon+dotprod" }
+          - { os: macos-latest,     name: macos-arm64,     variants: "scalar neon neon+dotprod" }
+          - { os: windows-latest,   name: windows-x86_64,  variants: "scalar avx2+fma avx512" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run: { shell: bash }
+    env:
+      MODEL_REPO: ${{ inputs.model_repo }}
+      MODEL_FILE: ${{ inputs.model_file }}
+      VARIANTS: ${{ matrix.variants }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { shared-key: "engine-real-${{ matrix.name }}" }
+      - name: Build corbul (release)
+        run: cargo build --release --locked -p colibri-rs-cli
+      - name: Fetch the model
+        run: |
+          mkdir -p out model
+          # Plain download of one named file, so the run does not depend on how `corbul download` picks files.
+          curl --fail --location --retry 3 --silent --show-error \
+            -o "model/$MODEL_FILE" "https://huggingface.co/$MODEL_REPO/resolve/main/$MODEL_FILE" 2>&1 | tee out/download.log
+          ls -l model | tee -a out/download.log
+          # the hash of what was actually tested goes into the log (it is not pinned: the repository may change)
+          if command -v sha256sum >/dev/null; then sha256sum "model/$MODEL_FILE"; else shasum -a 256 "model/$MODEL_FILE"; fi | tee -a out/download.log
+      - name: Machine and kernels (corbul doctor, capabilities)
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          c="target/release/corbul$ext"
+          { "$c" --version; "$c" doctor "model/$MODEL_FILE"; "$c" capabilities; } 2>&1 | tee out/doctor.log || touch out/FAILED
+      - name: Inspect and plan
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          c="target/release/corbul$ext"
+          { "$c" inspect "model/$MODEL_FILE"; "$c" plan "model/$MODEL_FILE" --context 256; } 2>&1 | tee out/inspect.log || touch out/FAILED
+      - name: Generate with a signed receipt (reproducible mode, default kernels)
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          c="target/release/corbul$ext"
+          "$c" generate "model/$MODEL_FILE" --raw --prompt "Once upon a time" --max-tokens 48 --temperature 0 --seed 1 \
+            --reproducible --receipt out/receipt.json --receipt-key ci-test-key 2>&1 | tee out/generate.log || touch out/FAILED
+          "$c" verify-receipt out/receipt.json --key ci-test-key --model "model/$MODEL_FILE" 2>&1 | tee out/verify.log || touch out/FAILED
+      - name: Replay the receipt under each forced SIMD variant (must agree bit for bit)
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          c="target/release/corbul$ext"
+          for v in $VARIANTS; do
+            echo "=== ENGINE_SIMD=$v ===" | tee -a out/replay.log
+            # a variant this CPU lacks silently falls back to the default one; doctor shows what ran
+            ENGINE_SIMD="$v" "$c" doctor 2>&1 | head -20 | tee -a out/replay.log
+            ENGINE_SIMD="$v" "$c" replay out/receipt.json --model "model/$MODEL_FILE" --key ci-test-key 2>&1 | tee -a out/replay.log || touch out/FAILED
+          done
+      - name: Same prompt, normal (non-reproducible) mode, for the log
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          c="target/release/corbul$ext"
+          for v in default $VARIANTS; do
+            echo "=== ENGINE_SIMD=$v ===" | tee -a out/plain.log
+            if [ "$v" = default ]; then unset ENGINE_SIMD; else export ENGINE_SIMD="$v"; fi
+            "$c" generate "model/$MODEL_FILE" --raw --prompt "Once upon a time" --max-tokens 48 --temperature 0 --seed 1 2>&1 | tee -a out/plain.log || touch out/FAILED
+          done
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: real-model-${{ matrix.name }}
+          path: out/
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Fail the job if any step above failed
+        if: always()
+        run: |
+          if [ -e out/FAILED ]; then echo "at least one step above failed: see the logs in the artifact" >&2; exit 1; fi

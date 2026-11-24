@@ -125,6 +125,7 @@ impl Candidates {
             self.items.truncate(k);
             self.sorted = false;
         }
+        self.invalidate();
     }
 
     /// Nucleus: smallest prefix whose probability mass reaches `p`. `p >= 1` disables.
@@ -140,6 +141,7 @@ impl Candidates {
             if cum >= p { keep = i + 1; break; }
         }
         self.items.truncate(keep.max(floor));
+        self.invalidate();
     }
 
     /// Keep tokens with `p >= m · p_max`. `m <= 0` disables.
@@ -445,7 +447,7 @@ impl SamplerParams {
         if let Some(x) = num(v, "top_k")? { self.top_k = if x < 1.0 { 0 } else { x.min(1.0e9) as usize }; }
         if let Some(x) = num(v, "top_p")? { self.top_p = (x as f32).clamp(0.0, 1.0); }
         if let Some(x) = num(v, "min_p")? { self.min_p = (x as f32).clamp(0.0, 1.0); }
-        if let Some(x) = num(v, "typical_p").or_else(|_| num(v, "typ_p"))? { self.typical_p = (x as f32).clamp(0.0, 1.0); }
+        if let Some(x) = match num(v, "typical_p")? { Some(x) => Some(x), None => num(v, "typ_p")? } { self.typical_p = (x as f32).clamp(0.0, 1.0); }
         if let Some(x) = num(v, "top_n_sigma")? { self.top_n_sigma = (x as f32).clamp(-1.0, 100.0); }
         if let Some(x) = num(v, "tfs_z")? { self.tfs_z = (x as f32).clamp(0.0, 1.0); }
         if let Some(x) = num(v, "xtc_probability")? { self.xtc_probability = (x as f32).clamp(0.0, 1.0); }
@@ -1038,6 +1040,27 @@ mod tests {
         let f = freq(&mut c, &l, 3000);
         assert_eq!(f[2] + f[3] + f[4], 0);
         assert!(f[0] > f[1]);
+    }
+    #[test]
+    fn truncation_renormalises_probabilities() {
+        // Regression: top_p / top_k used to leave the pre-truncation probabilities in place, so
+        // the draw gave the leftover mass to the last kept token (0.364 instead of 0.269 here).
+        let l = [3.0f32, 2.0, 1.0, 0.0, -1.0];
+        let mut a = Candidates::from_logits(&l);
+        a.top_p(0.8, 1);
+        a.softmax();
+        let sum: f32 = a.items.iter().map(|c| c.p).sum();
+        assert!((sum - 1.0).abs() < 1e-5, "mass after top_p = {sum}");
+        let mut b = Candidates::from_logits(&l);
+        b.top_k(2, 1);
+        b.softmax();
+        let sum: f32 = b.items.iter().map(|c| c.p).sum();
+        assert!((sum - 1.0).abs() < 1e-5, "mass after top_k = {sum}");
+        let want = (1.0f32).exp() / (1.0f32 + (1.0f32).exp()); // p(token 1 | top-2) = e^-1/(1+e^-1) ... checked below
+        let _ = want;
+        let r = b.items.iter().find(|c| c.id == 1).unwrap().p;
+        let exact = (2.0f32).exp() / ((3.0f32).exp() + (2.0f32).exp());
+        assert!((r - exact).abs() < 1e-5, "p(token 1) = {r}, expected {exact}");
     }
     #[test]
     fn min_keep_floor() {

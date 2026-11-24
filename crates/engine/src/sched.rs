@@ -813,6 +813,491 @@ impl Scheduler {
     }
 }
 
+// ============================================================================ model executor
+//
+// Everything above is bookkeeping. This section runs a [`Model`] under the scheduler:
+//
+// * [`ModelExecutor`] implements [`Executor`]: for every item of a [`StepPlan`] it brings that
+//   sequence's [`State`] to the item's start position, feeds the item's tokens, and — when the
+//   scheduler asks for a sample — turns the logits into a token with the request's own sampler.
+// * [`BatchEngine`] owns a scheduler and an executor and keeps them in step (registering requests,
+//   handing finished or preempted caches back, cancelling a request whose model call failed).
+//
+// Memory model, stated plainly: the scheduler's paged blocks are *accounting*. The model keeps one
+// contiguous KV cache per sequence (`State`), so the block table in a plan is not read, and
+// copy-on-write copies need no work. The pool size is what bounds concurrency; size it with
+// [`kv_bytes_per_token`] so it matches what the states really hold. A prefix hit reported by the
+// scheduler is honoured from a small pool of retired states (longest common prefix wins) and
+// recomputed when no retired state has it, so a hit never changes a result, only how long it takes.
+//
+// Exactness: for dense f32 weights the result of a request is bit-identical to running it alone
+// (one prefill, then one token at a time), whatever the batch shape, chunking, preemption or prefix
+// reuse. With quantised weights activations are quantised per batch shape, so results agree only
+// within that quantisation noise.
+
+use crate::model::{KvKind, Model, ModelError, Sampler, State, PREFILL_CHUNK};
+use std::sync::Arc;
+
+/// Sampling settings of one request.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SamplerParams {
+    /// `<= 0` is greedy.
+    pub temperature: f32,
+    /// 0 = off.
+    pub top_k: usize,
+    /// 1.0 = off.
+    pub top_p: f32,
+    /// 1.0 = off.
+    pub repeat_penalty: f32,
+    pub repeat_last_n: usize,
+    pub seed: u64,
+}
+impl Default for SamplerParams {
+    fn default() -> Self { SamplerParams { temperature: 0.0, top_k: 0, top_p: 1.0, repeat_penalty: 1.0, repeat_last_n: 64, seed: 1 } }
+}
+impl SamplerParams {
+    pub fn greedy() -> SamplerParams { SamplerParams::default() }
+    pub fn sampled(temperature: f32, top_k: usize, top_p: f32, seed: u64) -> SamplerParams {
+        SamplerParams { temperature, top_k, top_p, seed, ..SamplerParams::default() }
+    }
+    /// The sampler these settings describe (the same one `Model::generate` is given).
+    pub fn build(&self) -> Sampler {
+        Sampler::new(self.temperature, self.top_k, self.seed).with_top_p(self.top_p).with_repetition_penalty(self.repeat_penalty, self.repeat_last_n)
+    }
+}
+
+/// How the executor holds caches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecConfig {
+    /// Precision of every sequence's KV cache.
+    pub kv: KvKind,
+    /// Finished or preempted caches kept for prefix reuse (at most this many).
+    pub retired_max_states: usize,
+    /// ... and at most this many bytes of KV in total.
+    pub retired_max_bytes: usize,
+    /// Run the items of one step on their own threads (they are independent). Results do not change.
+    pub parallel_items: bool,
+}
+impl Default for ExecConfig {
+    fn default() -> Self { ExecConfig { kv: KvKind::F32, retired_max_states: 16, retired_max_bytes: 256 << 20, parallel_items: false } }
+}
+
+/// KV bytes one token costs in `model` at precision `kind` — the number to give
+/// [`Scheduler::new`] as `bytes_per_token`.
+pub fn kv_bytes_per_token(model: &Model, kind: KvKind) -> u64 {
+    let s = &model.spec;
+    let per = s.layers.saturating_mul(2).saturating_mul(s.kv_heads).saturating_mul(s.head_dim);
+    let b = match kind { KvKind::F32 => per.saturating_mul(4), KvKind::F16 => per.saturating_mul(2), KvKind::Q8 => per.saturating_add(per.div_ceil(s.head_dim.max(1)).saturating_mul(4)) }; // int8 plus one f32 scale per head and position
+    b.max(1)
+}
+
+/// What the executor has done so far.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecStats {
+    pub prefill_tokens: u64,
+    pub decode_tokens: u64,
+    pub sampled: u64,
+    /// Tokens whose KV was taken over from an existing cache instead of being computed.
+    pub reused_tokens: u64,
+    /// Tokens recomputed because no cache held them (after a preemption or a scheduler prefix hit
+    /// whose cache was no longer here).
+    pub recomputed_tokens: u64,
+    pub failures: u64,
+    // gauges
+    pub retired_states: usize,
+    pub retired_bytes: usize,
+    pub live_states: usize,
+}
+
+struct Rec {
+    tokens: Vec<usize>,
+    state: Option<State>,
+    sampler: Sampler,
+    params: SamplerParams,
+}
+struct Retired { state: State, stamp: u64 }
+struct Work { seq: SeqId, state: State, tokens: Vec<usize>, sample: bool }
+type Out = (SeqId, State, Result<Option<Vec<f32>>, ModelError>);
+
+/// Called with `(sequence, position of the token about to be sampled, logits)` for every sample.
+pub type LogitObserver = Box<dyn FnMut(SeqId, usize, &[f32]) + Send>;
+
+fn common_prefix(a: &[usize], b: &[usize]) -> usize { a.iter().zip(b).take_while(|(x, y)| x == y).count() }
+
+/// Feed `toks` without computing logits (prefill chunks nobody samples from).
+fn feed(model: &Model, st: &mut State, toks: &[usize]) -> Result<(), ModelError> {
+    let h = model.spec.hidden as usize;
+    let layers = model.spec.layers as usize;
+    for c in toks.chunks(PREFILL_CHUNK) {
+        let mut x = vec![0.0f32; c.len() * h];
+        for (i, &t) in c.iter().enumerate() { x[i * h..(i + 1) * h].copy_from_slice(&model.embed_token(t)?); }
+        let pos = st.pos;
+        model.run_layers_batch(st, 0..layers, &mut x, pos)?;
+        model.finish_batch(st, c);
+    }
+    Ok(())
+}
+
+fn exec_work(model: &Model, w: Work) -> Out {
+    let Work { seq, mut state, tokens, sample } = w;
+    let r = if sample { model.forward_batch(&mut state, &tokens).map(Some) } else { feed(model, &mut state, &tokens).map(|()| None) };
+    (seq, state, r)
+}
+
+/// Runs plans on a [`Model`], one `State` per sequence.
+pub struct ModelExecutor {
+    model: Arc<Model>,
+    cfg: ExecConfig,
+    recs: HashMap<SeqId, Rec>,
+    retired: Vec<Retired>,
+    clock: u64,
+    stats: ExecStats,
+    failures: Vec<(SeqId, String)>,
+    observer: Option<LogitObserver>,
+}
+
+impl ModelExecutor {
+    pub fn new(model: Arc<Model>, cfg: ExecConfig) -> ModelExecutor {
+        ModelExecutor { model, cfg, recs: HashMap::new(), retired: vec![], clock: 0, stats: ExecStats::default(), failures: vec![], observer: None }
+    }
+    pub fn model(&self) -> &Arc<Model> { &self.model }
+    pub fn config(&self) -> &ExecConfig { &self.cfg }
+    pub fn stats(&self) -> ExecStats {
+        let mut s = self.stats.clone();
+        s.retired_states = self.retired.len();
+        s.retired_bytes = self.retired_bytes();
+        s.live_states = self.recs.values().filter(|r| r.state.is_some()).count();
+        s
+    }
+    /// Look at the logits before each token is sampled (log-probabilities, tests, tracing).
+    pub fn set_logit_observer(&mut self, f: Option<LogitObserver>) { self.observer = f; }
+    /// Sequences whose model call failed since the last call, with the reason. A failed sequence
+    /// gets no sampled token; [`BatchEngine`] cancels it.
+    pub fn take_failures(&mut self) -> Vec<(SeqId, String)> { std::mem::take(&mut self.failures) }
+
+    /// Start tracking a sequence the scheduler knows as `seq`.
+    pub fn register(&mut self, seq: SeqId, prompt: &[u32], params: SamplerParams) -> Result<(), ModelError> {
+        let vocab = self.model.spec.vocab as usize;
+        if let Some(&t) = prompt.iter().find(|&&t| t as usize >= vocab) { return Err(ModelError::Token(t as usize)); }
+        let tokens: Vec<usize> = prompt.iter().map(|&t| t as usize).collect();
+        let mut sampler = params.build();
+        sampler.observe_all(&tokens);
+        self.recs.insert(seq, Rec { tokens, state: None, sampler, params });
+        Ok(())
+    }
+
+    /// `child` continues `parent` from where it is now (both must be between steps). The child's
+    /// sampler gets a seed derived from the parent's, so sampled children diverge; greedy ones do not.
+    pub fn fork_seq(&mut self, parent: SeqId, child: SeqId) -> Result<(), ModelError> {
+        let p = self.recs.get(&parent).ok_or_else(|| ModelError::Shape(format!("unknown sequence {parent}")))?;
+        let state = match &p.state { Some(s) => Some(s.fork()?), None => None };
+        let mut params = p.params;
+        params.seed = params.seed.wrapping_add(child.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let tokens = p.tokens.clone();
+        let mut sampler = params.build();
+        sampler.observe_all(&tokens);
+        self.recs.insert(child, Rec { tokens, state, sampler, params });
+        Ok(())
+    }
+
+    /// The scheduler is done with `seq`. Its cache is kept for prefix reuse unless `keep` is false.
+    pub fn release(&mut self, seq: SeqId, keep: bool) {
+        if let Some(rec) = self.recs.remove(&seq)
+            && keep
+            && let Some(st) = rec.state
+        {
+            self.retire(st);
+        }
+    }
+
+    /// The scheduler took `seq`'s blocks away (preemption): keep the cache only in the retired pool,
+    /// where it is bounded and can serve the recompute.
+    pub fn park(&mut self, seq: SeqId) {
+        let st = self.recs.get_mut(&seq).and_then(|r| r.state.take());
+        if let Some(st) = st { self.retire(st); }
+    }
+
+    fn retired_bytes(&self) -> usize { self.retired.iter().map(|r| r.state.kv_bytes()).sum() }
+
+    fn retire(&mut self, st: State) {
+        if st.pos == 0 || st.is_compacted() || st.tokens().len() != st.pos { return; }
+        self.clock += 1;
+        self.retired.push(Retired { state: st, stamp: self.clock });
+        while self.retired.len() > self.cfg.retired_max_states || self.retired_bytes() > self.cfg.retired_max_bytes {
+            let Some(old) = self.retired.iter().enumerate().min_by_key(|(_, r)| r.stamp).map(|(i, _)| i) else { break };
+            self.retired.swap_remove(old);
+        }
+    }
+
+    /// The retired state sharing the longest prefix with `want`, forked (or taken, when `want`
+    /// extends it completely, because then nobody else is likelier to need it than we are).
+    fn take_best(&mut self, want: &[usize]) -> Option<State> {
+        let best = self.retired.iter().enumerate()
+            .map(|(i, r)| (common_prefix(r.state.tokens(), want), r.stamp, i))
+            .filter(|&(c, _, _)| c > 0)
+            .max_by_key(|&(c, stamp, _)| (c, stamp))?;
+        let (c, _, i) = best;
+        self.clock += 1;
+        let (len, forked) = { let r = &mut self.retired[i]; r.stamp = self.clock; (r.state.tokens().len(), r.state.fork()) };
+        match forked {
+            Ok(st) if c < len => Some(st),
+            _ => Some(self.retired.swap_remove(i).state),
+        }
+    }
+
+    fn fail(&mut self, seq: SeqId, msg: String) {
+        self.stats.failures += 1;
+        self.failures.push((seq, msg));
+    }
+
+    /// A state positioned exactly at `p` tokens of `seq`'s history.
+    fn prepare(&mut self, seq: SeqId, p: usize) -> Result<State, ModelError> {
+        let model = self.model.clone();
+        let (own, want) = {
+            let rec = self.recs.get_mut(&seq).ok_or_else(|| ModelError::Shape(format!("unknown sequence {seq}")))?;
+            (rec.state.take(), rec.tokens[..p].to_vec())
+        };
+        let mut st = match own {
+            Some(s) => s,
+            None => self.take_best(&want).unwrap_or_else(|| model.new_state_with(self.cfg.kv)),
+        };
+        let mut keep = if st.is_compacted() || st.tokens().len() != st.pos { 0 } else { common_prefix(st.tokens(), &want).min(p) };
+        if keep == 0 { st.reset(); } else if st.pos > keep {
+            if st.can_truncate(keep) { st.truncate(keep)?; } else { st.reset(); keep = 0; }
+        }
+        self.stats.reused_tokens += keep as u64;
+        if p > keep {
+            self.stats.recomputed_tokens += (p - keep) as u64;
+            feed(&model, &mut st, &want[keep..])?;
+        }
+        Ok(st)
+    }
+
+    fn prepare_item(&mut self, it: &StepItem) -> Result<Work, String> {
+        let rec = self.recs.get(&it.seq).ok_or_else(|| format!("unknown sequence {}", it.seq))?;
+        let (Some(&p), n) = (it.positions.first(), it.tokens.len()) else { return Err("empty plan item".into()) };
+        if n == 0 || it.positions.len() != n { return Err("malformed plan item".into()); }
+        let hist = rec.tokens.len();
+        if p.checked_add(n).is_none_or(|e| e > hist) { return Err(format!("plan item runs past the sequence ({p}+{n} > {hist})")); }
+        let tokens: Vec<usize> = it.tokens.iter().map(|&t| t as usize).collect();
+        if rec.tokens[p..p + n] != tokens[..] { return Err("plan tokens differ from the sequence's history".into()); }
+        if it.sample != (p + n == hist) { return Err("plan item asks for a sample at the wrong place".into()); }
+        let state = self.prepare(it.seq, p).map_err(|e| e.to_string())?;
+        match it.kind { StepKind::Prefill => self.stats.prefill_tokens += n as u64, StepKind::Decode => self.stats.decode_tokens += n as u64 }
+        Ok(Work { seq: it.seq, state, tokens, sample: it.sample })
+    }
+}
+
+impl Executor for ModelExecutor {
+    /// Run every item. An item that cannot be run (model error, plan that does not match the
+    /// sequence) is reported through [`ModelExecutor::take_failures`] and gets no token; use
+    /// [`BatchEngine`], which cancels such sequences, rather than feeding this to
+    /// [`Scheduler::step`] directly if failures are possible.
+    fn run(&mut self, plan: &StepPlan) -> StepResult {
+        let model = self.model.clone();
+        let mut works = Vec::with_capacity(plan.items.len());
+        for it in &plan.items {
+            match self.prepare_item(it) {
+                Ok(w) => works.push(w),
+                Err(msg) => self.fail(it.seq, msg),
+            }
+        }
+        let outs: Vec<Out> = if self.cfg.parallel_items && works.len() > 1 {
+            let m: &Model = &model;
+            std::thread::scope(|s| {
+                let hs: Vec<_> = works.into_iter().map(|w| s.spawn(move || exec_work(m, w))).collect();
+                hs.into_iter().filter_map(|h| h.join().ok()).collect()
+            })
+        } else {
+            works.into_iter().map(|w| exec_work(&model, w)).collect()
+        };
+        let mut res = StepResult::default();
+        for (seq, st, r) in outs {
+            match r {
+                Err(e) => self.fail(seq, e.to_string()),
+                Ok(logits) => {
+                    let Some(rec) = self.recs.get_mut(&seq) else { continue };
+                    rec.state = Some(st);
+                    let Some(l) = logits else { continue };
+                    if let Some(o) = self.observer.as_mut() { o(seq, rec.tokens.len(), &l); }
+                    let tok = rec.sampler.sample(&l);
+                    rec.sampler.observe(tok);
+                    rec.tokens.push(tok);
+                    self.stats.sampled += 1;
+                    res.sampled.push((seq, tok as u32));
+                }
+            }
+        }
+        res
+    }
+}
+
+// ------------------------------------------------------------------------ engine
+
+#[derive(Debug)]
+pub enum EngineError {
+    Sched(SchedError),
+    Model(ModelError),
+    /// The scheduler had work but planned nothing for many steps in a row.
+    Stalled,
+}
+impl std::fmt::Display for EngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EngineError::Sched(e) => write!(f, "{e}"),
+            EngineError::Model(e) => write!(f, "{e}"),
+            EngineError::Stalled => write!(f, "the scheduler stopped making progress"),
+        }
+    }
+}
+impl std::error::Error for EngineError {}
+impl From<SchedError> for EngineError { fn from(e: SchedError) -> Self { EngineError::Sched(e) } }
+impl From<ModelError> for EngineError { fn from(e: ModelError) -> Self { EngineError::Model(e) } }
+
+/// What a streaming callback tells the engine to do next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flow {
+    Continue,
+    /// Cancel the sequence the event belongs to.
+    CancelSeq,
+    /// Stop running now; unfinished requests stay queued and `run_until_idle` can be called again.
+    Halt,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StepReport {
+    /// Tokens the model processed this step (prefill and decode).
+    pub tokens_run: usize,
+    pub events: Vec<Event>,
+    /// Sequences cancelled because their model call failed, with the reason.
+    pub failures: Vec<(SeqId, String)>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunSummary {
+    pub steps: u64,
+    pub failures: Vec<(SeqId, String)>,
+    pub halted: bool,
+}
+
+/// A scheduler and a model executor kept in step: submit requests, call [`BatchEngine::step`] or
+/// [`BatchEngine::run_until_idle`], read tokens from the events.
+pub struct BatchEngine {
+    sched: Scheduler,
+    exec: ModelExecutor,
+    clock: u64,
+}
+
+impl BatchEngine {
+    /// Size the KV pool from a byte budget at the executor's cache precision. `cfg.max_context` is
+    /// lowered to the model's context if it is larger.
+    pub fn new(model: Arc<Model>, mut cfg: SchedConfig, kv_budget_bytes: u64, ecfg: ExecConfig) -> Result<BatchEngine, SchedError> {
+        cfg.max_context = cfg.max_context.min(model.spec.context as usize);
+        let per = kv_bytes_per_token(&model, ecfg.kv);
+        let sched = Scheduler::new(cfg, kv_budget_bytes, per)?;
+        Ok(BatchEngine { sched, exec: ModelExecutor::new(model, ecfg), clock: 0 })
+    }
+    /// Like [`BatchEngine::new`] with the pool given in blocks.
+    pub fn with_blocks(model: Arc<Model>, mut cfg: SchedConfig, total_blocks: usize, ecfg: ExecConfig) -> Result<BatchEngine, SchedError> {
+        cfg.max_context = cfg.max_context.min(model.spec.context as usize);
+        let sched = Scheduler::with_blocks(cfg, total_blocks)?;
+        Ok(BatchEngine { sched, exec: ModelExecutor::new(model, ecfg), clock: 0 })
+    }
+
+    pub fn scheduler(&self) -> &Scheduler { &self.sched }
+    pub fn executor(&self) -> &ModelExecutor { &self.exec }
+    pub fn executor_mut(&mut self) -> &mut ModelExecutor { &mut self.exec }
+    pub fn is_idle(&self) -> bool { self.sched.is_idle() }
+    /// Logical time: the number of steps taken. Request deadlines are in these units.
+    pub fn now(&self) -> u64 { self.clock }
+
+    pub fn submit(&mut self, req: Request, params: SamplerParams) -> Result<SeqId, EngineError> {
+        let vocab = self.exec.model.spec.vocab as usize;
+        if let Some(&t) = req.prompt.iter().find(|&&t| t as usize >= vocab) { return Err(ModelError::Token(t as usize).into()); }
+        let prompt = req.prompt.clone();
+        let id = self.sched.submit(req)?;
+        self.exec.register(id, &prompt, params)?;
+        Ok(id)
+    }
+
+    /// Parallel sampling / branching: see [`Scheduler::fork`]. The child continues from the same cache.
+    pub fn fork(&mut self, seq: SeqId) -> Result<SeqId, EngineError> {
+        let child = self.sched.fork(seq)?;
+        if let Err(e) = self.exec.fork_seq(seq, child) {
+            self.sched.cancel(child);
+            self.sched.drain_events();
+            return Err(e.into());
+        }
+        Ok(child)
+    }
+
+    /// Stop a request. Its `Finished { reason: Cancelled }` event comes with the next step.
+    pub fn cancel(&mut self, seq: SeqId) -> bool {
+        let ok = self.sched.cancel(seq);
+        if ok { self.exec.release(seq, false); }
+        ok
+    }
+
+    fn after(&mut self, events: &[Event]) {
+        for ev in events {
+            match ev {
+                Event::Finished { seq, reason, .. } => self.exec.release(*seq, *reason != FinishReason::Cancelled),
+                Event::Preempted { seq } => self.exec.park(*seq),
+                Event::Token { .. } => {}
+            }
+        }
+    }
+
+    /// One iteration: plan, run on the model, commit.
+    pub fn step(&mut self) -> Result<StepReport, EngineError> {
+        self.clock += 1;
+        let plan = self.sched.plan(self.clock);
+        if plan.items.is_empty() {
+            let events = self.sched.drain_events();
+            self.after(&events);
+            return Ok(StepReport { tokens_run: 0, events, failures: vec![] });
+        }
+        let res = self.exec.run(&plan);
+        let failures = self.exec.take_failures();
+        for (seq, _) in &failures { self.sched.cancel(*seq); }
+        let events = self.sched.commit(&plan, &res)?;
+        self.after(&events);
+        Ok(StepReport { tokens_run: plan.total_tokens(), events, failures })
+    }
+
+    /// Step until nothing is left, handing every event to `on_event`.
+    pub fn run_until_idle(&mut self, on_event: &mut dyn FnMut(&Event) -> Flow) -> Result<RunSummary, EngineError> {
+        let mut sum = RunSummary::default();
+        let mut stalled = 0u32;
+        while !self.sched.is_idle() {
+            let rep = self.step()?;
+            sum.steps += 1;
+            sum.failures.extend(rep.failures);
+            if rep.tokens_run == 0 && rep.events.is_empty() {
+                stalled += 1;
+                if stalled > 10_000 { return Err(EngineError::Stalled); }
+            } else {
+                stalled = 0;
+            }
+            for ev in &rep.events {
+                match on_event(ev) {
+                    Flow::Continue => {}
+                    Flow::CancelSeq => match ev {
+                        Event::Token { seq, .. } | Event::Finished { seq, .. } | Event::Preempted { seq } => { self.cancel(*seq); }
+                    },
+                    Flow::Halt => sum.halted = true,
+                }
+            }
+            if sum.halted { break; }
+        }
+        // events produced by cancellations made in the last callbacks
+        let rest = self.sched.drain_events();
+        self.after(&rest);
+        for ev in &rest { on_event(ev); }
+        Ok(sum)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1471,5 +1956,454 @@ mod tests {
             assert!(now < 1000);
         }
         for (i, id) in ids.iter().enumerate() { assert_eq!(col.tokens[id].len(), 6, "request {i}"); }
+    }
+}
+
+#[cfg(test)]
+mod exec_tests {
+    use super::*;
+    use crate::model::tests::{base_spec, model_of, tiny};
+    use std::sync::Mutex;
+
+    type Logs = Arc<Mutex<HashMap<SeqId, Vec<Vec<f32>>>>>;
+
+    struct Ref { out: Vec<u32>, logits: Vec<Vec<f32>>, reason: FinishReason }
+
+    /// One request run alone, the way a sequential server would: one prefill, then token by token.
+    fn reference(model: &Model, req: &Request, params: &SamplerParams, kv: KvKind, max_context: usize) -> Ref {
+        let toks: Vec<usize> = req.prompt.iter().map(|&t| t as usize).collect();
+        let max_new = req.max_new_tokens.min(max_context - req.prompt.len());
+        let mut st = model.new_state_with(kv);
+        let mut sampler = params.build();
+        let mut logits = model.forward_batch(&mut st, &toks).unwrap();
+        sampler.observe_all(&toks);
+        let (mut out, mut logs) = (vec![], vec![]);
+        let reason = loop {
+            logs.push(logits.clone());
+            let t = sampler.sample(&logits);
+            sampler.observe(t);
+            out.push(t as u32);
+            if req.stop_tokens.contains(&(t as u32)) { break FinishReason::Stop; }
+            if out.len() >= max_new { break FinishReason::Length; }
+            if toks.len() + out.len() >= max_context { break FinishReason::ContextFull; }
+            logits = model.forward(&mut st, t).unwrap();
+        };
+        Ref { out, logits: logs, reason }
+    }
+
+    fn bits(v: &[f32]) -> Vec<u32> { v.iter().map(|x| x.to_bits()).collect() }
+
+    struct R(u64);
+    impl R {
+        fn next(&mut self) -> u64 { self.0 ^= self.0 << 13; self.0 ^= self.0 >> 7; self.0 ^= self.0 << 17; self.0 }
+        fn below(&mut self, n: u64) -> u64 { self.next() % n.max(1) }
+    }
+
+    fn requests(n: usize, seed: u64, vocab: u32) -> Vec<Request> {
+        let mut r = R(seed.wrapping_mul(0x9E37_79B9) | 1);
+        (0..n).map(|_| {
+            let len = 3 + r.below(10) as usize;
+            let prompt: Vec<u32> = (0..len).map(|_| r.below(vocab as u64) as u32).collect();
+            let mut q = Request::new(prompt, 2 + r.below(11) as usize);
+            if r.below(3) == 0 { q.stop_tokens = vec![3, 7, 11]; }
+            q
+        }).collect()
+    }
+
+    fn cfg(parallel: usize, batch: usize, chunk: usize) -> SchedConfig {
+        SchedConfig { block_tokens: 4, n_parallel: parallel, max_batch_tokens: batch, prefill_chunk: chunk, max_context: 32,
+            queue_limit: 64, aging_period: 4, prefix_cache: true }
+    }
+
+    struct Outcome { tokens: HashMap<SeqId, Vec<u32>>, reasons: HashMap<SeqId, FinishReason>, steps: u64, logs: Logs }
+
+    fn attach_logs(e: &mut BatchEngine) -> Logs {
+        let logs: Logs = Arc::new(Mutex::new(HashMap::new()));
+        let l2 = logs.clone();
+        e.executor_mut().set_logit_observer(Some(Box::new(move |seq, _pos, l| { l2.lock().unwrap().entry(seq).or_default().push(l.to_vec()); })));
+        logs
+    }
+
+    /// Step to the end, checking the scheduler's invariants after every step.
+    fn drive(e: &mut BatchEngine, logs: Logs) -> Outcome {
+        let (mut tokens, mut reasons, mut steps) = (HashMap::<SeqId, Vec<u32>>::new(), HashMap::new(), 0u64);
+        while !e.is_idle() {
+            let rep = e.step().unwrap();
+            steps += 1;
+            e.scheduler().check_invariants().unwrap();
+            assert!(rep.failures.is_empty(), "{:?}", rep.failures);
+            for ev in rep.events {
+                match ev {
+                    Event::Token { seq, token } => tokens.entry(seq).or_default().push(token),
+                    Event::Finished { seq, reason, .. } => { reasons.insert(seq, reason); }
+                    Event::Preempted { .. } => {}
+                }
+            }
+            assert!(steps < 5000, "no progress");
+        }
+        Outcome { tokens, reasons, steps, logs }
+    }
+
+    fn check_all(model: &Model, ids: &[(SeqId, Request, SamplerParams)], o: &Outcome, kv: KvKind, max_context: usize, what: &str) {
+        for (i, (id, req, params)) in ids.iter().enumerate() {
+            let want = reference(model, req, params, kv, max_context);
+            assert_eq!(o.tokens.get(id).cloned().unwrap_or_default(), want.out, "{what}: request {i} tokens");
+            assert_eq!(o.reasons.get(id), Some(&want.reason), "{what}: request {i} finish reason");
+            let got = o.logs.lock().unwrap().get(id).cloned().unwrap_or_default();
+            assert_eq!(got.len(), want.logits.len(), "{what}: request {i} sample count");
+            for (k, (a, b)) in got.iter().zip(&want.logits).enumerate() {
+                assert_eq!(bits(a), bits(b), "{what}: request {i} logits of sample {k}");
+            }
+        }
+    }
+
+    fn submit_all(e: &mut BatchEngine, reqs: &[Request], params: impl Fn(usize) -> SamplerParams) -> Vec<(SeqId, Request, SamplerParams)> {
+        reqs.iter().enumerate().map(|(i, r)| {
+            let p = params(i);
+            (e.submit(r.clone(), p).unwrap(), r.clone(), p)
+        }).collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_case(model: Model, sc: SchedConfig, blocks: usize, ec: ExecConfig, n: usize, seed: u64, params: impl Fn(usize) -> SamplerParams, what: &str) -> BatchEngine {
+        let model = Arc::new(model);
+        let mut e = BatchEngine::with_blocks(model.clone(), sc, blocks, ec).unwrap();
+        let logs = attach_logs(&mut e);
+        let reqs = requests(n, seed, model.spec.vocab as u32);
+        let ids = submit_all(&mut e, &reqs, params);
+        let o = drive(&mut e, logs);
+        check_all(&model, &ids, &o, ec.kv, e.scheduler().config().max_context, what);
+        e
+    }
+
+    #[test]
+    fn greedy_batches_equal_sequential_generation_bit_for_bit() {
+        for (chunk, batch, par) in [(5, 7, 3), (3, 4, 4), (256, 512, 2), (1, 4, 4)] {
+            let e = run_case(tiny(4, 2, true), cfg(par, batch, chunk), 64, ExecConfig::default(), 9, 7 + chunk as u64, |_| SamplerParams::greedy(), "greedy");
+            assert!(e.scheduler().stats().completed >= 9);
+        }
+    }
+
+    #[test]
+    fn a_small_pool_forces_preemption_and_the_results_do_not_change() {
+        let e = run_case(tiny(4, 2, true), cfg(4, 6, 4), 9, ExecConfig::default(), 12, 3, |_| SamplerParams::greedy(), "preempted");
+        let st = e.scheduler().stats();
+        assert!(st.preemptions > 0, "the pool was meant to be too small: {st:?}");
+        assert!(e.executor().stats().recomputed_tokens > 0 || e.executor().stats().reused_tokens > 0);
+    }
+
+    #[test]
+    fn sampled_requests_match_the_same_sampler_run_alone() {
+        let params = |i: usize| {
+            let mut p = SamplerParams::sampled(0.7 + 0.1 * (i % 4) as f32, [0, 5, 3][i % 3], [1.0, 0.9][i % 2], 100 + i as u64);
+            if i.is_multiple_of(3) { p.repeat_penalty = 1.2; p.repeat_last_n = 8; }
+            p
+        };
+        run_case(tiny(4, 2, true), cfg(3, 8, 4), 64, ExecConfig::default(), 10, 11, params, "sampled");
+        run_case(tiny(4, 2, true), cfg(4, 6, 4), 9, ExecConfig::default(), 10, 12, params, "sampled and preempted");
+    }
+
+    #[test]
+    fn every_kv_precision_matches_its_own_sequential_run() {
+        for kv in [KvKind::F16, KvKind::Q8] {
+            let ec = ExecConfig { kv, ..ExecConfig::default() };
+            run_case(tiny(4, 2, true), cfg(3, 7, 5), 64, ec, 8, 21, |_| SamplerParams::greedy(), "kv");
+            run_case(tiny(4, 2, true), cfg(4, 6, 4), 9, ec, 8, 22, |_| SamplerParams::greedy(), "kv preempted");
+        }
+    }
+
+    #[test]
+    fn a_mixture_of_experts_model_matches_too() {
+        run_case(crate::model::tests::accel_and_prefix::moe_model(), cfg(3, 6, 4), 64, ExecConfig::default(), 6, 31, |_| SamplerParams::greedy(), "moe");
+    }
+
+    #[test]
+    fn a_wrapped_sliding_window_cache_is_recomputed_not_trusted() {
+        let mk = || { let mut sp = base_spec(4, 2, true); sp.sliding_window = 3; sp.sliding_layers = vec![true, false, true]; sp.rope_theta_local = 500.0; model_of(sp, false) };
+        let e = run_case(mk(), cfg(4, 6, 4), 9, ExecConfig::default(), 8, 41, |_| SamplerParams::greedy(), "sliding window");
+        assert!(e.scheduler().stats().completed >= 8);
+    }
+
+    #[test]
+    fn running_the_items_of_a_step_on_their_own_threads_changes_nothing() {
+        let ec = ExecConfig { parallel_items: true, ..ExecConfig::default() };
+        run_case(tiny(4, 2, true), cfg(4, 8, 4), 64, ec, 10, 51, |_| SamplerParams::greedy(), "parallel items");
+        run_case(tiny(4, 2, true), cfg(4, 6, 4), 9, ec, 10, 52, |i| SamplerParams::sampled(0.9, 4, 1.0, i as u64), "parallel items, preempted");
+    }
+
+    #[test]
+    fn a_shared_prefix_is_served_from_a_retired_cache() {
+        let model = Arc::new(tiny(4, 2, true));
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(2, 16, 8), 64, ExecConfig::default()).unwrap();
+        let logs = attach_logs(&mut e);
+        let shared: Vec<u32> = vec![5, 9, 2, 14, 7, 1, 3, 11, 6];
+        let mut ids = vec![];
+        for tail in [[4u32, 8], [12, 0], [4, 8]] {
+            let mut p = shared.clone();
+            p.extend(tail);
+            let req = Request::new(p, 5);
+            ids.push((e.submit(req.clone(), SamplerParams::greedy()).unwrap(), req, SamplerParams::greedy()));
+            // one at a time, so each finished cache is there for the next
+            while !e.is_idle() { e.step().unwrap(); }
+        }
+        // re-run the same engine's outputs through the reference by replaying the events
+        let o = {
+            // events were consumed by the loop above, so rebuild them from a second identical run
+            let mut e2 = BatchEngine::with_blocks(model.clone(), cfg(2, 16, 8), 64, ExecConfig::default()).unwrap();
+            let logs2 = attach_logs(&mut e2);
+            let mut ids2 = vec![];
+            let mut out = Outcome { tokens: HashMap::new(), reasons: HashMap::new(), steps: 0, logs: logs2.clone() };
+            for (_, req, p) in &ids {
+                let id = e2.submit(req.clone(), *p).unwrap();
+                ids2.push((id, req.clone(), *p));
+                while !e2.is_idle() {
+                    let rep = e2.step().unwrap();
+                    out.steps += 1;
+                    for ev in rep.events {
+                        match ev {
+                            Event::Token { seq, token } => out.tokens.entry(seq).or_default().push(token),
+                            Event::Finished { seq, reason, .. } => { out.reasons.insert(seq, reason); }
+                            Event::Preempted { .. } => {}
+                        }
+                    }
+                }
+            }
+            check_all(&model, &ids2, &out, KvKind::F32, 32, "prefix");
+            assert!(e2.scheduler().stats().prefix_hit_tokens > 0, "the scheduler should have found the shared blocks");
+            assert!(e2.executor().stats().reused_tokens >= 8, "{:?}", e2.executor().stats());
+            out
+        };
+        assert!(o.steps > 0);
+        drop(logs);
+        // the very same prompt twice in a row reuses nearly everything
+        assert!(e.executor().stats().reused_tokens > 0);
+    }
+
+    #[test]
+    fn a_prefix_hit_without_a_cache_is_recomputed_exactly() {
+        // retired pool of zero states: the scheduler still reports hits, the executor must recompute
+        let ec = ExecConfig { retired_max_states: 0, ..ExecConfig::default() };
+        let model = Arc::new(tiny(4, 2, true));
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(2, 16, 8), 64, ec).unwrap();
+        let logs = attach_logs(&mut e);
+        let shared: Vec<u32> = vec![5, 9, 2, 14, 7, 1, 3, 11, 6, 2];
+        let mut ids = vec![];
+        let mut out = Outcome { tokens: HashMap::new(), reasons: HashMap::new(), steps: 0, logs };
+        for tail in [3u32, 9] {
+            let mut p = shared.clone();
+            p.push(tail);
+            let req = Request::new(p, 4);
+            let id = e.submit(req.clone(), SamplerParams::greedy()).unwrap();
+            ids.push((id, req, SamplerParams::greedy()));
+            while !e.is_idle() {
+                for ev in e.step().unwrap().events {
+                    match ev {
+                        Event::Token { seq, token } => out.tokens.entry(seq).or_default().push(token),
+                        Event::Finished { seq, reason, .. } => { out.reasons.insert(seq, reason); }
+                        Event::Preempted { .. } => {}
+                    }
+                }
+            }
+        }
+        check_all(&model, &ids, &out, KvKind::F32, 32, "recomputed hit");
+        assert!(e.scheduler().stats().prefix_hit_tokens > 0);
+        assert!(e.executor().stats().recomputed_tokens > 0);
+        assert_eq!(e.executor().stats().retired_states, 0);
+    }
+
+    #[test]
+    fn cancelling_one_request_leaves_the_others_exact_and_frees_its_blocks() {
+        let model = Arc::new(tiny(4, 2, true));
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(3, 7, 4), 64, ExecConfig::default()).unwrap();
+        let logs = attach_logs(&mut e);
+        let reqs = requests(6, 61, 20);
+        let ids = submit_all(&mut e, &reqs, |_| SamplerParams::greedy());
+        let victim = ids[2].0;
+        let (mut tokens, mut reasons) = (HashMap::<SeqId, Vec<u32>>::new(), HashMap::new());
+        let mut steps = 0;
+        while !e.is_idle() {
+            if steps == 3 { assert!(e.cancel(victim)); assert!(!e.cancel(victim)); }
+            let rep = e.step().unwrap();
+            steps += 1;
+            e.scheduler().check_invariants().unwrap();
+            for ev in rep.events {
+                match ev {
+                    Event::Token { seq, token } => tokens.entry(seq).or_default().push(token),
+                    Event::Finished { seq, reason, .. } => { reasons.insert(seq, reason); }
+                    Event::Preempted { .. } => {}
+                }
+            }
+        }
+        assert_eq!(reasons[&victim], FinishReason::Cancelled);
+        let rest: Vec<_> = ids.iter().filter(|(id, ..)| *id != victim).cloned().collect();
+        let o = Outcome { tokens, reasons, steps, logs };
+        check_all(&model, &rest, &o, KvKind::F32, 32, "after a cancellation");
+        let st = e.scheduler().stats();
+        assert_eq!(st.cancelled, 1);
+        assert_eq!(st.blocks_used, st.cached_blocks, "only the prefix cache may still hold blocks");
+    }
+
+    #[test]
+    fn a_deadline_ends_a_request_and_the_rest_carry_on() {
+        let model = Arc::new(tiny(4, 2, true));
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(2, 8, 4), 64, ExecConfig::default()).unwrap();
+        let mut slow = Request::new(vec![1, 2, 3, 4], 20);
+        slow.deadline = Some(3);
+        let slow_id = e.submit(slow, SamplerParams::greedy()).unwrap();
+        let ok = Request::new(vec![5, 6, 7], 6);
+        let ok_id = e.submit(ok.clone(), SamplerParams::greedy()).unwrap();
+        let mut got = vec![];
+        let mut why = HashMap::new();
+        let sum = e.run_until_idle(&mut |ev| {
+            match ev {
+                Event::Token { seq, token } if *seq == ok_id => got.push(*token),
+                Event::Finished { seq, reason, .. } => { why.insert(*seq, *reason); }
+                _ => {}
+            }
+            Flow::Continue
+        }).unwrap();
+        assert!(sum.failures.is_empty());
+        assert_eq!(why[&slow_id], FinishReason::Deadline);
+        assert_eq!(got, reference(&model, &ok, &SamplerParams::greedy(), KvKind::F32, 32).out);
+        e.scheduler().check_invariants().unwrap();
+    }
+
+    #[test]
+    fn the_streaming_callback_can_cancel_a_request_and_halt_the_run() {
+        let model = Arc::new(tiny(4, 2, true));
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(3, 8, 4), 64, ExecConfig::default()).unwrap();
+        let reqs = [Request::new(vec![1, 2, 3], 12), Request::new(vec![4, 5, 6, 7], 8)];
+        let a = e.submit(reqs[0].clone(), SamplerParams::greedy()).unwrap();
+        let b = e.submit(reqs[1].clone(), SamplerParams::greedy()).unwrap();
+        let (mut na, mut done_a) = (0, None);
+        let mut tb = vec![];
+        e.run_until_idle(&mut |ev| match ev {
+            Event::Token { seq, .. } if *seq == a => { na += 1; if na == 3 { Flow::CancelSeq } else { Flow::Continue } }
+            Event::Token { seq, token } if *seq == b => { tb.push(*token); Flow::Continue }
+            Event::Finished { seq, reason, generated } if *seq == a => { done_a = Some((*reason, *generated)); Flow::Continue }
+            _ => Flow::Continue,
+        }).unwrap();
+        let (reason, generated) = done_a.expect("the cancelled request reports its end");
+        assert_eq!(reason, FinishReason::Cancelled);
+        assert!(generated >= 3);
+        assert_eq!(tb, reference(&model, &reqs[1], &SamplerParams::greedy(), KvKind::F32, 32).out);
+        assert!(e.is_idle());
+
+        // halt, then resume: the final text is the same as one uninterrupted run
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(2, 8, 4), 64, ExecConfig::default()).unwrap();
+        let r = Request::new(vec![9, 8, 7, 6], 10);
+        e.submit(r.clone(), SamplerParams::greedy()).unwrap();
+        let mut toks = vec![];
+        let first = e.run_until_idle(&mut |ev| { if let Event::Token { token, .. } = ev { toks.push(*token); }; if toks.len() == 4 { Flow::Halt } else { Flow::Continue } }).unwrap();
+        assert!(first.halted && !e.is_idle());
+        e.run_until_idle(&mut |ev| { if let Event::Token { token, .. } = ev { toks.push(*token); } Flow::Continue }).unwrap();
+        assert_eq!(toks, reference(&model, &r, &SamplerParams::greedy(), KvKind::F32, 32).out);
+    }
+
+    #[test]
+    fn a_forked_sequence_continues_exactly_like_its_parent() {
+        let model = Arc::new(tiny(4, 2, true));
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(3, 8, 4), 64, ExecConfig::default()).unwrap();
+        let r = Request::new(vec![2, 4, 6, 8, 10], 10);
+        let parent = e.submit(r.clone(), SamplerParams::greedy()).unwrap();
+        let mut child = None;
+        let (mut p, mut c) = (vec![], vec![]);
+        let mut at_fork = 0;
+        while !e.is_idle() {
+            if child.is_none() && p.len() == 3 { at_fork = p.len(); child = Some(e.fork(parent).unwrap()); }
+            let rep = e.step().unwrap();
+            e.scheduler().check_invariants().unwrap();
+            for ev in rep.events {
+                if let Event::Token { seq, token } = ev { if seq == parent { p.push(token) } else { c.push(token) } }
+            }
+        }
+        let want = reference(&model, &r, &SamplerParams::greedy(), KvKind::F32, 32).out;
+        assert_eq!(p, want);
+        assert_eq!(c, want[at_fork..], "the child shares the parent's history and continues identically");
+    }
+
+    #[test]
+    fn hostile_requests_are_errors_and_a_bad_plan_is_a_failure_not_a_panic() {
+        let model = Arc::new(tiny(4, 2, true));
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(2, 8, 4), 16, ExecConfig::default()).unwrap();
+        assert!(matches!(e.submit(Request::new(vec![1, 99], 3), SamplerParams::greedy()), Err(EngineError::Model(ModelError::Token(99)))));
+        assert!(matches!(e.submit(Request::new(vec![], 3), SamplerParams::greedy()), Err(EngineError::Sched(SchedError::EmptyPrompt))));
+        assert!(matches!(e.submit(Request::new(vec![1; 40], 3), SamplerParams::greedy()), Err(EngineError::Sched(SchedError::PromptTooLong { .. }))));
+        assert!(matches!(e.submit(Request::new(vec![1], 0), SamplerParams::greedy()), Err(EngineError::Sched(SchedError::ZeroNewTokens))));
+        assert!(matches!(e.fork(77), Err(EngineError::Sched(_))));
+        assert!(!e.cancel(77));
+        assert!(e.is_idle(), "nothing hostile may stay queued");
+        e.scheduler().check_invariants().unwrap();
+
+        // a plan that disagrees with the executor's idea of the sequence
+        let mut x = ModelExecutor::new(model.clone(), ExecConfig::default());
+        x.register(1, &[1, 2, 3], SamplerParams::greedy()).unwrap();
+        let item = |seq, tokens: Vec<u32>, positions: Vec<usize>, sample| StepItem { seq, tokens, positions, block_table: vec![0], sample, kind: StepKind::Prefill };
+        let plan = StepPlan { step: 1, copies: vec![], items: vec![
+            item(1, vec![1, 2, 9], vec![0, 1, 2], true),       // wrong tokens
+            item(2, vec![1], vec![0], true),                   // unknown sequence
+            item(1, vec![1, 2, 3], vec![0, 1, 2], false),      // sample flag wrong
+            item(1, vec![], vec![], false),                    // empty
+            item(1, vec![1, 2, 3, 4], vec![0, 1, 2, 3], true), // past the history
+        ] };
+        let res = x.run(&plan);
+        assert!(res.sampled.is_empty());
+        assert_eq!(x.take_failures().len(), 5);
+        // and the executor still works afterwards
+        let ok = StepPlan { step: 2, copies: vec![], items: vec![item(1, vec![1, 2, 3], vec![0, 1, 2], true)] };
+        assert_eq!(x.run(&ok).sampled.len(), 1);
+        assert!(x.register(3, &[200], SamplerParams::greedy()).is_err());
+    }
+
+    #[test]
+    fn the_retired_pool_stays_within_its_limits() {
+        let ec = ExecConfig { retired_max_states: 2, ..ExecConfig::default() };
+        let e = run_case(tiny(4, 2, true), cfg(2, 8, 4), 64, ec, 12, 71, |_| SamplerParams::greedy(), "small retired pool");
+        assert!(e.executor().stats().retired_states <= 2);
+        let ec = ExecConfig { retired_max_bytes: 1, ..ExecConfig::default() };
+        let e = run_case(tiny(4, 2, true), cfg(2, 8, 4), 64, ec, 6, 72, |_| SamplerParams::greedy(), "tiny retired budget");
+        assert_eq!(e.executor().stats().retired_states, 0);
+        assert_eq!(e.executor().stats().live_states, 0, "finished sequences hold no state");
+    }
+
+    #[test]
+    fn kv_bytes_per_token_matches_what_a_state_really_holds() {
+        let m = tiny(4, 2, true);
+        for kind in [KvKind::F32, KvKind::F16, KvKind::Q8] {
+            let mut st = m.new_state_with(kind);
+            m.forward(&mut st, 1).unwrap();
+            let one = st.kv_bytes();
+            m.forward(&mut st, 2).unwrap();
+            let step = (st.kv_bytes() - one) as u64;
+            let est = kv_bytes_per_token(&m, kind);
+            assert!(est >= step && est <= step * 2, "{kind:?}: estimate {est} vs {step}");
+        }
+        let pool = BatchEngine::new(Arc::new(tiny(4, 2, true)), cfg(2, 8, 4), 64 * 4 * kv_bytes_per_token(&tiny(4, 2, true), KvKind::F32), ExecConfig::default()).unwrap();
+        assert_eq!(pool.scheduler().allocator().total(), 64);
+    }
+
+    #[test]
+    fn batching_needs_far_fewer_steps_than_one_request_at_a_time() {
+        let model = Arc::new(tiny(4, 2, true));
+        let reqs: Vec<Request> = (0..8).map(|i| Request::new(vec![1 + i as u32, 2, 3, 4, 5, 6], 10)).collect();
+        // sequential: one prefill plus nine single-token calls per request
+        let t0 = std::time::Instant::now();
+        let want: Vec<Vec<u32>> = reqs.iter().map(|r| reference(&model, r, &SamplerParams::greedy(), KvKind::F32, 32).out).collect();
+        let seq_secs = t0.elapsed().as_secs_f64();
+        let seq_calls: usize = want.iter().map(Vec::len).sum();
+
+        let mut e = BatchEngine::with_blocks(model.clone(), cfg(8, 64, 16), 128, ExecConfig::default()).unwrap();
+        let ids: Vec<SeqId> = reqs.iter().map(|r| e.submit(r.clone(), SamplerParams::greedy()).unwrap()).collect();
+        let mut got: HashMap<SeqId, Vec<u32>> = HashMap::new();
+        let t1 = std::time::Instant::now();
+        let sum = e.run_until_idle(&mut |ev| { if let Event::Token { seq, token } = ev { got.entry(*seq).or_default().push(*token); } Flow::Continue }).unwrap();
+        let eng_secs = t1.elapsed().as_secs_f64();
+        for (i, id) in ids.iter().enumerate() { assert_eq!(got[id], want[i], "request {i}"); }
+        let st = e.scheduler().stats();
+        assert_eq!(st.tokens_generated as usize, seq_calls);
+        assert!(sum.steps as usize * 4 < seq_calls, "{} steps for {seq_calls} sequential model calls", sum.steps);
+        assert!(st.batch_utilisation() > 0.0);
+        eprintln!("throughput (synthetic, debug build, shared machine): sequential {seq_secs:.3}s, engine {eng_secs:.3}s, {} steps for {seq_calls} tokens, utilisation {:.2}",
+            sum.steps, st.batch_utilisation());
     }
 }

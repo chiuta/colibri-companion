@@ -7,11 +7,12 @@
 //!   unquantised activations (slower, no activation rounding).
 //!
 //! Rows are independent, so both are split across threads by row chunks with identical results
-//! to the serial path.
+//! to the serial path. The split runs on the persistent [`crate::pool`] threads, so a product never
+//! spawns a thread; `threads` only caps how many chunks the rows are cut into.
 use crate::quant::{dequantize, f16_to_f32, q3k_scales, scale_min_k4, DType, QuantError};
 use std::borrow::Cow;
 
-/// Weights below this size are not worth the cost of spawning threads.
+/// Weights below this size are not worth the cost of splitting across threads.
 const THREAD_MIN_BYTES: usize = 1 << 20;
 
 fn rd16(b: &[u8], o: usize) -> f32 { f16_to_f32(u16::from_le_bytes([b[o], b[o + 1]])) }
@@ -234,7 +235,7 @@ enum Mode { Fast, Exact }
 
 fn auto_threads(rows: usize, bytes: usize) -> usize {
     if bytes < THREAD_MIN_BYTES { return 1; }
-    std::thread::available_parallelism().map_or(1, |n| n.get()).min(rows / 4).max(1)
+    crate::pool::global().threads().min(rows / 4).max(1)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -256,10 +257,12 @@ fn run(t: DType, w: &[u8], rows: usize, cols: usize, x: &[f32], out: &mut [f32],
     };
     let n = threads.clamp(1, rows);
     if n == 1 { work(w, out); return Ok(()); }
-    let per = rows.div_ceil(n);
+    // Rows are cut into at most `n` pieces (a piece never has fewer than `rows / n` rows); the
+    // persistent pool hands the pieces to its workers. Each output row depends only on its own
+    // weights, so the result does not depend on how the rows are split.
     let work = &work;
-    std::thread::scope(|s| {
-        for (o, ws) in out.chunks_mut(per).zip(w.chunks(per * rb)) { s.spawn(move || work(ws, o)); }
+    crate::pool::global().parallel_chunks_mut(out, rows.div_ceil(n), |start, o| {
+        work(&w[start * rb..(start + o.len()) * rb], o);
     });
     Ok(())
 }
@@ -357,6 +360,58 @@ mod tests {
         let w = matrix(DType::Q4_0, 2, 64);
         let mut o = vec![0.0; 2];
         qmatvec_threads(DType::Q4_0, &w, 2, 64, &signal(64, 1), &mut o, 64).unwrap();
+    }
+
+    #[test]
+    fn the_pool_split_is_bit_identical_for_every_shape_and_thread_count() {
+        // odd row counts, fewer rows than threads, and counts that do not divide evenly
+        for t in [DType::Q4_0, DType::Q5_1, DType::Q8_0, DType::Q4K, DType::Q6K, DType::F16, DType::F32] {
+            let cols = if t.geometry().is_some_and(|g| g.0 == 256) { 512 } else { 128 };
+            for rows in [1usize, 2, 3, 7, 31, 64, 97, 255] {
+                let w = matrix(t, rows, cols);
+                let x = signal(cols, rows as u64);
+                let (mut serial, mut exact1) = (vec![0.0; rows], vec![0.0; rows]);
+                qmatvec_threads(t, &w, rows, cols, &x, &mut serial, 1).unwrap();
+                qmatvec_exact(t, &w, rows, cols, &x, &mut exact1, 1).unwrap();
+                for n in [2usize, 3, 4, 8, 17, 1000] {
+                    let (mut a, mut b) = (vec![9.0; rows], vec![9.0; rows]);
+                    qmatvec_threads(t, &w, rows, cols, &x, &mut a, n).unwrap();
+                    qmatvec_exact(t, &w, rows, cols, &x, &mut b, n).unwrap();
+                    assert_eq!(a, serial, "{t:?} rows {rows} threads {n} fast");
+                    assert_eq!(b, exact1, "{t:?} rows {rows} threads {n} exact");
+                }
+                let mut auto = vec![9.0; rows];
+                qmatvec(t, &w, rows, cols, &x, &mut auto).unwrap();
+                assert_eq!(auto, serial, "{t:?} rows {rows} automatic");
+            }
+        }
+    }
+
+    #[test]
+    fn many_threads_calling_at_once_all_get_the_serial_answer() {
+        let (rows, cols) = (200, 512);
+        let w = std::sync::Arc::new(matrix(DType::Q4K, rows, cols));
+        let x = std::sync::Arc::new(signal(cols, 5));
+        let mut want = vec![0.0; rows];
+        qmatvec_threads(DType::Q4K, &w, rows, cols, &x, &mut want, 1).unwrap();
+        let hs: Vec<_> = (0..6).map(|k| {
+            let (w, x, want) = (w.clone(), x.clone(), want.clone());
+            std::thread::spawn(move || {
+                for i in 0..40 {
+                    let mut o = vec![0.0; rows];
+                    qmatvec_threads(DType::Q4K, &w, rows, cols, &x, &mut o, 2 + (i + k) % 6).unwrap();
+                    assert_eq!(o, want, "caller {k} call {i}");
+                }
+            })
+        }).collect();
+        for h in hs { h.join().unwrap(); }
+    }
+
+    #[test]
+    fn a_product_does_not_spawn_threads_of_its_own() {
+        let src = include_str!("qmatmul.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        assert!(!code.contains("thread::scope") && !code.contains("thread::spawn"), "qmatmul must use the persistent pool");
     }
 
     #[test]

@@ -10,8 +10,22 @@ pub enum Support {
     Standard,
     /// Standard plus routed experts (streamed from disk by the planner).
     Moe,
+    /// Mamba / Mamba-2 / RWKV-6 / RWKV-7: no attention, no KV cache. Runs through
+    /// [`crate::family::SsmModel`] (`family::load_any`), not through the dense forward pass.
+    Recurrent,
+    /// Attention layers interleaved with state-space layers (Jamba, Bamba). Runs through
+    /// [`crate::hybrid::HybridModel`] (`family::load_any`).
+    Hybrid,
+    /// Some of the building blocks exist but the whole model cannot be assembled and run yet; the
+    /// text says what is there and what is missing.
+    Partial(&'static str),
     /// Needs an attention or state-space variant that is not implemented yet.
     Planned(&'static str),
+}
+
+impl Support {
+    /// Can the engine run a model of this support level today (through whichever model type fits)?
+    pub fn runnable(&self) -> bool { !matches!(self, Support::Partial(_) | Support::Planned(_)) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +40,12 @@ pub enum RopeScaling {
     Linear { factor: f64 },
     Llama3 { factor: f64, low_freq_factor: f64, high_freq_factor: f64, original_max: f64 },
     Yarn { factor: f64, original_max: f64, beta_fast: f64, beta_slow: f64, mscale: f64 },
+    /// LongRoPE (Phi-3 family): one divisor per rotated pair, one list for windows up to
+    /// `original_max` (`Spec::rope_short`) and one for longer windows (`Spec::rope_long`), plus an
+    /// attention magnitude factor. The tables live in the [`Spec`]; use [`Spec::rope_freqs`].
+    LongRope { factor: f64, original_max: f64, mscale: f64 },
+    /// No rotation at all: attention without any position encoding (Jamba's attention layers).
+    Nope,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +95,10 @@ pub struct Spec {
     /// Number of dimensions per head that are rotated (partial rotary); even, `<= head_dim`.
     pub rotary_dim: u64,
     pub rope_scaling: RopeScaling,
+    /// LongRoPE frequency divisors for windows up to the original size (`rotary_dim / 2` values), else empty.
+    pub rope_short: Vec<f64>,
+    /// LongRoPE frequency divisors for longer windows, else empty.
+    pub rope_long: Vec<f64>,
     /// Attention score multiplier; 0 = `1/sqrt(head_dim)`.
     pub attn_scale: f64,
     // ---- mixture of experts ----
@@ -96,12 +120,39 @@ impl Spec {
             norm: NormKind::Rms, norm_offset: false, act: Act::Silu, gated_mlp: true, embed_scale: 1.0, qk_norm: false,
             qkv_bias: false, post_norms: false, parallel_residual: false, attn_softcap: 0.0, final_softcap: 0.0,
             sliding_window: 0, sliding_layers: vec![], rope_theta_local: 0.0, rotary_dim: head_dim,
-            rope_scaling: RopeScaling::None, attn_scale: 0.0,
+            rope_scaling: RopeScaling::None, rope_short: vec![], rope_long: vec![], attn_scale: 0.0,
             moe_ffn: 0, norm_topk_prob: false, routed_scale: 1.0,
         }
     }
     /// Width of one routed expert.
     pub fn expert_ffn(&self) -> u64 { if self.moe_ffn > 0 { self.moe_ffn } else { self.ffn } }
+    /// Inverse frequencies and cos/sin magnitude factor of the global RoPE. Identical to
+    /// `model::rope_inv_freq` except for LongRoPE, whose per-pair divisors come from this spec
+    /// (the long list when the configured window exceeds the original one, otherwise the short list).
+    pub fn rope_freqs(&self) -> (Vec<f64>, f64) {
+        let rd = self.rotary_dim as usize;
+        if self.rope_scaling == RopeScaling::Nope { return (vec![0.0; rd / 2], 1.0); }
+        if let RopeScaling::LongRope { original_max, mscale, .. } = self.rope_scaling {
+            let table = if self.context as f64 > original_max { &self.rope_long } else { &self.rope_short };
+            if table.len() == rd / 2 && table.iter().all(|f| f.is_finite() && *f > 0.0) {
+                let inv = (0..rd / 2).map(|i| 1.0 / (table[i] * crate::simd::rmath::powf64(self.rope_theta, (2.0 * i as f64) / rd as f64))).collect();
+                return (inv, mscale);
+            }
+        }
+        crate::model::rope_inv_freq(self.rope_theta, rd, self.rope_scaling)
+    }
+    /// Is this a LongRoPE spec whose factor tables are still missing (GGUF keeps them in tensors)?
+    pub fn needs_rope_factors(&self) -> bool {
+        matches!(self.rope_scaling, RopeScaling::LongRope { .. }) && self.rope_short.len() != self.rotary_dim as usize / 2
+    }
+    /// Install LongRoPE tables read from `rope_factors_short.weight` / `rope_factors_long.weight`.
+    pub fn set_rope_factors(&mut self, short: Vec<f64>, long: Vec<f64>) -> Result<(), SpecError> {
+        let n = self.rotary_dim as usize / 2;
+        if short.len() != n || long.len() != n || short.iter().chain(&long).any(|f| !(f.is_finite() && *f > 0.0)) { return Err(SpecError::Absurd("rope factors")); }
+        self.rope_short = short; self.rope_long = long;
+        if let Support::Partial(_) = self.support { self.support = classify(&self.family); }
+        Ok(())
+    }
     /// Does layer `i` use the sliding window?
     pub fn is_sliding(&self, i: usize) -> bool { self.sliding_window > 0 && self.sliding_layers.get(i).copied().unwrap_or(false) }
 }
@@ -119,7 +170,8 @@ impl std::fmt::Display for SpecError {
 }
 impl std::error::Error for SpecError {}
 
-/// Classify a `model_type` / GGUF architecture name.
+/// Classify a `model_type` / GGUF architecture name. The text of `Partial` and `Planned` says what
+/// exists and what is missing; nothing is claimed that is not built.
 pub fn classify(name: &str) -> Support {
     let n = name.to_ascii_lowercase();
     match n.as_str() {
@@ -133,8 +185,19 @@ pub fn classify(name: &str) -> Support {
         "gpt_oss" | "gpt-oss" | "gptoss" => Support::Planned("MXFP4 experts with clamped SwiGLU and expert biases"),
         "granitemoe" | "phimoe" | "dbrx" | "arctic" | "jamba_moe" | "llama4" | "glm4_moe" | "hunyuan_moe" | "ernie4_5_moe" | "grok" =>
             Support::Planned("this mixture-of-experts layout"),
-        "deepseek_v2" | "deepseek_v3" | "deepseek2" | "kimi_k2" | "minimax" => Support::Planned("multi-head latent attention"),
-        "mamba" | "mamba2" | "rwkv" | "rwkv6" | "rwkv7" | "falcon_mamba" | "jamba" | "zamba" | "bamba" => Support::Planned("state-space / recurrent layers"),
+        // multi-head latent attention exists as a module (mla.rs), the DeepSeek model around it does not
+        "deepseek_v2" | "deepseek_v3" | "deepseek2" | "kimi_k2" => Support::Partial(
+            "multi-head latent attention is implemented (mla.rs, absorbed and naive), but the full DeepSeek model — MLA layers, dense first layers, shared and routed experts — is not assembled or loadable yet"),
+        "minimax" => Support::Planned("lightning attention and this mixture-of-experts layout"),
+        // state-space and recurrent families: run through family::SsmModel
+        "mamba" | "falcon_mamba" | "falcon-mamba" | "mamba2" | "rwkv6" | "rwkv-6" | "rwkv7" | "rwkv-7" => Support::Recurrent,
+        "rwkv" | "rwkv4" | "rwkv5" => Support::Planned("only RWKV-6 and RWKV-7 are implemented, not RWKV-4/5"),
+        // attention interleaved with state-space layers: run through hybrid::HybridModel
+        "jamba" | "bamba" => Support::Hybrid,
+        "zamba" | "zamba2" => Support::Partial(
+            "the Mamba mixers exist, but Zamba's shared attention block (fed with the embeddings concatenated to the hidden state, with per-use LoRA adapters) is not implemented"),
+        "granitemoehybrid" | "granite_moe_hybrid" | "falcon_h1" | "nemotron_h" | "lfm2" =>
+            Support::Planned("this hybrid layout (parallel or MoE feed-forward blocks)"),
         "t5" | "mt5" | "bart" | "whisper" | "bert" | "roberta" => Support::Planned("encoder / encoder-decoder models"),
         _ => Support::Planned("unknown architecture"),
     }
@@ -176,27 +239,51 @@ fn parse_act(s: &str) -> Option<Act> {
     }
 }
 
+/// LongRoPE tables found in a config: (short divisors, long divisors).
+type RopeTables = Option<(Vec<f64>, Vec<f64>)>;
+
 /// Reads `rope_scaling` / `rope_parameters`. Returns the scaling and, for kinds we cannot do
-/// faithfully, a reason (the caller then downgrades the support level instead of guessing).
-fn parse_rope_scaling(c: &Value, root: &Value, orig_default: f64) -> (RopeScaling, Option<&'static str>) {
+/// faithfully, a reason (the caller then downgrades the support level instead of guessing), plus the
+/// LongRoPE factor lists when there are any.
+fn parse_rope_scaling(c: &Value, root: &Value, orig_default: f64) -> (RopeScaling, Option<&'static str>, RopeTables) {
     let Some(r) = ["rope_scaling", "rope_parameters"].iter().find_map(|k| c.get(*k).or_else(|| root.get(*k)).filter(|v| v.is_object())) else {
-        return (RopeScaling::None, None);
+        return (RopeScaling::None, None, None);
     };
     let kind = r.get("rope_type").or_else(|| r.get("type")).and_then(Value::as_str).unwrap_or("default");
     let f = |k: &str| r.get(k).and_then(Value::as_f64);
     let factor = f("factor").unwrap_or(1.0);
     let orig = f("original_max_position_embeddings").unwrap_or(orig_default);
+    let none = |s: RopeScaling, why: Option<&'static str>| (s, why, None);
     match kind {
-        "default" => (RopeScaling::None, None),
-        "linear" => (RopeScaling::Linear { factor }, None),
-        "llama3" => (RopeScaling::Llama3 { factor, low_freq_factor: f("low_freq_factor").unwrap_or(1.0),
+        "default" => none(RopeScaling::None, None),
+        "linear" => none(RopeScaling::Linear { factor }, None),
+        "llama3" => none(RopeScaling::Llama3 { factor, low_freq_factor: f("low_freq_factor").unwrap_or(1.0),
             high_freq_factor: f("high_freq_factor").unwrap_or(4.0), original_max: f("original_max_position_embeddings").unwrap_or(8192.0) }, None),
-        "yarn" => (RopeScaling::Yarn { factor, original_max: orig, beta_fast: f("beta_fast").unwrap_or(32.0), beta_slow: f("beta_slow").unwrap_or(1.0),
+        "yarn" => none(RopeScaling::Yarn { factor, original_max: orig, beta_fast: f("beta_fast").unwrap_or(32.0), beta_slow: f("beta_slow").unwrap_or(1.0),
             mscale: f("attention_factor").unwrap_or(if factor > 1.0 { 0.1 * factor.ln() + 1.0 } else { 1.0 }) }, None),
         // dynamic NTK only changes behaviour beyond the original window, so short contexts are exact
-        "dynamic" => (RopeScaling::None, None),
-        "longrope" | "su" => (RopeScaling::None, Some("LongRoPE scaling")),
-        _ => (RopeScaling::None, Some("unknown RoPE scaling")),
+        "dynamic" => none(RopeScaling::None, None),
+        // Qwen2-VL "multimodal" RoPE: text tokens use the same position on all three axes, which is plain RoPE
+        "mrope" => none(RopeScaling::None, None),
+        "longrope" | "su" => {
+            let list = |k: &str| -> Option<Vec<f64>> {
+                let v: Vec<f64> = r.get(k)?.as_array()?.iter().map(|x| x.as_f64().unwrap_or(f64::NAN)).collect();
+                (!v.is_empty() && v.iter().all(|x| x.is_finite() && *x > 0.0)).then_some(v)
+            };
+            let (Some(short), Some(long)) = (list("short_factor"), list("long_factor")) else {
+                return none(RopeScaling::None, Some("LongRoPE scaling without valid short_factor / long_factor lists"));
+            };
+            if short.len() != long.len() { return none(RopeScaling::None, Some("LongRoPE short_factor and long_factor differ in length")); }
+            // Hugging Face: when the config names an original window, factor = window / original window
+            let given = c.get("original_max_position_embeddings").and_then(Value::as_f64).or_else(|| root.get("original_max_position_embeddings").and_then(Value::as_f64))
+                .or_else(|| f("original_max_position_embeddings"));
+            let orig = given.unwrap_or(orig_default);
+            let factor = if given.is_some() && orig > 0.0 { orig_default / orig } else { factor };
+            if !(orig.is_finite() && orig > 1.0 && factor.is_finite() && factor > 0.0) { return none(RopeScaling::None, Some("LongRoPE with an unusable original window")); }
+            let mscale = f("attention_factor").unwrap_or(if factor <= 1.0 { 1.0 } else { (1.0 + factor.ln() / orig.ln()).sqrt() });
+            (RopeScaling::LongRope { factor, original_max: orig, mscale }, None, Some((short, long)))
+        }
+        _ => none(RopeScaling::None, Some("unknown RoPE scaling")),
     }
 }
 
@@ -267,8 +354,13 @@ pub fn from_hf_config(json: &str) -> Result<Spec, SpecError> {
     s.rope_theta_local = c.get("rope_local_base_freq").and_then(Value::as_f64).unwrap_or(0.0);
     let pf = first_f64(c, &["partial_rotary_factor", "rotary_pct"]).or_else(|| rope_obj.and_then(|r| r.get("partial_rotary_factor")).and_then(Value::as_f64)).unwrap_or(1.0);
     s.rotary_dim = (((head_dim as f64 * pf) as u64) & !1).clamp(2, head_dim.max(2));
-    let (rs, unsupported) = parse_rope_scaling(c, &root, s.context as f64);
+    let (rs, unsupported, tables) = parse_rope_scaling(c, &root, s.context as f64);
     s.rope_scaling = rs;
+    if let Some((short, long)) = tables {
+        // the lists have one divisor per rotated pair; anything else would silently rotate wrongly
+        if short.len() as u64 == s.rotary_dim / 2 { s.rope_short = short; s.rope_long = long; }
+        else { s.rope_scaling = RopeScaling::None; s.support = Support::Planned("LongRoPE factor lists that do not match the rotary dimension"); }
+    }
     if let Some(why) = unsupported { s.support = Support::Planned(why); }
     s.attn_scale = c.get("query_pre_attn_scalar").and_then(Value::as_f64).filter(|v| *v > 0.0).map_or(0.0, |v| 1.0 / v.sqrt());
     Ok(s)
@@ -327,7 +419,26 @@ pub fn from_gguf(g: &Gguf) -> Result<Spec, SpecError> {
             beta_fast: 32.0, beta_slow: 1.0, mscale: if factor > 1.0 { 0.1 * factor.ln() + 1.0 } else { 1.0 } },
         _ => RopeScaling::None,
     };
+    // LongRoPE (Phi-3 family): the divisors are tensors, read by `load_rope_factors` when the model loads
+    let has_factors = g.tensors.iter().any(|x| x.name == "rope_factors_long.weight") && g.tensors.iter().any(|x| x.name == "rope_factors_short.weight");
+    let longrope_declared = g.meta.get(&format!("{family}.rope.scaling.type")).and_then(crate::gguf::Value::as_str) == Some("longrope");
+    if has_factors || longrope_declared {
+        let orig = g.get_f64("rope.scaling.original_context_length").filter(|o| *o > 1.0).unwrap_or(s.context as f64);
+        let f = if orig > 0.0 { s.context as f64 / orig } else { 1.0 };
+        let mscale = g.get_f64("rope.scaling.attn_factor").filter(|m| *m > 0.0).unwrap_or(if f <= 1.0 { 1.0 } else { (1.0 + f.ln() / orig.ln()).sqrt() });
+        if has_factors { s.rope_scaling = RopeScaling::LongRope { factor: f, original_max: orig, mscale }; }
+        if longrope_declared && !has_factors { s.support = Support::Planned("LongRoPE without rope_factors_short / rope_factors_long tensors"); }
+    }
     Ok(s)
+}
+
+/// Read LongRoPE's `rope_factors_short.weight` / `rope_factors_long.weight` into `spec` (GGUF stores
+/// them as tensors). Does nothing when the spec does not need them.
+pub fn load_rope_factors(spec: &mut Spec, src: &dyn crate::loader::TensorSource) -> Result<(), String> {
+    if !spec.needs_rope_factors() { return Ok(()); }
+    let rd = |n: &str| src.read(n).map(|v| v.into_iter().map(f64::from).collect::<Vec<f64>>()).map_err(|e| format!("{n}: {e}"));
+    let (short, long) = (rd("rope_factors_short.weight")?, rd("rope_factors_long.weight")?);
+    spec.set_rope_factors(short, long).map_err(|e| e.to_string())
 }
 
 impl Spec {
@@ -369,8 +480,10 @@ mod tests {
 
     #[test]
     fn unsupported_families_say_why() {
-        assert!(matches!(classify("deepseek_v3"), Support::Planned(w) if w.contains("latent")));
-        assert!(matches!(classify("mamba2"), Support::Planned(_)));
+        assert!(matches!(classify("deepseek_v3"), Support::Partial(w) if w.contains("latent") && w.contains("not assembled")));
+        assert!(matches!(classify("zamba2"), Support::Partial(w) if w.contains("shared attention")));
+        assert!(matches!(classify("rwkv5"), Support::Planned(w) if w.contains("RWKV-6")));
+        assert!(matches!(classify("minimax"), Support::Planned(_)));
         assert!(matches!(classify("never-heard-of-it"), Support::Planned("unknown architecture")));
     }
 
@@ -452,10 +565,127 @@ mod tests {
         } o => panic!("{o:?}") }
         assert_eq!(from_hf_config(&cfg(r#"{"rope_type":"dynamic","factor":2.0}"#)).unwrap().rope_scaling, RopeScaling::None);
         assert!(matches!(from_hf_config(&cfg(r#"{"rope_type":"longrope","long_factor":[1.0]}"#)).unwrap().support, Support::Planned(w) if w.contains("LongRoPE")));
+        // Qwen2-VL's multimodal RoPE is plain RoPE for text
+        assert_eq!(from_hf_config(&cfg(r#"{"type":"mrope","mrope_section":[1,1,2]}"#)).unwrap().rope_scaling, RopeScaling::None);
         assert!(matches!(from_hf_config(&cfg(r#"{"rope_type":"mystery"}"#)).unwrap().support, Support::Planned(_)));
         // newer configs nest theta and scaling in rope_parameters
         let s = from_hf_config(r#"{"model_type":"llama","hidden_size":64,"num_hidden_layers":2,"num_attention_heads":4,"rope_parameters":{"rope_type":"linear","factor":2.0,"rope_theta":5000.0}}"#).unwrap();
         assert_eq!((s.rope_theta, s.rope_scaling), (5000.0, RopeScaling::Linear { factor: 2.0 }));
+    }
+
+    #[test]
+    fn registry_tells_the_truth_about_each_family() {
+        for m in ["mamba", "falcon_mamba", "mamba2", "rwkv6", "rwkv7"] { assert_eq!(classify(m), Support::Recurrent, "{m}"); }
+        for m in ["jamba", "bamba"] { assert_eq!(classify(m), Support::Hybrid, "{m}"); }
+        assert!(Support::Recurrent.runnable() && Support::Hybrid.runnable() && Support::Standard.runnable() && Support::Moe.runnable());
+        assert!(!Support::Partial("x").runnable() && !Support::Planned("x").runnable());
+        // a Mamba config has no attention heads, so it never becomes a dense Spec by accident
+        assert!(from_hf_config(r#"{"model_type":"mamba","hidden_size":64,"num_hidden_layers":2}"#).is_err());
+    }
+
+    const PHI3_LONG: &str = r#"{"model_type":"phi3","hidden_size":64,"num_hidden_layers":2,"num_attention_heads":4,"max_position_embeddings":16384,
+        "original_max_position_embeddings":4096,"rope_scaling":{"type":"longrope","short_factor":[1.0,1.1,1.2,1.3,1.4,1.5,1.6,1.7],
+        "long_factor":[2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0]}}"#;
+
+    #[test]
+    fn longrope_parses_factors_window_ratio_and_attention_scale() {
+        let s = from_hf_config(PHI3_LONG).unwrap();
+        assert_eq!(s.support, Support::Standard);
+        assert_eq!(s.rotary_dim, 16);
+        let RopeScaling::LongRope { factor, original_max, mscale } = s.rope_scaling else { panic!("{:?}", s.rope_scaling) };
+        assert_eq!((factor, original_max), (4.0, 4096.0));
+        assert!((mscale - (1.0 + 4f64.ln() / 4096f64.ln()).sqrt()).abs() < 1e-12);
+        assert_eq!((s.rope_short.len(), s.rope_long.len()), (8, 8));
+        // legacy name and an explicit attention factor
+        let s = from_hf_config(&PHI3_LONG.replace("longrope", "su").replace("\"short_factor\"", "\"attention_factor\":1.25,\"short_factor\"")).unwrap();
+        assert!(matches!(s.rope_scaling, RopeScaling::LongRope { mscale, .. } if mscale == 1.25));
+    }
+
+    #[test]
+    fn longrope_frequencies_follow_the_formula_and_pick_the_list_by_window() {
+        let mut s = from_hf_config(PHI3_LONG).unwrap();
+        // window 16384 > 4096: long factors
+        let (inv, ms) = s.rope_freqs();
+        for (i, f) in inv.iter().enumerate() {
+            let want = 1.0 / (s.rope_long[i] * s.rope_theta.powf(2.0 * i as f64 / 16.0));
+            assert!((f - want).abs() <= 1e-12 * want.abs(), "{i}: {f} vs {want}");
+        }
+        assert!(ms > 1.0);
+        // a window within the original one switches to the short list
+        s.context = 4096;
+        let (inv, _) = s.rope_freqs();
+        let want = 1.0 / (s.rope_short[3] * s.rope_theta.powf(6.0 / 16.0));
+        assert!((inv[3] - want).abs() <= 1e-12 * want);
+        // plain RoPE is unchanged for every other scaling
+        let plain = from_hf_config(LLAMA).unwrap();
+        assert_eq!(plain.rope_freqs(), crate::model::rope_inv_freq(plain.rope_theta, plain.rotary_dim as usize, RopeScaling::None));
+    }
+
+    #[test]
+    fn longrope_drives_the_real_forward_pass() {
+        use crate::model::tests::{base_spec, model_of, reference_logits};
+        let toks = [3usize, 7, 1, 12, 5, 9];
+        let run = |sp: Spec| { let m = model_of(sp, false); let mut st = m.new_state(); (m.forward_batch(&mut st, &toks).unwrap(), reference_logits(&m, &toks)) };
+        let plain = run(base_spec(2, 1, false)).0;
+        let long = |short: Vec<f64>, long: Vec<f64>, ctx: u64, ms: f64| {
+            let mut sp = base_spec(2, 1, false);
+            sp.context = ctx;
+            sp.rope_scaling = RopeScaling::LongRope { factor: ctx as f64 / 16.0, original_max: 16.0, mscale: ms };
+            sp.rope_short = short; sp.rope_long = long;
+            sp
+        };
+        // all-ones factors and no attention scaling are exactly plain RoPE, in either window regime
+        for ctx in [16u64, 64] {
+            let (got, want) = run(long(vec![1.0; 4], vec![1.0; 4], ctx, 1.0));
+            for i in 0..got.len() { assert!((got[i] - plain[i]).abs() < 1e-5, "ctx {ctx} logit {i}"); assert!((got[i] - want[i]).abs() < 1e-4); }
+        }
+        // real factors change the answer, the cached forward pass agrees with the cache-free reference,
+        // and the short and long lists are chosen by the window
+        let (a, ra) = run(long(vec![1.0, 1.0, 1.0, 1.0], vec![1.0, 2.0, 4.0, 8.0], 64, 1.1));
+        let (b, _) = run(long(vec![1.0, 1.0, 1.0, 1.0], vec![1.0, 2.0, 4.0, 8.0], 16, 1.1));
+        assert!(a.iter().zip(&ra).all(|(x, y)| (x - y).abs() < 1e-4));
+        assert!(a.iter().zip(&plain).any(|(x, y)| (x - y).abs() > 1e-3), "long factors must matter");
+        assert!(b.iter().zip(&plain).any(|(x, y)| (x - y).abs() > 1e-4), "the attention scale alone must matter");
+        assert!(a.iter().zip(&b).any(|(x, y)| (x - y).abs() > 1e-4));
+    }
+
+    #[test]
+    fn gguf_longrope_takes_its_factors_from_tensors() {
+        struct Src;
+        impl crate::loader::TensorSource for Src {
+            fn read(&self, n: &str) -> Result<Vec<f32>, crate::loader::LoadError> {
+                match n { "rope_factors_short.weight" => Ok(vec![1.0; 4]), "rope_factors_long.weight" => Ok(vec![1.0, 2.0, 3.0, 4.0]), _ => Err(crate::loader::LoadError::Missing(n.into())) }
+            }
+            fn has(&self, n: &str) -> bool { n.starts_with("rope_factors_") }
+        }
+        let mut g = Gguf::parse(&crate::gguf::tests::sample()[..]).unwrap();
+        g.meta.insert("general.architecture".into(), crate::gguf::Value::Str("phi3".into()));
+        for (k, v) in [("phi3.block_count", 2u64), ("phi3.embedding_length", 32), ("phi3.attention.head_count", 4), ("phi3.context_length", 8192),
+            ("phi3.rope.scaling.original_context_length", 2048)] { g.meta.insert(k.into(), crate::gguf::Value::U64(v)); }
+        // without the tensors nothing changes
+        assert_eq!(from_gguf(&g).unwrap().rope_scaling, RopeScaling::None);
+        for n in ["rope_factors_short.weight", "rope_factors_long.weight"] {
+            g.tensors.push(crate::gguf::TensorInfo { name: n.into(), dims: vec![4], dtype: crate::quant::DType::F32, offset: 0 });
+        }
+        let mut s = from_gguf(&g).unwrap();
+        assert!(matches!(s.rope_scaling, RopeScaling::LongRope { factor, original_max, .. } if factor == 4.0 && original_max == 2048.0));
+        assert!(s.needs_rope_factors());
+        load_rope_factors(&mut s, &Src).unwrap();
+        assert!(!s.needs_rope_factors());
+        assert_eq!(s.rope_long, [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!((s.rotary_dim, s.rope_freqs().0.len()), (8, 4));
+    }
+
+    #[test]
+    fn longrope_with_wrong_lists_is_refused_not_guessed() {
+        let bad = PHI3_LONG.replace("[1.0,1.1,1.2,1.3,1.4,1.5,1.6,1.7]", "[1.0,1.1,1.2]").replace("[2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0]", "[2.0,3.0,4.0]");
+        let s = from_hf_config(&bad).unwrap();
+        assert!(matches!(s.support, Support::Planned(w) if w.contains("rotary dimension")));
+        let neg = PHI3_LONG.replace("[2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0]", "[2.0,3.0,4.0,5.0,6.0,7.0,8.0,-9.0]");
+        assert!(matches!(from_hf_config(&neg).unwrap().support, Support::Planned(w) if w.contains("LongRoPE")));
+        let mut s = from_hf_config(PHI3_LONG).unwrap();
+        assert!(s.set_rope_factors(vec![1.0; 3], vec![1.0; 3]).is_err());
+        assert!(s.set_rope_factors(vec![f64::NAN; 8], vec![1.0; 8]).is_err());
     }
 
     #[test]

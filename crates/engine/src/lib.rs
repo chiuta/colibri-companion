@@ -51,3 +51,7 @@ pub mod steer;
 pub mod rag;
 pub mod merge;
 pub mod watermark;
+pub mod vision;
+pub mod audio;
+pub mod hybrid;
+pub mod imageio;

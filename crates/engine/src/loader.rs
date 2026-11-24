@@ -368,6 +368,8 @@ fn found<'a>(src: &dyn TensorSource, names: &'a [String]) -> Option<&'a String> 
 fn req(src: &dyn TensorSource, names: &[String]) -> Result<Vec<f32>, LoadError> {
     match found(src, names) { Some(n) => src.read(n), None => Err(LoadError::Missing(names.first().cloned().unwrap_or_default())) }
 }
+/// [hybrid] Load one named matrix the way the dense layers load theirs (stored type or f32).
+pub(crate) fn load_weight(src: &dyn TensorSource, name: &str, o: LoadOptions) -> Result<Weight, LoadError> { req_w(src, &[name.to_string()], o) }
 /// A big matrix: kept as stored when the options ask for it and the source can, otherwise f32.
 fn req_w(src: &dyn TensorSource, names: &[String], o: LoadOptions) -> Result<Weight, LoadError> {
     let n = found(src, names).ok_or_else(|| LoadError::Missing(names.first().cloned().unwrap_or_default()))?;
@@ -580,6 +582,9 @@ fn build_weights(spec: &Spec, src: &dyn TensorSource, naming: Naming, llama_perm
 /// model: routed experts are either all read now (`moe.ram_budget` unset, or the model fits) or streamed
 /// from disk on demand through a byte-budgeted cache sized by the memory planner.
 pub fn load_model(spec: Spec, src: Arc<dyn WeightFile>, naming: Naming, llama_permuted: bool, opts: LoadOptions, moe: MoeOptions) -> Result<Model, LoadError> {
+    // [arch registry] LongRoPE keeps its factor tables in GGUF tensors: read them now
+    let mut spec = spec;
+    crate::arch::load_rope_factors(&mut spec, &*src).map_err(LoadError::Format)?;
     let mut b = build_weights(&spec, &*src, naming, llama_permuted, opts)?;
     if !b.moe_layers.is_empty() {
         let provider = make_provider(&spec, &src, naming, opts, moe, &b)?;

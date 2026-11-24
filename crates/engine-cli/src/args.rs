@@ -3,7 +3,7 @@
 /// Options that never take a value.
 pub const FLAGS: &[&str] = &[
     "raw", "no-mmap", "quiet", "help", "log-prompts", "no-log", "reproducible", "stream-layers", "calibrate", "json", "no-governor",
-    "governor", "discover", "verbose", "no-lock", "keep-steps", "leaves", "compress", "wire-f16",
+    "governor", "discover", "verbose", "no-lock", "keep-steps", "leaves", "compress", "wire-f16", "lookahead", "self-spec",
 ];
 
 pub struct Args { pub pos: Vec<String>, pub opts: Vec<(String, Option<String>)> }

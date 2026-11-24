@@ -1,0 +1,143 @@
+name: engine-release
+# Builds `corbul` (the command-line front end of the clean-room engine) for every platform and
+# attaches the archives to a DRAFT pre-release. It never publishes: pressing Publish is a person's job.
+#
+# Tags that start with `engine-v` belong to this workflow (for example `engine-v0.1.0-alpha.8`);
+# plain `v…` tags belong to build.yml and the desktop application, so the two never collide.
+# Never run before it was committed: the first run is the first test of this file.
+on:
+  push:
+    tags: ['engine-v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Draft pre-release to create, e.g. engine-v0.1.0-alpha.8 (empty: build only, nothing is created)"
+        required: false
+permissions: { contents: read }
+concurrency:
+  group: engine-release-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  licenses:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with: { command: check licenses bans sources }
+
+  build:
+    name: build (${{ matrix.name }})
+    needs: licenses
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-26.04,     name: linux-x86_64,         targets: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-26.04-arm, name: linux-aarch64,        targets: aarch64-unknown-linux-gnu }
+          # statically linked, runs on any distribution (musl); marked experimental
+          - { os: ubuntu-26.04,     name: linux-x86_64-musl,    targets: x86_64-unknown-linux-musl, musl: true, experimental: true }
+          - { os: ubuntu-26.04-arm, name: linux-aarch64-musl,   targets: aarch64-unknown-linux-musl, musl: true, experimental: true }
+          # one binary for both Apple architectures, built on the Apple Silicon runner
+          - { os: macos-latest,     name: macos-universal,      targets: "aarch64-apple-darwin x86_64-apple-darwin", universal: true }
+          - { os: windows-latest,   name: windows-x86_64,       targets: x86_64-pc-windows-msvc }
+          - { os: windows-11-arm,   name: windows-arm64,        targets: aarch64-pc-windows-msvc, experimental: true }
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental == true }}
+    timeout-minutes: 75
+    defaults:
+      run: { shell: bash }
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust targets
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: rustup target add $TARGETS
+      - uses: Swatinem/rust-cache@v2
+        with: { shared-key: "engine-release-${{ matrix.name }}" }
+      - name: musl tools
+        if: matrix.musl == true
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: "Build corbul (portable, no target-cpu=native; SIMD kernels are chosen at run time)"
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          for t in $TARGETS; do cargo build --release --locked -p colibri-rs-cli --target "$t"; done
+      - name: Binary
+        env:
+          TARGETS: ${{ matrix.targets }}
+          UNIVERSAL: ${{ matrix.universal }}
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          mkdir -p stage
+          if [ "$UNIVERSAL" = "true" ]; then
+            files=""; for t in $TARGETS; do files="$files target/$t/release/corbul"; done
+            lipo -create -output stage/corbul $files
+            lipo -info stage/corbul
+          else
+            cp "target/$TARGETS/release/corbul$ext" "stage/corbul$ext"
+          fi
+      - name: Smoke test (every runner executes the binary it built)
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          ./stage/corbul$ext --version
+          ./stage/corbul$ext capabilities | head -40
+          ./stage/corbul$ext doctor | head -40
+      - name: Package
+        id: pkg
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          d="corbul-$ver-$NAME"
+          mkdir "$d"
+          cp "stage/corbul$ext" "$d"/
+          cp LICENSE NOTICE THIRD_PARTY_LICENSES.md README.md "$d"/
+          cp -r licenses "$d"/
+          mkdir -p "$d/docs" && cp -r docs/engine "$d/docs/engine"
+          cp packaging/PACKAGING-ENGINE.md "$d"/
+          if [ "$RUNNER_OS" = "Windows" ]; then 7z a -tzip "$d.zip" "$d" >/dev/null; echo "file=$d.zip" >> "$GITHUB_OUTPUT"
+          else tar czf "$d.tar.gz" "$d"; echo "file=$d.tar.gz" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/upload-artifact@v5
+        with:
+          name: corbul-${{ matrix.name }}
+          path: ${{ steps.pkg.outputs.file }}
+          retention-days: 14
+          if-no-files-found: error
+
+  release:
+    # Only for engine tags or a manual run with a tag name: attaches every archive to a DRAFT pre-release.
+    if: startsWith(github.ref, 'refs/tags/engine-v') || inputs.release_tag != ''
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions: { contents: write }
+    steps:
+      # only Cargo.toml is needed, to check that the tag names the version inside the program
+      - uses: actions/checkout@v5
+        with: { sparse-checkout: Cargo.toml, sparse-checkout-cone-mode: false }
+      - uses: actions/download-artifact@v5
+        with: { path: dist, merge-multiple: true }
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Draft pre-release (never published by this workflow)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          # values arrive through the environment, never pasted into the script text
+          case "$TAG" in engine-v[0-9]*) ;; *) echo "not an engine version tag: $TAG" >&2; exit 1 ;; esac
+          want=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "engine-v$want" = "$TAG" ] || { echo "Cargo.toml says $want but the tag is $TAG" >&2; exit 1; }
+          gh release create "$TAG" dist/* --repo "$REPO" --target "$SHA" \
+            --draft --prerelease --title "corbul (engine) $TAG" \
+            --notes "Command-line front end (corbul) of the clean-room inference engine, early alpha. Tested only on synthetic models in CI unless the real-model job of engine-ci shows otherwise: read docs/engine/ENGINE.md (the verified and unverified table) before relying on it. The musl and Windows-on-ARM archives are experimental. Verify downloads with SHA256SUMS. Apache-2.0. Does not bundle any model."

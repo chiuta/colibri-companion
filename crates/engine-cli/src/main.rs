@@ -4,6 +4,7 @@ use companion_engine::gguf::Gguf;
 use companion_engine::hub::{self, Downloader, Hub, RepoSpec, Select};
 use companion_engine::hw::{HardwareProfile, Tuning};
 use corbul::args::Args;
+use corbul::outln;
 use corbul::cmds;
 use corbul::load::{self, resolve, LoadCfg, Source};
 use corbul::auth::KeyStore;
@@ -31,6 +32,13 @@ USAGE
   corbul verify-receipt <receipt.json> [--key K] [--model M]              check a generation receipt
   corbul replay   <receipt.json> --model M [--key K]                      re-run it and compare
   corbul lang     detect|normalize TEXT | --file F                        language id; Romanian diacritics, mojibake, quotes
+  corbul search   <model> --prompt T --method beam|best-of-n|vote         spend more computation for a better answer
+  corbul autoquant <folder> --budget 4.5bpw|6g|Q4_K [--recipe F --report F] choose a format per tensor (weight-error estimate)
+  corbul quantize <in> <out.gguf> --type Q4_K_M | --recipe F [--imatrix F] write a quantised GGUF
+  corbul merge    <config.json> [--out F.safetensors] [--dry-run]         merge models (linear, slerp, task, TIES, DARE, slices)
+  corbul steer    train|apply|lens <model> …                              control vectors and a logit lens
+  corbul rag      add LIB FILE… | search LIB --query Q | ask LIB MODEL --question Q   local document library, quote-locked answers
+  corbul watermark detect <model> --key K --text T | --file F             test a text for the mark made by generate --watermark
 
 OPTIONS (generate / chat / serve)
   --max-tokens N     --temperature T   --top-p P   --top-k K   --seed S
@@ -56,8 +64,17 @@ OPTIONS (generate / chat)
   --governor         slow down or drop threads when the machine runs hot or low on memory (--verbose shows why)
   --reproducible     bit-identical results on every machine (slower)
   --receipt FILE     sign what was generated (--receipt-key K, --receipt-topk N, --keep-steps, --leaves)
+  --draft MODEL | --lookahead | --self-spec [--skip-layers auto|4,6,8-11] [--draft-len N]   speculative decoding (generate only):
+                     same greedy answer, same sampling distribution, fewer full passes; text appears at the end;
+                     only --temperature/--top-k/--top-p; not with structured output, receipts, sessions or the mesh
+  --watermark KEY    mark the text statistically (--wm-gamma G --wm-delta D --wm-context N); check with `watermark detect`
+
+State-space and hybrid models (Mamba, RWKV, Jamba-style) run through `generate` and `chat` as plain-text continuation
+(no chat template, no structured output, no serve). See `corbul capabilities`.
 
 SERVE
+  Open http://HOST:PORT/ in a browser for the web interface (also /ui): chat, models and sampling, sources, receipts, hardware.
+  The page is public; every call it makes needs the token. GET /v1/capabilities lists what works.
   --models-dir DIR        serve every model folder / .gguf / *.Modelfile in DIR (loaded on first request)
   --config-dir DIR        where `POST /api/create` keeps Modelfiles (default ~/.config/corbul)
   --alias NAME=MODEL      another name for a model (repeatable)
@@ -83,12 +100,12 @@ fn main() {
 }
 
 fn run(argv: &[String]) -> Result<(), String> {
-    let Some(cmd) = argv.first() else { println!("{HELP}"); return Ok(()) };
+    let Some(cmd) = argv.first() else { outln!("{HELP}"); return Ok(()) };
     let args = Args::parse(&argv[1..]);
-    if args.flag("help") { println!("{HELP}"); return Ok(()); }
+    if args.flag("help") { outln!("{HELP}"); return Ok(()); }
     match cmd.as_str() {
-        "help" | "-h" | "--help" => { println!("{HELP}"); Ok(()) }
-        "version" | "-V" | "--version" => { println!("corbul {}", env!("CARGO_PKG_VERSION")); Ok(()) }
+        "help" | "-h" | "--help" => { outln!("{HELP}"); Ok(()) }
+        "version" | "-V" | "--version" => { outln!("corbul {}", env!("CARGO_PKG_VERSION")); Ok(()) }
         "inspect" => inspect(&args),
         "download" => download(&args),
         "generate" | "run" => cmds::generate(&args),
@@ -101,6 +118,13 @@ fn run(argv: &[String]) -> Result<(), String> {
         "verify-receipt" => cmds::verify_receipt(&args),
         "replay" => cmds::replay(&args),
         "lang" => cmds::lang_cmd(&args),
+        "autoquant" => corbul::quant_cmd::autoquant(&args),
+        "quantize" => corbul::quant_cmd::quantize_cmd(&args),
+        "steer" => corbul::steer_cmd::cmd(&args),
+        "merge" => corbul::merge_cmd::cmd(&args),
+        "rag" => corbul::rag_cmd::cmd(&args),
+        "search" => corbul::search_cmd::cmd(&args),
+        "watermark" => corbul::wm::cmd(&args),
         other => Err(format!("unknown command `{other}` (try `corbul help`)")),
     }
 }
@@ -108,27 +132,30 @@ fn run(argv: &[String]) -> Result<(), String> {
 // ------------------------------------------------------------------------------ inspect
 
 fn describe(spec: &Spec, weights: Option<u64>, budget_from: Option<&Path>) {
-    println!("family        {}", spec.family);
+    outln!("family        {}", spec.family);
     match &spec.support {
-        Support::Standard => println!("support       full"),
-        Support::Moe => println!("support       mixture-of-experts (not wired into the runner yet)"),
-        Support::Planned(why) => println!("support       planned — {why}"),
+        Support::Standard => outln!("support       full"),
+        Support::Moe => outln!("support       mixture-of-experts (not wired into the runner yet)"),
+        Support::Recurrent => outln!("support       recurrent (no attention, no KV cache) — runs through the family loader"),
+        Support::Hybrid => outln!("support       hybrid attention + state-space — runs through the family loader"),
+        Support::Partial(why) => outln!("support       partial — {why}"),
+        Support::Planned(why) => outln!("support       planned — {why}"),
     }
-    println!("layers        {}  hidden {}  heads {} (kv {})  head_dim {}  ffn {}", spec.layers, spec.hidden, spec.heads, spec.kv_heads, spec.head_dim, spec.ffn);
-    println!("vocab         {}  context {}", spec.vocab, spec.context);
-    if spec.experts > 1 { println!("experts       {} (used {}, shared {})", spec.experts, spec.experts_used, spec.shared_experts); }
+    outln!("layers        {}  hidden {}  heads {} (kv {})  head_dim {}  ffn {}", spec.layers, spec.hidden, spec.heads, spec.kv_heads, spec.head_dim, spec.ffn);
+    outln!("vocab         {}  context {}", spec.vocab, spec.context);
+    if spec.experts > 1 { outln!("experts       {} (used {}, shared {})", spec.experts, spec.experts_used, spec.shared_experts); }
     let kv = spec.kv_bytes(spec.context.min(8192));
-    println!("kv cache      {} per {} tokens (f16)", gib(kv), spec.context.min(8192));
+    outln!("kv cache      {} per {} tokens (f16)", gib(kv), spec.context.min(8192));
     if let Some(w) = weights {
-        println!("weights       {}", gib(w));
+        outln!("weights       {}", gib(w));
         let hp = HardwareProfile::detect(budget_from);
         let t = Tuning::recommend(&hp, w, kv);
-        println!("\nthis machine  {} {} · {} threads · RAM {} free of {}", hp.os, hp.arch, hp.usable_threads,
+        outln!("\nthis machine  {} {} · {} threads · RAM {} free of {}", hp.os, hp.arch, hp.usable_threads,
             hp.available_ram.map_or("?".into(), gib), hp.total_ram.map_or("?".into(), gib));
-        println!("isa           {}", if hp.cpu.isa.is_empty() { "baseline".to_string() } else { hp.cpu.isa.join(" ") });
-        println!("advice        threads {} · prefill batch {} · kv {:?} · mmap {} · RAM budget {}", t.threads, t.prefill_batch, t.kv_precision, t.use_mmap, gib(t.ram_budget));
-        for n in t.explain() { println!("              - {n}"); }
-        if w > t.ram_budget { println!("note          the weights are larger than the RAM budget; with mmap they stream from disk and run slowly"); }
+        outln!("isa           {}", if hp.cpu.isa.is_empty() { "baseline".to_string() } else { hp.cpu.isa.join(" ") });
+        outln!("advice        threads {} · prefill batch {} · kv {:?} · mmap {} · RAM budget {}", t.threads, t.prefill_batch, t.kv_precision, t.use_mmap, gib(t.ram_budget));
+        for n in t.explain() { outln!("              - {n}"); }
+        if w > t.ram_budget { outln!("note          the weights are larger than the RAM budget; with mmap they stream from disk and run slowly"); }
     }
 }
 
@@ -142,13 +169,13 @@ fn inspect(args: &Args) -> Result<(), String> {
                 let spec = arch::from_hf_config(&cfg).map_err(|e| e.to_string())?;
                 let bytes: u64 = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.filter_map(Result::ok)
                     .filter(|e| e.path().extension().is_some_and(|x| x == "safetensors")).filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum();
-                println!("{}", dir.display());
+                outln!("{}", dir.display());
                 describe(&spec, Some(bytes), Some(&dir));
             }
             Source::Gguf(f) => {
                 let g = Gguf::parse(std::io::BufReader::new(std::fs::File::open(&f).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())?;
                 let spec = arch::from_gguf(&g).map_err(|e| e.to_string())?;
-                println!("{}", f.display());
+                outln!("{}", f.display());
                 describe(&spec, Some(g.total_tensor_bytes()), f.parent());
             }
         }
@@ -159,12 +186,12 @@ fn inspect(args: &Args) -> Result<(), String> {
     let dl = downloader()?;
     let cancel = AtomicBool::new(false);
     let files = dl.list_files(&spec, &cancel).map_err(|e| e.to_string())?;
-    println!("{}@{}  ({} files, {})", spec.repo, spec.revision, files.len(), gib(hub::estimate_bytes(&files)));
+    outln!("{}@{}  ({} files, {})", spec.repo, spec.revision, files.len(), gib(hub::estimate_bytes(&files)));
     let sel = Select { format: parse_format(args)?, quants: args.get("quant").map(|q| vec![q.to_string()]).unwrap_or_else(|| Select::default().quants) };
     let chosen = hub::select_files(&files, &sel).map_err(|e| e.to_string())?;
-    println!("would download {} files, {}:", chosen.len(), gib(hub::estimate_bytes(&chosen)));
-    for f in chosen.iter().take(40) { println!("  {:>10}  {}", gib(f.size), f.path); }
-    if chosen.len() > 40 { println!("  … and {} more", chosen.len() - 40); }
+    outln!("would download {} files, {}:", chosen.len(), gib(hub::estimate_bytes(&chosen)));
+    for f in chosen.iter().take(40) { outln!("  {:>10}  {}", gib(f.size), f.path); }
+    if chosen.len() > 40 { outln!("  … and {} more", chosen.len() - 40); }
     Ok(())
 }
 
@@ -204,7 +231,7 @@ fn download(args: &Args) -> Result<(), String> {
         }
     }).map_err(|e| e.to_string())?;
     eprintln!("\ndone: {} files in {}", paths.len(), dest.display());
-    println!("{}", dest.display());
+    outln!("{}", dest.display());
     Ok(())
 }
 

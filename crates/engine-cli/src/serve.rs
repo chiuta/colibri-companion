@@ -766,7 +766,7 @@ fn handle(stream: TcpStream, app: &App) {
 
 /// A bounded label for the request counter.
 fn label(path: &str) -> String {
-    const KNOWN: [&str; 31] = ["/", "/health", "/v1/health", "/metrics", "/props", "/slots", "/tokenize", "/detokenize", "/apply-template", "/v1/models", "/v1/chat/completions", "/v1/completions",
+    const KNOWN: [&str; 34] = ["/", "/ui", "/capabilities", "/v1/capabilities", "/health", "/v1/health", "/metrics", "/props", "/slots", "/tokenize", "/detokenize", "/apply-template", "/v1/models", "/v1/chat/completions", "/v1/completions",
         "/v1/messages", "/v1/messages/count_tokens", "/v1/embeddings", "/v1/rerank", "/rerank", "/api/chat", "/api/generate", "/api/tags", "/api/ps", "/api/show", "/api/create", "/api/delete",
         "/api/version", "/api/embed", "/api/embeddings", "/models/load", "/models/unload", "/models", "/v1/quotes/verify"];
     if KNOWN.contains(&path) { path.to_string() } else if path.starts_with("/v1/models/") { "/v1/models/{id}".into() } else { "other".into() }
@@ -794,6 +794,8 @@ fn guard(app: &App, req: &http::Request, path: &str) -> Result<Principal, Denied
             return Err((403, err_body(style, "invalid_request_error", "unexpected Host header for a loopback server"), vec![]));
         }
     }
+    // the page itself is public (it asks for the token); everything it calls is not
+    if crate::webui::is_page(path) && matches!(req.method.as_str(), "GET" | "HEAD") { return Ok(None); }
     if path == "/health" || path == "/v1/health" || (app.cfg.token.is_none() && app.cfg.keys.is_none()) { return Ok(None); }
     let given = req.header("authorization").and_then(|a| a.strip_prefix("Bearer ").or_else(|| a.strip_prefix("bearer "))).or_else(|| req.header("x-api-key")).unwrap_or("").trim();
     if let Some(tok) = &app.cfg.token && ct_eq(given, tok) { return Ok(None); }
@@ -837,7 +839,11 @@ fn route(app: &App, req: &http::Request, path: &str, out: &Out, who: &Principal,
     let fail = |e: ApiError| out.error(style, &e);
     let not_impl = |what: &str| out.json(501, &err_body(style, "not_implemented_error", &format!("{what} are not available: this engine build exposes no hidden-state / pooling output, so embeddings and reranking cannot be computed")));
     match (m, path) {
-        ("GET" | "HEAD", "/") => out.bytes(200, "text/plain; charset=utf-8", format!("corbul is running ({} model(s)). See /v1/models.\n", app.registry.len()).as_bytes(), &[]),
+        ("GET" | "HEAD", "/" | "/ui" | "/ui/") => out.bytes(200, "text/html; charset=utf-8", crate::webui::INDEX.as_bytes(), crate::webui::HEADERS),
+        ("GET", "/capabilities" | "/v1/capabilities") => {
+            let v: Vec<Value> = crate::cmds::CAPABILITIES.iter().map(|(n, s, d)| json!({"feature": n, "supported": *s == "yes", "notes": d})).collect();
+            out.json(200, &json!({"object": "list", "data": v, "models_loaded": app.registry.len()}));
+        }
         ("GET", "/health" | "/v1/health") => {
             if app.draining.load(Ordering::SeqCst) { out.json(503, &json!({"status": "shutting down"})) } else { out.json(200, &json!({"status": "ok"})) }
         }
@@ -1107,6 +1113,29 @@ mod tests {
     fn get(addr: SocketAddr, path: &str, extra: &str) -> Reply { raw(addr, format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n{extra}\r\n").as_bytes()) }
 
     const CHAT: &str = r#"{"model":"x","messages":[{"role":"system","content":"s"},{"role":"user","content":"Hello"}],"max_tokens":6,"temperature":0}"#;
+
+    #[test]
+    fn the_web_page_is_public_but_the_api_is_not() {
+        let (h, d) = start(Some("sesame"), |_| {});
+        for path in ["/", "/ui"] {
+            let r = get(h.addr, path, "");
+            assert_eq!(r.status, 200, "{path}");
+            assert!(r.head.to_ascii_lowercase().contains("text/html"));
+            for hdr in ["content-security-policy", "x-frame-options: deny", "cache-control: no-store", "x-content-type-options: nosniff"] { assert!(r.head.to_ascii_lowercase().contains(hdr), "{path}: {hdr}"); }
+            assert!(r.text().contains("<html"));
+        }
+        assert_eq!(get(h.addr, "/v1/models", "").status, 401);
+        assert_eq!(get(h.addr, "/capabilities", "").status, 401);
+        let c = get(h.addr, "/v1/capabilities", "Authorization: Bearer sesame\r\n");
+        assert_eq!(c.status, 200);
+        assert!(c.json()["data"].as_array().unwrap().len() > 10);
+        // a wrong Host is refused even for the page (DNS-rebinding guard)
+        assert_eq!(raw(h.addr, b"GET /ui HTTP/1.1\r\nHost: evil.example\r\n\r\n").status, 403);
+        assert_eq!(post(h.addr, "/ui", "{}", "").status, 401);
+        assert_eq!(post(h.addr, "/ui", "{}", "Authorization: Bearer sesame\r\n").status, 404);
+        h.stop();
+        std::fs::remove_dir_all(d).unwrap();
+    }
 
     #[test]
     fn health_models_and_unknown_routes() {

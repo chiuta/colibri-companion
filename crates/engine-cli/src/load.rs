@@ -91,6 +91,8 @@ pub fn template_from_config(cfg: &Value) -> Option<String> {
 fn check_support(spec: &Spec) -> Result<(), String> {
     match spec.support {
         Support::Planned(why) => Err(format!("`{}` models need {why}, which the engine does not support yet", spec.family)),
+        Support::Partial(why) => Err(format!("`{}` is only partly supported: {why}", spec.family)),
+        Support::Recurrent | Support::Hybrid => Err(format!("`{}` models do not run through the dense loader; use family::load_any", spec.family)),
         _ => Ok(()),
     }
 }

@@ -316,6 +316,9 @@ pub fn rope_inv_freq(theta: f64, rotary_dim: usize, scaling: RopeScaling) -> (Ve
     let base: Vec<f64> = (0..half).map(|i| crate::simd::rmath::powf64(theta, -(2.0 * i as f64) / rotary_dim as f64)).collect();
     match scaling {
         RopeScaling::None => (base, 1.0),
+        // LongRoPE needs the per-pair factor tables of the Spec: callers use `Spec::rope_freqs`
+        RopeScaling::LongRope { mscale, .. } => (base, mscale),
+        RopeScaling::Nope => (vec![0.0; half], 1.0),
         RopeScaling::Linear { factor } => (base.into_iter().map(|f| f / factor).collect(), 1.0),
         RopeScaling::Llama3 { factor, low_freq_factor, high_freq_factor, original_max } => {
             let (low_w, high_w) = (original_max / low_freq_factor, original_max / high_freq_factor);
@@ -618,7 +621,7 @@ impl Model {
             c("post_attn_norm", &l.post_attn_norm, h, spec.post_norms)?; c("post_ffn_norm", &l.post_ffn_norm, h, spec.post_norms)?;
         }
         if spec.norm == NormKind::Layer { chk_opt("final_norm bias", &w.final_norm_b, h, true)?; }
-        let rope_global = rope_inv_freq(spec.rope_theta, rd, spec.rope_scaling);
+        let rope_global = spec.rope_freqs();
         let rope_local = if spec.rope_theta_local > 0.0 { rope_inv_freq(spec.rope_theta_local, rd, RopeScaling::None) } else { rope_global.clone() };
         Ok(Model { spec, w, rope_global, rope_local, threads: 0, accel: None })
     }
@@ -1361,6 +1364,88 @@ impl Model {
     }
 }
 
+// ===================================================================== BEGIN vision hook
+// Feeding embedding rows (image or audio features) into the prompt at chosen positions. Additive:
+// no existing path calls into this block, so ordinary generation is unchanged in behaviour and speed.
+
+/// What `State::tokens` records at a position that was fed from an embedding row instead of a token.
+/// It never equals a real token id, so prefix reuse (`prefill_cached`) stops in front of such a
+/// position, and replaying a recorded sequence through `forward_batch` fails loudly (`Token`).
+pub const EMBEDDING_POSITION: usize = usize::MAX;
+
+/// One piece of a mixed prompt for [`Model::forward_segments`].
+#[derive(Clone, Copy, Debug)]
+pub enum Segment<'a> {
+    /// Ordinary token ids, embedded through the model's own table.
+    Tokens(&'a [usize]),
+    /// Rows of `hidden` floats placed directly in the residual stream: no table lookup and no
+    /// `embed_scale`, because they are already in the model's hidden space (a vision projector's output).
+    Rows(&'a [f32]),
+}
+
+impl Model {
+    /// Like [`Model::forward_batch`] for a prompt that mixes tokens and embedding rows. Equal, bit for
+    /// bit, to `forward_batch` when every segment is `Tokens`. Returns the logits after the last
+    /// position. Rows must be a non-empty multiple of `hidden` floats, all finite. After an `Err` the
+    /// state may be partly advanced; discard it. Positions fed from rows are recorded in
+    /// [`State::tokens`] as [`EMBEDDING_POSITION`].
+    pub fn forward_segments(&self, st: &mut State, segs: &[Segment<'_>]) -> Result<Vec<f32>, ModelError> {
+        enum Slot<'a> { Tok(usize), Row(&'a [f32]) }
+        let s = &self.spec;
+        let h = s.hidden as usize;
+        let mut total = 0usize;
+        for seg in segs {
+            match seg {
+                Segment::Tokens(t) => {
+                    if let Some(&bad) = t.iter().find(|&&x| x >= s.vocab as usize) { return Err(ModelError::Token(bad)); }
+                    total += t.len();
+                }
+                Segment::Rows(r) => {
+                    if r.is_empty() || !r.len().is_multiple_of(h) { return Err(ModelError::Shape(format!("{} embedding values is not a whole number of {h}-wide rows", r.len()))); }
+                    if r.iter().any(|v| !v.is_finite()) { return Err(ModelError::Shape("an embedding row holds a NaN or infinity".into())); }
+                    total += r.len() / h;
+                }
+            }
+        }
+        if total == 0 { return Err(ModelError::NoTokens); }
+        self.ready(st, total)?;
+        let mut slots: Vec<Slot> = Vec::with_capacity(total);
+        for seg in segs {
+            match seg {
+                Segment::Tokens(t) => slots.extend(t.iter().map(|&x| Slot::Tok(x))),
+                Segment::Rows(r) => slots.extend(r.chunks_exact(h).map(Slot::Row)),
+            }
+        }
+        st.last = None;
+        let chunks = slots.len().div_ceil(PREFILL_CHUNK);
+        let mut last = vec![];
+        for (ci, chunk) in slots.chunks(PREFILL_CHUNK).enumerate() {
+            let (b, pos0) = (chunk.len(), st.pos);
+            let mut x = std::mem::take(&mut st.sc.x);
+            fit(&mut x, b * h);
+            let mut r = Ok(());
+            for (i, slot) in chunk.iter().enumerate() {
+                let row = &mut x[i * h..(i + 1) * h];
+                match slot {
+                    Slot::Row(v) => row.copy_from_slice(v),
+                    Slot::Tok(t) => if let Err(e) = self.embed_rows(&[*t], row, &mut st.sc.rowtmp) { r = Err(e); break; },
+                }
+            }
+            if r.is_ok() { r = self.layers_core(st, 0..self.w.layers.len(), &mut x, b, pos0); }
+            if let Err(e) = r { st.sc.x = x; return Err(e); }
+            st.pos += b;
+            st.tokens.extend(chunk.iter().map(|sl| match sl { Slot::Tok(t) => *t, Slot::Row(_) => EMBEDDING_POSITION }));
+            if ci + 1 == chunks {
+                let out = self.logits_from_hidden_inner(&x[(b - 1) * h..b * h]);
+                st.sc.x = x;
+                last = out?;
+            } else { st.sc.x = x; }
+        }
+        Ok(last)
+    }
+}
+// ======================================================================= END vision hook
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1417,7 +1502,7 @@ pub(crate) mod tests {
         let nm = |x: &[f32], w: &[f32], b: Option<&[f32]>| { let mut o = vec![0.0; x.len()]; norm(s, x, w, b, &mut o); o };
         for (li, l) in m.w.layers.iter().enumerate() {
             let theta_local = s.is_sliding(li) && s.rope_theta_local > 0.0;
-            let tab = if theta_local { rope_inv_freq(s.rope_theta_local, s.rotary_dim as usize, RopeScaling::None) } else { rope_inv_freq(s.rope_theta, s.rotary_dim as usize, s.rope_scaling) };
+            let tab = if theta_local { rope_inv_freq(s.rope_theta_local, s.rotary_dim as usize, RopeScaling::None) } else { s.rope_freqs() };
             let (mut ks, mut vs, mut qs) = (vec![], vec![], vec![]);
             for (p, x) in xs.iter().enumerate() {
                 let xb = nm(x, &l.attn_norm, l.attn_norm_b.as_deref());

@@ -18,7 +18,7 @@
 //! | RWKV-7 | flash-linear-attention | `model.embeddings.weight` | inside the block (`attn_norm`, `ffn_norm`, `pre_norm` on layer 0) | `model.norm.weight/.bias` | `lm_head.weight` |
 //!
 //! Not covered: RWKV-6 in the flash-linear-attention layout, RWKV in GGUF (different tensor names),
-//! Falcon-Mamba's extra GGUF norms, hybrid models (Jamba, Zamba, Bamba) and RWKV-4/5. Weights stay
+//! Falcon-Mamba's extra GGUF norms, Zamba/Zamba2 (shared attention block), mixture-of-experts Jamba and RWKV-4/5; Jamba and Bamba hybrids are in `hybrid`. Weights stay
 //! dense f32 (no quantised path yet).
 use crate::arch;
 use crate::gguf::Gguf;
@@ -428,9 +428,9 @@ pub fn generate<M: LanguageModel + ?Sized>(m: &M, st: &mut M::State, prompt: &[u
 // ---------------------------------------------------------------------------------- AnyModel
 
 #[allow(clippy::large_enum_variant)]
-pub enum AnyModel { Dense(Model), Ssm(SsmModel) }
+pub enum AnyModel { Dense(Model), Ssm(SsmModel), Hybrid(crate::hybrid::HybridModel) }
 #[allow(clippy::large_enum_variant)]
-pub enum AnyState { Dense(State), Ssm(SsmState) }
+pub enum AnyState { Dense(State), Ssm(SsmState), Hybrid(crate::hybrid::HybridState) }
 
 impl AnyModel {
     /// The recurrent family, or `None` for a dense / mixture-of-experts transformer.
@@ -438,23 +438,24 @@ impl AnyModel {
 }
 impl AnyState {
     /// Bytes held by the per-conversation state (the KV cache for transformers).
-    pub fn bytes(&self) -> usize { match self { AnyState::Dense(s) => s.kv_bytes(), AnyState::Ssm(s) => s.bytes() } }
+    pub fn bytes(&self) -> usize { match self { AnyState::Dense(s) => s.kv_bytes(), AnyState::Ssm(s) => s.bytes(), AnyState::Hybrid(s) => s.bytes() } }
 }
 impl LanguageModel for AnyModel {
     type State = AnyState;
     fn new_state(&self) -> AnyState {
-        match self { AnyModel::Dense(m) => AnyState::Dense(m.new_state()), AnyModel::Ssm(m) => AnyState::Ssm(m.new_state()) }
+        match self { AnyModel::Dense(m) => AnyState::Dense(m.new_state()), AnyModel::Ssm(m) => AnyState::Ssm(m.new_state()), AnyModel::Hybrid(m) => AnyState::Hybrid(m.new_state()) }
     }
     fn forward_batch(&self, st: &mut AnyState, tokens: &[usize]) -> Result<Vec<f32>, ModelError> {
         match (self, st) {
             (AnyModel::Dense(m), AnyState::Dense(s)) => m.forward_batch(s, tokens),
             (AnyModel::Ssm(m), AnyState::Ssm(s)) => m.forward_batch(s, tokens),
+            (AnyModel::Hybrid(m), AnyState::Hybrid(s)) => m.forward_batch(s, tokens),
             _ => Err(ModelError::Shape("the state belongs to a different model".into())),
         }
     }
-    fn vocab_size(&self) -> usize { match self { AnyModel::Dense(m) => LanguageModel::vocab_size(m), AnyModel::Ssm(m) => m.vocab } }
-    fn context(&self) -> usize { match self { AnyModel::Dense(m) => LanguageModel::context(m), AnyModel::Ssm(m) => m.cfg.context } }
-    fn position(&self, st: &AnyState) -> usize { match st { AnyState::Dense(s) => s.pos, AnyState::Ssm(s) => s.pos } }
+    fn vocab_size(&self) -> usize { match self { AnyModel::Dense(m) => LanguageModel::vocab_size(m), AnyModel::Ssm(m) => m.vocab, AnyModel::Hybrid(m) => m.vocab() } }
+    fn context(&self) -> usize { match self { AnyModel::Dense(m) => LanguageModel::context(m), AnyModel::Ssm(m) => m.cfg.context, AnyModel::Hybrid(m) => LanguageModel::context(m) } }
+    fn position(&self, st: &AnyState) -> usize { match st { AnyState::Dense(s) => s.pos, AnyState::Ssm(s) => s.pos, AnyState::Hybrid(s) => s.pos } }
 }
 
 /// Work out the configuration of a native (BlinkDL) RWKV-6 or RWKV-7 checkpoint that has no
@@ -503,10 +504,16 @@ fn load_safetensors(st: SafeTensors, config: Option<String>) -> Result<AnyModel,
         let naming = detect_naming(&st).ok_or_else(|| FamilyError::Load("none of the usual embedding tensors is in the file".into()))?;
         return Ok(AnyModel::Ssm(SsmModel::load(cfg, &st, naming)?));
     }
-    if let arch::Support::Planned(why) = arch::classify(&mt)
-        && (why.contains("state-space") || why.contains("recurrent"))
-    {
-        return Err(FamilyError::Unsupported(format!("`{mt}`: {why}")));
+    match arch::classify(&mt) {
+        arch::Support::Hybrid => {
+            let cfg = crate::hybrid::HybridConfig::from_hf_config(&json)?;
+            return Ok(AnyModel::Hybrid(crate::hybrid::HybridModel::load(cfg, &st, LoadOptions::default())?));
+        }
+        arch::Support::Partial(why) => return Err(FamilyError::Unsupported(format!("`{mt}`: {why}"))),
+        arch::Support::Planned(why) if why.contains("state-space") || why.contains("recurrent") || why.contains("hybrid") || why.contains("RWKV") => {
+            return Err(FamilyError::Unsupported(format!("`{mt}`: {why}")));
+        }
+        _ => {}
     }
     let spec = arch::from_hf_config(&json)?;
     Ok(AnyModel::Dense(load_model(spec, Arc::new(st), Naming::Hf, false, LoadOptions::default(), MoeOptions::default())?))

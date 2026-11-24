@@ -134,6 +134,10 @@ pub trait Embedder {
     fn embed(&self, text: &str) -> R<Vec<f32>>;
     /// Embed several texts (override to batch).
     fn embed_batch(&self, texts: &[&str]) -> R<Vec<Vec<f32>>> { texts.iter().map(|t| self.embed(t)).collect() }
+    /// A name for this embedder's behaviour, saved with a [`KnowledgeBase`] and compared when it
+    /// is loaded again: vectors from one embedder are meaningless to another. The default only
+    /// knows the dimension; implementations should add whatever changes their output.
+    fn id(&self) -> String { format!("dim:{}", self.dim()) }
 }
 
 type Tokenize<'a> = Box<dyn Fn(&str) -> Vec<usize> + 'a>;
@@ -199,6 +203,13 @@ impl Embedder for ModelEmbedder<'_> {
         if let Some(k) = self.matryoshka { v.truncate(k.clamp(1, v.len().max(1))); }
         if self.normalize { l2_normalize(&mut v); }
         Ok(v)
+    }
+    /// Weights, pooling, normalisation, truncation and token limit. The weights are fingerprinted,
+    /// which reads them all: call it when saving or loading, not per text. The tokenizer is not
+    /// part of the name (a closure has none), so keep using the one that built the index.
+    fn id(&self) -> String {
+        let fp: String = self.model.fingerprint().iter().take(12).map(|b| format!("{b:02x}")).collect();
+        format!("model:{fp}:{:?}:{}:{:?}:{}:{}", self.pooling, self.normalize, self.matryoshka, self.max_tokens, self.dim())
     }
 }
 
@@ -274,6 +285,7 @@ impl HashEmbedder {
 
 impl Embedder for HashEmbedder {
     fn dim(&self) -> usize { self.dim }
+    fn id(&self) -> String { format!("hash:{}:{:x}:{}", self.dim, self.seed, self.max_words) }
     fn embed(&self, text: &str) -> R<Vec<f32>> {
         let mut words = fold_tokens(text);
         words.truncate(self.max_words);
@@ -1103,6 +1115,86 @@ impl Bm25Index {
     }
 }
 
+const BM_MAGIC: &[u8; 8] = b"CORBM25\x01";
+const MAX_TERM_BYTES: usize = 1024;
+
+impl Bm25Index {
+    /// Ids of the indexed entries, in insertion order.
+    pub fn ids(&self) -> Vec<u64> { self.docs.iter().flatten().map(|d| d.id).collect() }
+
+    /// Serialise (little-endian, SHA-256 of everything before it as the last 32 bytes). Only live
+    /// entries are written; terms are sorted, so equal indexes give equal bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut per: Vec<Vec<(&str, u32)>> = vec![Vec::new(); self.docs.len()];
+        for (t, list) in &self.postings { for &(d, tf) in list { per[d as usize].push((t.as_str(), tf)); } }
+        let mut o = Vec::new();
+        o.extend_from_slice(BM_MAGIC);
+        o.extend_from_slice(&self.prefix.map_or(u32::MAX, |n| n as u32).to_le_bytes());
+        o.push(self.stop as u8);
+        o.extend_from_slice(&(self.live as u32).to_le_bytes());
+        for (i, d) in self.docs.iter().enumerate() {
+            let Some(d) = d else { continue };
+            o.extend_from_slice(&d.id.to_le_bytes());
+            o.extend_from_slice(&d.len.to_le_bytes());
+            per[i].sort();
+            o.extend_from_slice(&(per[i].len() as u32).to_le_bytes());
+            for (t, tf) in &per[i] {
+                o.extend_from_slice(&(t.len() as u32).to_le_bytes());
+                o.extend_from_slice(t.as_bytes());
+                o.extend_from_slice(&tf.to_le_bytes());
+            }
+        }
+        let sum = sha256(&o);
+        o.extend_from_slice(&sum);
+        o
+    }
+
+    /// Parse bytes from [`Bm25Index::to_bytes`]. Every count is checked against the bytes that are
+    /// left and each entry must be self-consistent (its term frequencies add up to its length), so
+    /// a damaged or forged file is an error, never a panic or a huge allocation.
+    pub fn from_bytes(b: &[u8]) -> R<Bm25Index> {
+        let bad = |m: &str| RagError::Format(format!("keyword index: {m}"));
+        if b.len() < BM_MAGIC.len() + 32 { return Err(bad("file too short")); }
+        let (body, sum) = b.split_at(b.len() - 32);
+        if sha256(body) != sum { return Err(bad("checksum mismatch")); }
+        let mut r = Reader { b: body, p: 0 };
+        if r.take(8)? != BM_MAGIC { return Err(bad("not a keyword index")); }
+        let prefix = match r.u32()? { u32::MAX => None, n @ 2..=64 => Some(n as usize), _ => return Err(bad("prefix length out of range")) };
+        let stop = match r.u8()? { 0 => false, 1 => true, _ => return Err(bad("bad stop-word flag")) };
+        let n = r.u32()? as usize;
+        if n.checked_mul(16).is_none_or(|t| t > r.left()) { return Err(bad("entry count larger than the file")); }
+        let mut ix = Bm25Index { prefix, stop, ..Bm25Index::default() };
+        for _ in 0..n {
+            let id = r.u64()?;
+            let len = r.u32()?;
+            let nt = r.u32()? as usize;
+            if nt.checked_mul(9).is_none_or(|t| t > r.left()) { return Err(bad("term count larger than the file")); }
+            if ix.by_id.contains_key(&id) { return Err(bad("duplicate id")); }
+            let idx = ix.docs.len() as u32;
+            let (mut terms, mut total) = (Vec::with_capacity(nt), 0u64);
+            for _ in 0..nt {
+                let tl = r.u32()? as usize;
+                if tl == 0 || tl > MAX_TERM_BYTES { return Err(bad("term length out of range")); }
+                let t = std::str::from_utf8(r.take(tl)?).map_err(|_| bad("term is not UTF-8"))?.to_string();
+                let tf = r.u32()?;
+                if tf == 0 { return Err(bad("zero term frequency")); }
+                total += tf as u64;
+                terms.push((t, tf));
+            }
+            if total != len as u64 { return Err(bad("term frequencies do not add up to the entry length")); }
+            terms.sort();
+            if terms.windows(2).any(|w| w[0].0 == w[1].0) { return Err(bad("a term appears twice in one entry")); }
+            for (t, tf) in &terms { ix.postings.entry(t.clone()).or_default().push((idx, *tf)); }
+            ix.docs.push(Some(DocEntry { id, len, terms: terms.into_iter().map(|x| x.0).collect() }));
+            ix.by_id.insert(id, idx);
+            ix.total_len += len as u64;
+            ix.live += 1;
+        }
+        if r.left() != 0 { return Err(bad("trailing bytes")); }
+        Ok(ix)
+    }
+}
+
 // ───────────────────────────── fusion ─────────────────────────────
 
 /// Reciprocal rank fusion: each list contributes `weight / (k + rank)` per id (rank from 1).
@@ -1165,9 +1257,37 @@ pub struct KnowledgeBase<'a> {
     vectors: Hnsw,
     keywords: Bm25Index,
     chunks: HashMap<u64, ChunkRec>,
-    docs: HashMap<u64, (String, Vec<u64>)>,
+    docs: HashMap<u64, DocRec>,
     next_chunk: u64,
     next_doc: u64,
+}
+
+#[derive(Debug, Clone)]
+struct DocRec {
+    name: String,
+    chunks: Vec<u64>,
+    /// SHA-256 of the text the document was added with (to skip unchanged files on re-ingest).
+    hash: [u8; 32],
+}
+
+/// What [`KnowledgeBase::upsert_document`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Upsert {
+    /// A new name.
+    Added(u64),
+    /// The name existed with different text: the new version is `new`, the old one is gone.
+    Replaced { old: u64, new: u64 },
+    /// The name existed with identical text; nothing changed.
+    Unchanged(u64),
+}
+
+/// A document as listed by [`KnowledgeBase::documents`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocInfo {
+    pub id: u64,
+    pub name: String,
+    pub chunks: usize,
+    pub hash: [u8; 32],
 }
 
 impl<'a> KnowledgeBase<'a> {
@@ -1202,14 +1322,46 @@ impl<'a> KnowledgeBase<'a> {
             self.chunks.insert(id, ChunkRec { doc, byte_start: c.byte_start, byte_end: c.byte_end, text: c.text });
             ids.push(id);
         }
-        self.docs.insert(doc, (name.to_string(), ids));
+        self.docs.insert(doc, DocRec { name: name.to_string(), chunks: ids, hash: sha256(text.as_bytes()) });
         Ok(doc)
     }
 
+    /// Add `text` under `name`, or bring an existing document of that name up to date: unchanged
+    /// text costs nothing, changed text is indexed first and the old version dropped after, so a
+    /// failure leaves the old version in place.
+    pub fn upsert_document(&mut self, name: &str, text: &str, opts: &ChunkOptions) -> R<Upsert> {
+        let old = self.find_document(name);
+        if let Some(o) = old
+            && self.docs.get(&o).is_some_and(|d| d.hash == sha256(text.as_bytes()))
+        {
+            return Ok(Upsert::Unchanged(o));
+        }
+        let new = self.add_document(name, text, opts)?;
+        match old {
+            Some(o) => { self.remove_document(o)?; Ok(Upsert::Replaced { old: o, new }) }
+            None => Ok(Upsert::Added(new)),
+        }
+    }
+
+    /// The newest document with this name.
+    pub fn find_document(&self, name: &str) -> Option<u64> {
+        self.docs.iter().filter(|(_, d)| d.name == name).map(|(&id, _)| id).max()
+    }
+
+    /// Every document, by id.
+    pub fn documents(&self) -> Vec<DocInfo> {
+        let mut v: Vec<DocInfo> = self.docs.iter().map(|(&id, d)| DocInfo { id, name: d.name.clone(), chunks: d.chunks.len(), hash: d.hash }).collect();
+        v.sort_by_key(|d| d.id);
+        v
+    }
+
+    /// Rebuild the vector graph without the entries of removed documents. Returns how many were dropped.
+    pub fn compact(&mut self) -> R<usize> { self.vectors.compact() }
+
     /// Forget a document and all its chunks.
     pub fn remove_document(&mut self, doc: u64) -> R<()> {
-        let (_, ids) = self.docs.remove(&doc).ok_or(RagError::Unknown(doc))?;
-        for id in ids {
+        let rec = self.docs.remove(&doc).ok_or(RagError::Unknown(doc))?;
+        for id in rec.chunks {
             let _ = self.vectors.remove(id);
             self.keywords.remove(id);
             self.chunks.remove(&id);
@@ -1234,7 +1386,7 @@ impl<'a> KnowledgeBase<'a> {
         let mut out = Vec::new();
         for (id, score) in fused.into_iter().take(o.k) {
             let Some(c) = self.chunks.get(&id) else { continue };
-            let name = self.docs.get(&c.doc).map(|d| d.0.clone()).unwrap_or_default();
+            let name = self.docs.get(&c.doc).map(|d| d.name.clone()).unwrap_or_default();
             out.push(Hit {
                 chunk_id: id, doc_id: c.doc, doc_name: name, score,
                 vector_score: vs.get(&id).copied(), keyword_score: ks.get(&id).copied(),
@@ -1247,6 +1399,146 @@ impl<'a> KnowledgeBase<'a> {
     /// Search and package the passages as numbered sources for the quote lock and the prompt.
     pub fn retrieve_cited(&self, query: &str, o: &SearchOptions) -> R<CitedContext> {
         Ok(CitedContext::from_hits(self.search(query, o)?))
+    }
+}
+
+// ───────────────────────────── knowledge-base files ─────────────────────────────
+
+const KB_MAGIC: &[u8; 8] = b"CORKB001";
+const KB_VERSION: u32 = 1;
+const MAX_TEXT: usize = 64 << 20;
+
+fn put_str(o: &mut Vec<u8>, s: &str) {
+    o.extend_from_slice(&(s.len() as u32).to_le_bytes());
+    o.extend_from_slice(s.as_bytes());
+}
+fn put_blob(o: &mut Vec<u8>, b: &[u8]) {
+    o.extend_from_slice(&(b.len() as u64).to_le_bytes());
+    o.extend_from_slice(b);
+}
+impl<'a> Reader<'a> {
+    fn text(&mut self, max: usize) -> R<String> {
+        let n = self.u32()? as usize;
+        if n > max { return Err(RagError::Format("string longer than allowed".into())); }
+        std::str::from_utf8(self.take(n)?).map(str::to_string).map_err(|_| RagError::Format("string is not UTF-8".into()))
+    }
+    fn blob(&mut self) -> R<&'a [u8]> {
+        let n = self.u64()?;
+        if n > self.left() as u64 { return Err(RagError::Format("section longer than the file".into())); }
+        self.take(n as usize)
+    }
+}
+
+impl<'a> KnowledgeBase<'a> {
+    /// The whole knowledge base as bytes: the chunk and document tables, the keyword index and the
+    /// vector graph (each with its own checksum) and a SHA-256 over everything. The embedder is not
+    /// stored, only its [`Embedder::id`]; give the same one to [`KnowledgeBase::from_bytes`].
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        o.extend_from_slice(KB_MAGIC);
+        o.extend_from_slice(&KB_VERSION.to_le_bytes());
+        put_str(&mut o, &self.embedder.id());
+        o.extend_from_slice(&(self.embedder.dim() as u32).to_le_bytes());
+        o.extend_from_slice(&self.next_chunk.to_le_bytes());
+        o.extend_from_slice(&self.next_doc.to_le_bytes());
+        let mut docs: Vec<(&u64, &DocRec)> = self.docs.iter().collect();
+        docs.sort_by_key(|d| *d.0);
+        o.extend_from_slice(&(docs.len() as u32).to_le_bytes());
+        for (id, d) in docs {
+            o.extend_from_slice(&id.to_le_bytes());
+            put_str(&mut o, &d.name);
+            o.extend_from_slice(&d.hash);
+            o.extend_from_slice(&(d.chunks.len() as u32).to_le_bytes());
+            for c in &d.chunks { o.extend_from_slice(&c.to_le_bytes()); }
+        }
+        let mut chunks: Vec<(&u64, &ChunkRec)> = self.chunks.iter().collect();
+        chunks.sort_by_key(|c| *c.0);
+        o.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
+        for (id, c) in chunks {
+            o.extend_from_slice(&id.to_le_bytes());
+            o.extend_from_slice(&c.doc.to_le_bytes());
+            o.extend_from_slice(&(c.byte_start as u64).to_le_bytes());
+            o.extend_from_slice(&(c.byte_end as u64).to_le_bytes());
+            put_str(&mut o, &c.text);
+        }
+        put_blob(&mut o, &self.keywords.to_bytes());
+        put_blob(&mut o, &self.vectors.to_bytes());
+        let sum = sha256(&o);
+        o.extend_from_slice(&sum);
+        o
+    }
+
+    /// Parse bytes from [`KnowledgeBase::to_bytes`]. Nothing in the file is trusted: counts are
+    /// checked against what is left, the tables must agree with each other and with both indexes,
+    /// and `embedder` must be the one that made the vectors (same [`Embedder::id`]).
+    pub fn from_bytes(b: &[u8], embedder: Box<dyn Embedder + 'a>) -> R<KnowledgeBase<'a>> {
+        let bad = |m: &str| RagError::Format(format!("knowledge base: {m}"));
+        if b.len() < KB_MAGIC.len() + 32 { return Err(bad("file too short")); }
+        let (body, sum) = b.split_at(b.len() - 32);
+        if sha256(body) != sum { return Err(bad("checksum mismatch")); }
+        let mut r = Reader { b: body, p: 0 };
+        if r.take(8)? != KB_MAGIC { return Err(bad("not a knowledge base")); }
+        if r.u32()? != KB_VERSION { return Err(bad("unsupported version")); }
+        let saved_id = r.text(4096)?;
+        let dim = r.u32()? as usize;
+        if saved_id != embedder.id() || dim != embedder.dim() {
+            return Err(bad(&format!("it was built with embedder '{saved_id}' (dimension {dim}), not '{}' (dimension {})", embedder.id(), embedder.dim())));
+        }
+        let (next_chunk, next_doc) = (r.u64()?, r.u64()?);
+        let nd = r.u32()? as usize;
+        if nd.checked_mul(8 + 4 + 32 + 4).is_none_or(|t| t > r.left()) { return Err(bad("document count larger than the file")); }
+        let mut docs: HashMap<u64, DocRec> = HashMap::new();
+        for _ in 0..nd {
+            let id = r.u64()?;
+            let name = r.text(1 << 16)?;
+            let hash: [u8; 32] = r.take(32)?.try_into().map_err(|_| bad("short read"))?;
+            let nc = r.u32()? as usize;
+            if nc.checked_mul(8).is_none_or(|t| t > r.left()) { return Err(bad("chunk list larger than the file")); }
+            let mut chunks = Vec::with_capacity(nc);
+            for _ in 0..nc { chunks.push(r.u64()?); }
+            if id >= next_doc || docs.insert(id, DocRec { name, chunks, hash }).is_some() { return Err(bad("bad or duplicate document id")); }
+        }
+        let nc = r.u32()? as usize;
+        if nc.checked_mul(8 * 4 + 4).is_none_or(|t| t > r.left()) { return Err(bad("chunk count larger than the file")); }
+        let mut chunks: HashMap<u64, ChunkRec> = HashMap::new();
+        for _ in 0..nc {
+            let id = r.u64()?;
+            let doc = r.u64()?;
+            let (bs, be) = (r.u64()?, r.u64()?);
+            let text = r.text(MAX_TEXT)?;
+            let (Ok(byte_start), Ok(byte_end)) = (usize::try_from(bs), usize::try_from(be)) else { return Err(bad("offset out of range")) };
+            if byte_end < byte_start || byte_end - byte_start != text.len() { return Err(bad("a chunk's byte range does not match its text")); }
+            if id >= next_chunk || chunks.insert(id, ChunkRec { doc, byte_start, byte_end, text }).is_some() { return Err(bad("bad or duplicate chunk id")); }
+        }
+        // the two tables must describe each other exactly
+        let mut listed = 0usize;
+        for (did, d) in &docs {
+            for c in &d.chunks {
+                match chunks.get(c) { Some(ch) if ch.doc == *did => listed += 1, _ => return Err(bad("a document lists a chunk that is not its own")) }
+            }
+        }
+        if listed != chunks.len() { return Err(bad("a chunk belongs to no document")); }
+        let keywords = Bm25Index::from_bytes(r.blob()?)?;
+        let vectors = Hnsw::from_bytes(r.blob()?)?;
+        if r.left() != 0 { return Err(bad("trailing bytes")); }
+        if vectors.dim() != embedder.dim() { return Err(bad("the vector index has another dimension than the embedder")); }
+        let same = |mut a: Vec<u64>| { a.sort_unstable(); let mut c: Vec<u64> = chunks.keys().copied().collect(); c.sort_unstable(); a == c };
+        if !same(keywords.ids()) { return Err(bad("the keyword index and the chunk table disagree")); }
+        if !same(vectors.ids()) { return Err(bad("the vector index and the chunk table disagree")); }
+        Ok(KnowledgeBase { embedder, vectors, keywords, chunks, docs, next_chunk, next_doc })
+    }
+
+    /// Write to `path` (to a temporary file next to it first, then renamed, so a crash leaves the
+    /// old file intact).
+    pub fn save(&self, path: &Path) -> R<()> {
+        let tmp = path.with_extension("tmp-kb");
+        std::fs::write(&tmp, self.to_bytes()).map_err(|e| RagError::Io(e.to_string()))?;
+        std::fs::rename(&tmp, path).map_err(|e| { let _ = std::fs::remove_file(&tmp); RagError::Io(e.to_string()) })
+    }
+    /// Read a file written by [`KnowledgeBase::save`].
+    pub fn load(path: &Path, embedder: Box<dyn Embedder + 'a>) -> R<KnowledgeBase<'a>> {
+        let b = std::fs::read(path).map_err(|e| RagError::Io(e.to_string()))?;
+        KnowledgeBase::from_bytes(&b, embedder)
     }
 }
 
@@ -1313,6 +1605,624 @@ impl CitedContext {
         let a = bytes.clone().nth(c.start)?;
         let b = bytes.nth(c.end)?;
         Some(DocSpan { doc_id: src.doc_id, doc_name: src.doc_name.clone(), byte_start: src.byte_start + a, byte_end: src.byte_start + b })
+    }
+}
+
+// ───────────────────────────── ingesting files ─────────────────────────────
+//
+// Plain text, Markdown, HTML and simple PDFs. Every extractor is lossy by nature, so what comes
+// back is the *extracted* text and all byte offsets (chunks, hits, citations) refer to that text.
+// For UTF-8 text and Markdown the extracted text is the file itself ([`Extracted::exact_offsets`]).
+
+use std::path::PathBuf;
+
+/// What kind of file a path is, from its extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocKind { Text, Markdown, Html, Pdf }
+
+impl DocKind {
+    pub fn of_path(p: &Path) -> Option<DocKind> {
+        match p.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+            "txt" | "text" | "log" | "rst" | "csv" | "tsv" | "json" | "xml" | "yaml" | "yml" | "toml" => Some(DocKind::Text),
+            "md" | "markdown" => Some(DocKind::Markdown),
+            "html" | "htm" | "xhtml" => Some(DocKind::Html),
+            "pdf" => Some(DocKind::Pdf),
+            _ => None,
+        }
+    }
+}
+
+/// Text taken out of a file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Extracted {
+    pub kind: DocKind,
+    pub text: String,
+    /// `text` is byte for byte the file's content, so offsets in `text` are offsets in the file.
+    pub exact_offsets: bool,
+}
+
+// ── inflate (RFC 1951) ──
+
+struct Bits<'a> { d: &'a [u8], pos: usize, buf: u32, n: u32 }
+impl<'a> Bits<'a> {
+    fn new(d: &'a [u8]) -> Self { Bits { d, pos: 0, buf: 0, n: 0 } }
+    fn need(&mut self, k: u32) -> Option<()> {
+        while self.n < k {
+            let b = *self.d.get(self.pos)?;
+            self.pos += 1;
+            self.buf |= (b as u32) << self.n;
+            self.n += 8;
+        }
+        Some(())
+    }
+    fn bits(&mut self, k: u32) -> Option<u32> {
+        if k == 0 { return Some(0); }
+        self.need(k)?;
+        let v = self.buf & ((1u32 << k) - 1);
+        self.buf >>= k;
+        self.n -= k;
+        Some(v)
+    }
+    fn align(&mut self) { self.buf = 0; self.n = 0; }
+}
+
+struct Huff { count: [u16; 16], symbol: Vec<u16> }
+impl Huff {
+    /// Canonical Huffman table from code lengths; `None` if the lengths over-subscribe the code.
+    fn new(lengths: &[u8]) -> Option<Huff> {
+        let mut count = [0u16; 16];
+        for &l in lengths { count[l as usize] += 1; }
+        let mut left: i32 = 1;
+        for &c in &count[1..] {
+            left <<= 1;
+            left -= c as i32;
+            if left < 0 { return None; }
+        }
+        let mut offs = [0u16; 16];
+        for len in 1..15 { offs[len + 1] = offs[len] + count[len]; }
+        let mut symbol = vec![0u16; lengths.len()];
+        for (sym, &l) in lengths.iter().enumerate() {
+            if l != 0 { symbol[offs[l as usize] as usize] = sym as u16; offs[l as usize] += 1; }
+        }
+        Some(Huff { count, symbol })
+    }
+    fn decode(&self, br: &mut Bits) -> Option<u16> {
+        let (mut code, mut first, mut index) = (0i32, 0i32, 0i32);
+        for len in 1..16 {
+            code |= br.bits(1)? as i32;
+            let c = self.count[len] as i32;
+            if code - c < first { return self.symbol.get((index + (code - first)) as usize).copied(); }
+            index += c;
+            first += c;
+            first <<= 1;
+            code <<= 1;
+        }
+        None
+    }
+}
+
+const LBASE: [u16; 29] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+const LEXT: [u8; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+const DBASE: [u16; 30] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+const DEXT: [u8; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+
+/// Decompress a raw DEFLATE stream. Output beyond `limit` bytes is an error (a few bytes can
+/// expand a thousandfold), as is anything malformed or cut short.
+pub fn inflate(data: &[u8], limit: usize) -> R<Vec<u8>> {
+    let bad = |m: &str| RagError::Format(format!("deflate: {m}"));
+    let mut br = Bits::new(data);
+    let mut out: Vec<u8> = Vec::new();
+    loop {
+        let last = br.bits(1).ok_or_else(|| bad("truncated"))?;
+        let kind = br.bits(2).ok_or_else(|| bad("truncated"))?;
+        match kind {
+            0 => {
+                br.align();
+                let p = br.pos;
+                let hdr = data.get(p..p + 4).ok_or_else(|| bad("truncated"))?;
+                let (len, nlen) = (u16::from_le_bytes([hdr[0], hdr[1]]), u16::from_le_bytes([hdr[2], hdr[3]]));
+                if len != !nlen { return Err(bad("stored block length check failed")); }
+                let body = data.get(p + 4..p + 4 + len as usize).ok_or_else(|| bad("truncated"))?;
+                if out.len() + body.len() > limit { return Err(bad("output larger than the limit")); }
+                out.extend_from_slice(body);
+                br.pos = p + 4 + len as usize;
+            }
+            1 | 2 => {
+                let (lit, dist) = if kind == 1 {
+                    let mut l = [0u8; 288];
+                    for (i, x) in l.iter_mut().enumerate() { *x = match i { 0..=143 => 8, 144..=255 => 9, 256..=279 => 7, _ => 8 }; }
+                    (Huff::new(&l).ok_or_else(|| bad("fixed table"))?, Huff::new(&[5u8; 30]).ok_or_else(|| bad("fixed table"))?)
+                } else {
+                    let hlit = br.bits(5).ok_or_else(|| bad("truncated"))? as usize + 257;
+                    let hdist = br.bits(5).ok_or_else(|| bad("truncated"))? as usize + 1;
+                    let hclen = br.bits(4).ok_or_else(|| bad("truncated"))? as usize + 4;
+                    if hlit > 286 || hdist > 30 { return Err(bad("too many codes")); }
+                    const ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+                    let mut cl = [0u8; 19];
+                    for &o in ORDER.iter().take(hclen) { cl[o] = br.bits(3).ok_or_else(|| bad("truncated"))? as u8; }
+                    let clh = Huff::new(&cl).ok_or_else(|| bad("code-length table"))?;
+                    let mut lens = vec![0u8; hlit + hdist];
+                    let mut i = 0;
+                    while i < hlit + hdist {
+                        let sym = clh.decode(&mut br).ok_or_else(|| bad("bad code-length symbol"))?;
+                        if sym < 16 { lens[i] = sym as u8; i += 1; continue; }
+                        let (val, rep) = match sym {
+                            16 => { if i == 0 { return Err(bad("repeat with nothing before")); } (lens[i - 1], 3 + br.bits(2).ok_or_else(|| bad("truncated"))? as usize) }
+                            17 => (0, 3 + br.bits(3).ok_or_else(|| bad("truncated"))? as usize),
+                            _ => (0, 11 + br.bits(7).ok_or_else(|| bad("truncated"))? as usize),
+                        };
+                        if i + rep > hlit + hdist { return Err(bad("code lengths overrun")); }
+                        lens[i..i + rep].fill(val);
+                        i += rep;
+                    }
+                    if lens[256] == 0 { return Err(bad("no end-of-block code")); }
+                    (Huff::new(&lens[..hlit]).ok_or_else(|| bad("literal table"))?, Huff::new(&lens[hlit..]).ok_or_else(|| bad("distance table"))?)
+                };
+                loop {
+                    let sym = lit.decode(&mut br).ok_or_else(|| bad("bad literal symbol"))? as usize;
+                    match sym {
+                        0..=255 => {
+                            if out.len() >= limit { return Err(bad("output larger than the limit")); }
+                            out.push(sym as u8);
+                        }
+                        256 => break,
+                        257..=285 => {
+                            let i = sym - 257;
+                            let len = LBASE[i] as usize + br.bits(LEXT[i] as u32).ok_or_else(|| bad("truncated"))? as usize;
+                            let ds = dist.decode(&mut br).ok_or_else(|| bad("bad distance symbol"))? as usize;
+                            if ds >= 30 { return Err(bad("distance symbol out of range")); }
+                            let d = DBASE[ds] as usize + br.bits(DEXT[ds] as u32).ok_or_else(|| bad("truncated"))? as usize;
+                            if d > out.len() { return Err(bad("distance reaches before the start")); }
+                            if out.len() + len > limit { return Err(bad("output larger than the limit")); }
+                            for _ in 0..len { out.push(out[out.len() - d]); }
+                        }
+                        _ => return Err(bad("bad literal symbol")),
+                    }
+                }
+            }
+            _ => return Err(bad("reserved block type")),
+        }
+        if last == 1 { break; }
+    }
+    Ok(out)
+}
+
+/// Decompress a zlib stream (RFC 1950): two header bytes, DEFLATE data; the checksum is ignored.
+pub fn zlib_decompress(data: &[u8], limit: usize) -> R<Vec<u8>> {
+    if data.len() < 2 || data[0] & 0x0f != 8 || !(((data[0] as u16) << 8) | data[1] as u16).is_multiple_of(31) || data[1] & 0x20 != 0 {
+        return Err(RagError::Format("zlib: bad header".into()));
+    }
+    inflate(&data[2..], limit)
+}
+
+// ── HTML ──
+
+fn entity(name: &str) -> Option<char> {
+    if let Some(num) = name.strip_prefix('#') {
+        let v = match num.strip_prefix(['x', 'X']) { Some(h) => u32::from_str_radix(h, 16).ok()?, None => num.parse().ok()? };
+        return char::from_u32(v).filter(|c| *c != '\0');
+    }
+    Some(match name {
+        "amp" => '&', "lt" => '<', "gt" => '>', "quot" => '"', "apos" => '\'', "nbsp" => ' ', "copy" => '©', "reg" => '®',
+        "ndash" => '–', "mdash" => '—', "hellip" => '…', "laquo" => '«', "raquo" => '»', "lsquo" => '‘', "rsquo" => '’',
+        "ldquo" => '“', "rdquo" => '”', "bdquo" => '„', "euro" => '€', "deg" => '°',
+        "abreve" => 'ă', "Abreve" => 'Ă', "acirc" => 'â', "Acirc" => 'Â', "icirc" => 'î', "Icirc" => 'Î',
+        "scedil" => 'ş', "Scedil" => 'Ş', "tcedil" => 'ţ', "Tcedil" => 'Ţ',
+        "aacute" => 'á', "eacute" => 'é', "iacute" => 'í', "oacute" => 'ó', "uacute" => 'ú', "agrave" => 'à', "egrave" => 'è',
+        "auml" => 'ä', "ouml" => 'ö', "uuml" => 'ü', "szlig" => 'ß', "ccedil" => 'ç', "ntilde" => 'ñ',
+        _ => return None,
+    })
+}
+
+/// Visible text of an HTML page: tags, comments, `<script>` and `<style>` are dropped, entities
+/// decoded, block elements become line breaks, runs of blanks collapse to one space and runs of
+/// blank lines to one.
+pub fn html_to_text(html: &str) -> String {
+    const BLOCK: &[&str] = &["p", "div", "br", "li", "ul", "ol", "tr", "table", "section", "article", "header", "footer", "nav", "main",
+        "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "hr", "dd", "dt", "dl", "figure", "figcaption", "form", "title"];
+    let b = html.as_bytes();
+    let mut out = String::with_capacity(html.len() / 2);
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'<' => {
+                if html[i..].starts_with("<!--") {
+                    i = html[i + 4..].find("-->").map_or(b.len(), |e| i + 4 + e + 3);
+                    continue;
+                }
+                // tag name
+                let mut j = i + 1;
+                let closing = b.get(j) == Some(&b'/');
+                if closing { j += 1; }
+                let ns = j;
+                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b':') { j += 1; }
+                if j == ns { // a lone '<' that is text
+                    out.push('<');
+                    i += 1;
+                    continue;
+                }
+                let name = html[ns..j].to_ascii_lowercase();
+                // to the closing '>', skipping quoted attribute values
+                let mut q = 0u8;
+                while j < b.len() {
+                    match (q, b[j]) {
+                        (0, b'"') | (0, b'\'') => q = b[j],
+                        (x, c) if x != 0 && c == x => q = 0,
+                        (0, b'>') => break,
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                i = (j + 1).min(b.len());
+                if !closing && (name == "script" || name == "style") {
+                    let lower_rest = html[i..].to_ascii_lowercase();
+                    let end = format!("</{name}");
+                    i = lower_rest.find(&end).map_or(b.len(), |e| {
+                        let from = i + e;
+                        html[from..].find('>').map_or(b.len(), |g| from + g + 1)
+                    });
+                } else if BLOCK.contains(&name.as_str()) {
+                    out.push('\n');
+                }
+            }
+            b'&' => {
+                let rest = &html[i + 1..];
+                let end = rest.char_indices().take(12).find(|&(_, c)| c == ';').map(|(k, _)| k);
+                match end.and_then(|e| entity(&rest[..e]).map(|c| (c, e))) {
+                    Some((c, e)) => { out.push(c); i += e + 2; }
+                    None => { out.push('&'); i += 1; }
+                }
+            }
+            _ => {
+                let ch = html[i..].chars().next().unwrap_or('\u{fffd}');
+                out.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+    }
+    collapse_blanks(&out)
+}
+
+/// Spaces and tabs → one space, lines trimmed, at most one blank line in a row.
+fn collapse_blanks(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut blank_run = 0;
+    for line in s.lines() {
+        let mut l = String::with_capacity(line.len());
+        let mut sp = false;
+        for c in line.chars() {
+            if c.is_whitespace() || c == '\u{a0}' { sp = true; continue; }
+            if sp && !l.is_empty() { l.push(' '); }
+            sp = false;
+            l.push(c);
+        }
+        if l.is_empty() {
+            blank_run += 1;
+            if blank_run == 1 && !out.is_empty() { out.push('\n'); }
+        } else {
+            blank_run = 0;
+            out.push_str(&l);
+            out.push('\n');
+        }
+    }
+    out.truncate(out.trim_end().len());
+    out
+}
+
+// ── PDF ──
+
+fn find(h: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if needle.is_empty() || from >= h.len() { return None; }
+    h[from..].windows(needle.len()).position(|w| w == needle).map(|p| p + from)
+}
+fn rfind(h: &[u8], needle: &[u8], before: usize) -> Option<usize> {
+    let end = before.min(h.len());
+    if needle.len() > end { return None; }
+    h[..end].windows(needle.len()).rposition(|w| w == needle)
+}
+
+fn winansi(b: u8) -> char {
+    const HI: [char; 32] = ['€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}',
+        '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ'];
+    if (0x80..0xa0).contains(&b) { HI[(b - 0x80) as usize] } else { b as char }
+}
+
+/// Text from one decompressed content stream: the strings shown by `Tj`, `TJ`, `'` and `"` inside
+/// `BT … ET`, with a line break at line-moving operators and a space at big kerning gaps.
+fn pdf_content_text(c: &[u8]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    let mut in_text = false;
+    let mut pending: Vec<u8> = Vec::new(); // strings seen since the last operator
+    let mut array_depth = 0;
+    let mut last_num: Option<f64> = None;
+    let mut nums: Vec<f64> = Vec::new();
+    let flush = |pending: &mut Vec<u8>, out: &mut String| {
+        out.extend(pending.iter().map(|&b| winansi(b)));
+        pending.clear();
+    };
+    while i < c.len() {
+        let ch = c[i];
+        match ch {
+            b'(' => {
+                let mut depth = 1;
+                i += 1;
+                let mut s = Vec::new();
+                while i < c.len() && depth > 0 {
+                    match c[i] {
+                        b'\\' => {
+                            i += 1;
+                            match c.get(i) {
+                                Some(b'n') => s.push(b'\n'), Some(b'r') => s.push(b'\r'), Some(b't') => s.push(b'\t'),
+                                Some(b'b') => s.push(8), Some(b'f') => s.push(12),
+                                Some(d @ b'0'..=b'7') => {
+                                    let mut v = (d - b'0') as u32;
+                                    for _ in 0..2 {
+                                        match c.get(i + 1) { Some(e @ b'0'..=b'7') => { v = v * 8 + (e - b'0') as u32; i += 1; } _ => break }
+                                    }
+                                    s.push((v & 0xff) as u8);
+                                }
+                                Some(b'\r') => { if c.get(i + 1) == Some(&b'\n') { i += 1; } }
+                                Some(b'\n') => {}
+                                Some(&o) => s.push(o),
+                                None => {}
+                            }
+                        }
+                        b'(' => { depth += 1; s.push(b'('); }
+                        b')' => { depth -= 1; if depth > 0 { s.push(b')'); } }
+                        o => s.push(o),
+                    }
+                    i += 1;
+                }
+                if in_text { pending.extend(s); }
+                continue;
+            }
+            b'<' if c.get(i + 1) != Some(&b'<') => {
+                let end = c[i..].iter().position(|&x| x == b'>').map_or(c.len(), |e| i + e);
+                let hex: Vec<u8> = c[i + 1..end].iter().filter(|x| x.is_ascii_hexdigit()).copied().collect();
+                let bytes: Vec<u8> = hex.chunks(2).map(|p| {
+                    let v = |x: u8| (x as char).to_digit(16).unwrap_or(0) as u8;
+                    v(p[0]) << 4 | p.get(1).map_or(0, |&q| v(q))
+                }).collect();
+                if in_text { pending.extend(bytes); }
+                i = (end + 1).min(c.len());
+                continue;
+            }
+            b'[' => { array_depth += 1; i += 1; continue; }
+            b']' => { array_depth = (array_depth - 1).max(0); i += 1; continue; }
+            b'%' => { while i < c.len() && c[i] != b'\n' && c[i] != b'\r' { i += 1; } continue; }
+            b'-' | b'+' | b'.' | b'0'..=b'9' => {
+                let st = i;
+                i += 1;
+                while i < c.len() && (c[i].is_ascii_digit() || c[i] == b'.') { i += 1; }
+                let v = std::str::from_utf8(&c[st..i]).ok().and_then(|t| t.parse::<f64>().ok());
+                if let Some(v) = v {
+                    if array_depth > 0 && in_text && v < -200.0 && !pending.is_empty() { pending.push(b' '); }
+                    last_num = Some(v);
+                    nums.push(v);
+                    if nums.len() > 8 { nums.remove(0); }
+                }
+                continue;
+            }
+            b if b.is_ascii_alphabetic() || b == b'\'' || b == b'"' || b == b'*' => {
+                let st = i;
+                i += 1;
+                while i < c.len() && (c[i].is_ascii_alphanumeric() || c[i] == b'*' || c[i] == b'\'' || c[i] == b'"') { i += 1; }
+                match &c[st..i] {
+                    b"BT" => { in_text = true; pending.clear(); }
+                    b"ET" => { flush(&mut pending, &mut out); in_text = false; out.push('\n'); }
+                    b"Tj" | b"TJ" if in_text => flush(&mut pending, &mut out),
+                    b"'" | b"\"" if in_text => { out.push('\n'); flush(&mut pending, &mut out); }
+                    b"T*" if in_text => { flush(&mut pending, &mut out); out.push('\n'); }
+                    b"Td" | b"TD" if in_text => {
+                        flush(&mut pending, &mut out);
+                        // a vertical move is a new line, a horizontal one a gap
+                        if last_num.is_some_and(|y| y.abs() > 0.5) { out.push('\n'); } else if !out.ends_with([' ', '\n']) { out.push(' '); }
+                    }
+                    b"Tm" if in_text => { flush(&mut pending, &mut out); if !out.ends_with(['\n', ' ']) { out.push('\n'); } }
+                    _ => {}
+                }
+                last_num = None;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Text from a PDF whose pages use ordinary single-byte fonts. It reads the content streams
+/// (stored or Flate-compressed) and the text operators in them; it does **not** read font
+/// encodings, so a PDF that maps its own glyph numbers to letters (almost every Romanian one with
+/// ș/ț, and anything made from scans) gives garbage or nothing, and that is reported as an error
+/// instead of returning noise. Encrypted files are refused.
+pub fn pdf_to_text(bytes: &[u8]) -> R<String> {
+    const LIMIT: usize = 64 << 20;
+    let bad = |m: &str| RagError::Format(format!("pdf: {m}"));
+    if !bytes.starts_with(b"%PDF-") { return Err(bad("missing %PDF header")); }
+    if find(bytes, b"/Encrypt", 0).is_some() { return Err(bad("the file is encrypted")); }
+    let (mut pages, mut total_out) = (Vec::<String>::new(), 0usize);
+    let mut pos = 0;
+    let mut seen = 0usize;
+    while let Some(kw) = find(bytes, b"stream", pos) {
+        pos = kw + 6;
+        if kw >= 3 && &bytes[kw - 3..kw] == b"end" { continue; } // "endstream"
+        seen += 1;
+        if seen > 200_000 { return Err(bad("too many streams")); }
+        let mut d = kw + 6;
+        if bytes.get(d) == Some(&b'\r') { d += 1; }
+        if bytes.get(d) == Some(&b'\n') { d += 1; }
+        let Some(end) = find(bytes, b"endstream", d) else { break };
+        pos = end + 9;
+        let dict_start = rfind(bytes, b"obj", kw).unwrap_or(0);
+        let dict = &bytes[dict_start..kw];
+        let has = |k: &[u8]| find(dict, k, 0).is_some();
+        if has(b"/Image") || has(b"/FontFile") || has(b"/Length1") || has(b"/XRef") || has(b"/ObjStm") || has(b"/ICCBased") || has(b"/Metadata") { continue; }
+        let raw = &bytes[d..end];
+        let data = if has(b"/FlateDecode") || has(b"/Fl ") {
+            if has(b"/DecodeParms") && has(b"/Predictor") { continue; }
+            match zlib_decompress(raw, LIMIT.saturating_sub(total_out)) { Ok(v) => v, Err(_) => continue }
+        } else if has(b"/Filter") { continue } else { raw.to_vec() };
+        total_out += data.len();
+        if !data.windows(2).any(|w| w == b"BT") { continue; }
+        let t = pdf_content_text(&data);
+        if t.trim().is_empty() { continue; }
+        pages.push(t);
+    }
+    let text = collapse_blanks(&pages.join("\n\n"));
+    let letters = text.chars().filter(|c| c.is_alphabetic()).count();
+    let junk = text.chars().filter(|c| c.is_control() && !c.is_whitespace() || *c == '\u{fffd}').count();
+    if letters < 10 || junk * 10 > text.chars().count().max(1) {
+        return Err(bad("no readable text (scanned pages, or fonts with their own encoding, which this reader does not decode)"));
+    }
+    Ok(text)
+}
+
+// ── files and directories ──
+
+/// Read `bytes` as the kind of file `kind` names.
+pub fn extract_text(kind: DocKind, bytes: &[u8]) -> R<Extracted> {
+    let decode = |bytes: &[u8]| -> (String, bool) {
+        if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+            let be = bytes[0] == 0xfe;
+            let units: Vec<u16> = bytes[2..].chunks_exact(2).map(|p| if be { u16::from_be_bytes([p[0], p[1]]) } else { u16::from_le_bytes([p[0], p[1]]) }).collect();
+            return (String::from_utf16_lossy(&units), false);
+        }
+        let (body, bom) = match bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) { Some(r) => (r, true), None => (bytes, false) };
+        match std::str::from_utf8(body) {
+            Ok(s) => (s.to_string(), !bom),
+            // not UTF-8: read it as Windows-1252, the usual legacy encoding of Western text
+            Err(_) => (body.iter().map(|&b| winansi(b)).collect(), false),
+        }
+    };
+    match kind {
+        DocKind::Text | DocKind::Markdown => { let (text, exact) = decode(bytes); Ok(Extracted { kind, text, exact_offsets: exact }) }
+        DocKind::Html => Ok(Extracted { kind, text: html_to_text(&decode(bytes).0), exact_offsets: false }),
+        DocKind::Pdf => Ok(Extracted { kind, text: pdf_to_text(bytes)?, exact_offsets: false }),
+    }
+}
+
+/// Limits and choices for walking a directory.
+#[derive(Debug, Clone)]
+pub struct IngestOptions {
+    pub chunk: ChunkOptions,
+    /// Larger files are skipped.
+    pub max_file_bytes: u64,
+    pub max_files: usize,
+    pub max_depth: usize,
+    /// Only these kinds are read.
+    pub kinds: Vec<DocKind>,
+    /// Remove documents that came from this directory earlier but whose file is gone.
+    pub prune: bool,
+}
+impl Default for IngestOptions {
+    fn default() -> Self {
+        IngestOptions { chunk: ChunkOptions::default(), max_file_bytes: 32 << 20, max_files: 50_000, max_depth: 16,
+            kinds: vec![DocKind::Text, DocKind::Markdown, DocKind::Html, DocKind::Pdf], prune: false }
+    }
+}
+
+/// One file's text and its chunks (offsets into `text`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileChunks {
+    pub path: PathBuf,
+    /// Path relative to the directory, with `/` separators: the document name.
+    pub name: String,
+    pub kind: DocKind,
+    pub text: String,
+    pub exact_offsets: bool,
+    pub chunks: Vec<Chunk>,
+}
+
+/// Why a file was left out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skipped { pub name: String, pub reason: String }
+
+fn walk(dir: &Path, rel: &str, depth: usize, o: &IngestOptions, files: &mut Vec<(PathBuf, String, DocKind)>, skipped: &mut Vec<Skipped>) -> R<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(|e| RagError::Io(format!("{}: {e}", dir.display())))?
+        .filter_map(Result::ok).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let rel_name = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+        let Ok(meta) = std::fs::symlink_metadata(e.path()) else { skipped.push(Skipped { name: rel_name, reason: "cannot read its metadata".into() }); continue };
+        if meta.file_type().is_symlink() { skipped.push(Skipped { name: rel_name, reason: "symbolic link (not followed)".into() }); continue; }
+        if meta.is_dir() {
+            if name.starts_with('.') { continue; }
+            if depth >= o.max_depth { skipped.push(Skipped { name: rel_name, reason: "directory nested deeper than the limit".into() }); continue; }
+            walk(&e.path(), &rel_name, depth + 1, o, files, skipped)?;
+        } else if meta.is_file() {
+            let Some(kind) = DocKind::of_path(&e.path()).filter(|k| o.kinds.contains(k)) else { continue };
+            if meta.len() > o.max_file_bytes { skipped.push(Skipped { name: rel_name, reason: format!("{} bytes is over the {}-byte limit", meta.len(), o.max_file_bytes) }); continue; }
+            if files.len() >= o.max_files { skipped.push(Skipped { name: rel_name, reason: "file count limit reached".into() }); continue; }
+            files.push((e.path(), rel_name, kind));
+        }
+    }
+    Ok(())
+}
+
+/// Read every supported file under `dir` (no symbolic links, no hidden directories, size, count and
+/// depth limits) and cut it into chunks, without embedding anything. Files come in name order.
+pub fn chunk_dir(dir: &Path, o: &IngestOptions) -> R<(Vec<FileChunks>, Vec<Skipped>)> {
+    let (mut files, mut skipped) = (Vec::new(), Vec::new());
+    walk(dir, "", 0, o, &mut files, &mut skipped)?;
+    let mut out = Vec::new();
+    for (path, name, kind) in files {
+        let bytes = match std::fs::read(&path) { Ok(b) => b, Err(e) => { skipped.push(Skipped { name, reason: e.to_string() }); continue } };
+        match extract_text(kind, &bytes) {
+            Ok(x) => {
+                let chunks = chunk_text(&x.text, &o.chunk);
+                if chunks.is_empty() { skipped.push(Skipped { name, reason: "no text".into() }); continue; }
+                out.push(FileChunks { path, name, kind, text: x.text, exact_offsets: x.exact_offsets, chunks });
+            }
+            Err(e) => skipped.push(Skipped { name, reason: e.to_string() }),
+        }
+    }
+    Ok((out, skipped))
+}
+
+/// What [`KnowledgeBase::ingest_dir`] did, by document name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IngestReport {
+    pub added: Vec<String>,
+    pub replaced: Vec<String>,
+    pub unchanged: Vec<String>,
+    pub removed: Vec<String>,
+    pub skipped: Vec<Skipped>,
+    /// Files that could be read but failed while being embedded (the old version, if any, stays).
+    pub failed: Vec<Skipped>,
+}
+
+impl KnowledgeBase<'_> {
+    /// Bring the knowledge base in line with a directory: new files are added, changed files
+    /// replaced (identical ones cost nothing), and with `prune` documents whose file has vanished
+    /// are removed. Document names are the files' relative paths, so another directory with the
+    /// same relative names would overwrite them: use one knowledge base per tree.
+    pub fn ingest_dir(&mut self, dir: &Path, o: &IngestOptions) -> R<IngestReport> {
+        let (files, skipped) = chunk_dir(dir, o)?;
+        let mut rep = IngestReport { skipped, ..IngestReport::default() };
+        let mut present = std::collections::HashSet::new();
+        for f in &files {
+            present.insert(f.name.clone());
+            match self.upsert_document(&f.name, &f.text, &o.chunk) {
+                Ok(Upsert::Added(_)) => rep.added.push(f.name.clone()),
+                Ok(Upsert::Replaced { .. }) => rep.replaced.push(f.name.clone()),
+                Ok(Upsert::Unchanged(_)) => rep.unchanged.push(f.name.clone()),
+                Err(e) => rep.failed.push(Skipped { name: f.name.clone(), reason: e.to_string() }),
+            }
+        }
+        if o.prune {
+            // only names that were skipped for a reason other than "gone" are kept
+            let kept: std::collections::HashSet<&str> = rep.skipped.iter().map(|s| s.name.as_str()).collect();
+            for d in self.documents() {
+                if !present.contains(&d.name) && !kept.contains(d.name.as_str()) {
+                    self.remove_document(d.id)?;
+                    rep.removed.push(d.name);
+                }
+            }
+        }
+        Ok(rep)
     }
 }
 
@@ -1830,5 +2740,365 @@ mod tests {
         assert!(rep.all_verbatim());
         let forged = answer.replace("doarme", "zboară");
         assert!(!crate::quotelock::verify_text(&forged, &ctx.texts()).unwrap().all_verbatim());
+    }
+}
+
+#[cfg(test)]
+mod persist_tests {
+    use super::*;
+
+    fn kb<'a>() -> KnowledgeBase<'a> { KnowledgeBase::new(Box::new(HashEmbedder::new(64, 7)), HnswParams::default()).unwrap() }
+    fn small() -> ChunkOptions { ChunkOptions { max_chars: 120, overlap_chars: 20 } }
+    fn unhex(s: &str) -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() }
+    fn so() -> SearchOptions { SearchOptions::default() }
+
+    fn filled<'a>() -> KnowledgeBase<'a> {
+        let mut k = kb();
+        k.add_document("cats.txt", "Cats are small carnivorous mammals. They purr when content and hunt mice at night. A cat sleeps most of the day.", &small()).unwrap();
+        k.add_document("rust.md", "Rust is a systems language with ownership and borrowing. The borrow checker prevents data races at compile time.", &small()).unwrap();
+        k.add_document("sea.txt", "The ocean covers most of the planet. Tides follow the moon and whales sing across the deep water.", &small()).unwrap();
+        k
+    }
+
+    fn names(k: &KnowledgeBase, q: &str) -> Vec<(u64, String)> {
+        k.search(q, &so()).unwrap().iter().map(|h| (h.chunk_id, h.text.clone())).collect()
+    }
+
+    #[test]
+    fn bm25_round_trip_gives_identical_rankings() {
+        let mut b = Bm25Index::new();
+        for (i, t) in ["red apple pie", "green apple tart", "blue ocean wave", "apple apple apple"].iter().enumerate() { b.add(i as u64 + 1, t); }
+        b.remove(2);
+        let r = Bm25Index::from_bytes(&b.to_bytes()).unwrap();
+        assert_eq!(r.len(), b.len());
+        for q in ["apple", "ocean", "pie tart", "nothing"] { assert_eq!(r.search(q, 5), b.search(q, 5), "{q}"); }
+        assert_eq!(r.ids(), b.ids());
+    }
+
+    #[test]
+    fn bm25_bytes_reject_truncation_and_flips() {
+        let mut b = Bm25Index::new();
+        for i in 0..20u64 { b.add(i + 1, &format!("word{} common text number {}", i, i % 3)); }
+        let bytes = b.to_bytes();
+        for n in 0..bytes.len() { let _ = Bm25Index::from_bytes(&bytes[..n]); }
+        assert!(Bm25Index::from_bytes(&bytes[..bytes.len() - 1]).is_err());
+        let mut s = 5u64;
+        for _ in 0..300 {
+            let mut m = bytes.clone();
+            let p = (splitmix(&mut s) as usize) % m.len();
+            m[p] ^= 1 << (splitmix(&mut s) % 8);
+            let _ = Bm25Index::from_bytes(&m); // never panics
+        }
+    }
+
+    #[test]
+    fn knowledge_base_round_trip_searches_the_same() {
+        let k = filled();
+        let bytes = k.to_bytes();
+        let r = KnowledgeBase::from_bytes(&bytes, Box::new(HashEmbedder::new(64, 7))).unwrap();
+        assert_eq!((r.doc_count(), r.chunk_count()), (k.doc_count(), k.chunk_count()));
+        for q in ["cat purr", "borrow checker", "whales ocean", "moon tides", "zzz unknown"] { assert_eq!(names(&r, q), names(&k, q), "{q}"); }
+        assert_eq!(r.documents(), k.documents());
+        assert_eq!(r.to_bytes(), bytes, "saving what was loaded gives the same bytes");
+    }
+
+    #[test]
+    fn save_and_load_through_a_file_and_continue_adding() {
+        let dir = std::env::temp_dir().join(format!("corbul-kb-{}-{}", std::process::id(), line!()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("kb.bin");
+        let k = filled();
+        k.save(&path).unwrap();
+        let mut r = KnowledgeBase::load(&path, Box::new(HashEmbedder::new(64, 7))).unwrap();
+        let id = r.add_document("new.txt", "Volcanoes erupt molten rock and ash.", &small()).unwrap();
+        let hit = r.search("volcano ash", &so()).unwrap();
+        assert!(hit.iter().any(|h| h.doc_id == id));
+        assert!(r.save(&path).is_ok(), "overwriting works");
+        assert!(KnowledgeBase::load(&path, Box::new(HashEmbedder::new(64, 7))).unwrap().doc_count() == 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn removed_documents_stay_removed_after_a_round_trip_and_compaction() {
+        let mut k = filled();
+        let rust = k.find_document("rust.md").unwrap();
+        k.remove_document(rust).unwrap();
+        assert!(k.vector_index().tombstones() > 0);
+        let r = KnowledgeBase::from_bytes(&k.to_bytes(), Box::new(HashEmbedder::new(64, 7))).unwrap();
+        assert_eq!(names(&r, "borrow checker ownership"), names(&k, "borrow checker ownership"));
+        assert!(r.search("borrow checker ownership", &so()).unwrap().iter().all(|h| h.doc_id != rust));
+        let mut c = r;
+        assert!(c.compact().unwrap() > 0);
+        assert_eq!(c.vector_index().tombstones(), 0);
+        let c2 = KnowledgeBase::from_bytes(&c.to_bytes(), Box::new(HashEmbedder::new(64, 7))).unwrap();
+        assert_eq!(c2.chunk_count(), k.chunk_count());
+    }
+
+    #[test]
+    fn a_different_embedder_is_refused() {
+        let bytes = filled().to_bytes();
+        assert!(KnowledgeBase::from_bytes(&bytes, Box::new(HashEmbedder::new(64, 8))).is_err(), "other seed");
+        assert!(KnowledgeBase::from_bytes(&bytes, Box::new(HashEmbedder::new(32, 7))).is_err(), "other dimension");
+    }
+
+    #[test]
+    fn every_truncation_is_an_error_and_nothing_panics() {
+        let bytes = filled().to_bytes();
+        for n in 0..bytes.len() {
+            assert!(KnowledgeBase::from_bytes(&bytes[..n], Box::new(HashEmbedder::new(64, 7))).is_err(), "prefix {n}");
+        }
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(KnowledgeBase::from_bytes(&longer, Box::new(HashEmbedder::new(64, 7))).is_err(), "trailing byte");
+    }
+
+    #[test]
+    fn every_bit_flip_is_caught_by_the_checksum() {
+        let bytes = filled().to_bytes();
+        let mut s = 99u64;
+        for i in 0..bytes.len().min(400) {
+            let mut m = bytes.clone();
+            let p = if i < 200 { i } else { (splitmix(&mut s) as usize) % m.len() };
+            m[p] ^= 1 << (splitmix(&mut s) % 8);
+            assert!(KnowledgeBase::from_bytes(&m, Box::new(HashEmbedder::new(64, 7))).is_err(), "flip at {p}");
+        }
+    }
+
+    #[test]
+    fn forged_files_with_a_valid_checksum_never_panic() {
+        let bytes = filled().to_bytes();
+        let body = bytes.len() - 32;
+        let mut s = 1234u64;
+        let (mut accepted, mut rejected) = (0, 0);
+        for round in 0..1500 {
+            let mut m = bytes[..body].to_vec();
+            for _ in 0..1 + round % 3 {
+                let p = (splitmix(&mut s) as usize) % m.len();
+                m[p] = match splitmix(&mut s) % 3 { 0 => 0xff, 1 => 0, _ => splitmix(&mut s) as u8 };
+            }
+            let sum = sha256(&m);
+            m.extend_from_slice(&sum);
+            match KnowledgeBase::from_bytes(&m, Box::new(HashEmbedder::new(64, 7))) {
+                Ok(k) => { accepted += 1; let _ = k.search("cats", &so()); let _ = k.to_bytes(); }
+                Err(_) => rejected += 1,
+            }
+        }
+        assert!(rejected > 0, "some forgeries must be refused (accepted {accepted})");
+    }
+
+    #[test]
+    fn huge_declared_counts_do_not_allocate() {
+        // magic + version + garbage lengths, with a correct checksum
+        let mut m = b"CORKB001".to_vec();
+        m.extend_from_slice(&[0xff; 64]);
+        let sum = sha256(&m);
+        m.extend_from_slice(&sum);
+        assert!(KnowledgeBase::from_bytes(&m, Box::new(HashEmbedder::new(64, 7))).is_err());
+        assert!(KnowledgeBase::from_bytes(b"", Box::new(HashEmbedder::new(64, 7))).is_err());
+        assert!(KnowledgeBase::from_bytes(b"not a knowledge base at all, just text........", Box::new(HashEmbedder::new(64, 7))).is_err());
+    }
+
+    #[test]
+    fn upsert_adds_replaces_and_skips_unchanged() {
+        let mut k = kb();
+        let a = match k.upsert_document("a.txt", "alpha beta gamma delta", &small()).unwrap() { Upsert::Added(i) => i, o => panic!("{o:?}") };
+        assert_eq!(k.upsert_document("a.txt", "alpha beta gamma delta", &small()).unwrap(), Upsert::Unchanged(a));
+        let before = k.chunk_count();
+        let new = match k.upsert_document("a.txt", "completely different words here", &small()).unwrap() {
+            Upsert::Replaced { old, new } => { assert_eq!(old, a); new }
+            o => panic!("{o:?}"),
+        };
+        assert_eq!(k.doc_count(), 1);
+        assert_eq!(k.find_document("a.txt"), Some(new));
+        assert!(before >= 1 && k.chunk_count() >= 1);
+        assert!(k.search("alpha gamma", &so()).unwrap().iter().all(|h| h.doc_id == new));
+    }
+
+    // ── inflate ──
+
+    #[test]
+    fn inflate_stored_fixed_and_dynamic_blocks() {
+        let fixed = unhex("78dacb48cdc9c957c84022cbf38b725200687d08c5");
+        assert_eq!(zlib_decompress(&fixed, 1 << 20).unwrap(), b"hello hello hello world");
+        let stored = unhex("7801011100eeff73746f72656420626c6f636b20746578743c3406a2");
+        assert_eq!(zlib_decompress(&stored, 1 << 20).unwrap(), b"stored block text");
+        let dynamic = unhex("78dabdcb471682300045d1ad7c37e0b197a1bd2b0ad65980000142203461f5661338beef191e4592332b80294519c1115ff8398f5388824a648a435257b085db86d158ac11d5f10aa68a4a967970584115d53442c8925c48f5ba690bb3f962b95a6fb6bbfde1783a5fb4eb4d37ee8fe7ebfdf997a0d3edf507c3d1783205312d9b3aaec7fc20e49188d110fe004bd38a4f");
+        let out = zlib_decompress(&dynamic, 1 << 20).unwrap();
+        assert_eq!(out.len(), 422);
+        assert!(out.starts_with(b"The quick brown fox jumps over the lazy dog. The quick"));
+        assert!(out.ends_with(b"abcdefghijklmnop "));
+    }
+
+    #[test]
+    fn inflate_limit_truncation_and_garbage() {
+        let fixed = unhex("78dacb48cdc9c957c84022cbf38b725200687d08c5");
+        assert!(zlib_decompress(&fixed, 5).is_err(), "limit");
+        for n in 0..fixed.len() - 1 { assert!(zlib_decompress(&fixed[..n], 1 << 20).is_err() || n >= fixed.len() - 5, "prefix {n}"); }
+        let dynamic = unhex("78dabdcb471682300045d1ad7c37e0b197a1bd2b0ad65980000142203461f5661338beef191e4592332b80294519c1115ff8398f5388824a648a435257b085db86d158ac11d5f10aa68a4a967970584115d53442c8925c48f5ba690bb3f962b95a6fb6bbfde1783a5fb4eb4d37ee8fe7ebfdf997a0d3edf507c3d1783205312d9b3aaec7fc20e49188d110fe004bd38a4f");
+        let mut s = 3u64;
+        for _ in 0..2000 {
+            let mut m = dynamic.clone();
+            for _ in 0..1 + (splitmix(&mut s) % 4) { let p = 2 + (splitmix(&mut s) as usize) % (m.len() - 2); m[p] = splitmix(&mut s) as u8; }
+            let _ = zlib_decompress(&m, 4096); // no panic, bounded output
+        }
+        // reserved block type, and a stored block whose length check fails
+        assert!(inflate(&[0b0000_0111], 100).is_err());
+        assert!(inflate(&[0x01, 0x05, 0x00, 0x00, 0x00, 1, 2, 3, 4, 5], 100).is_err());
+        // a bomb: 1 MiB of zeros from a few hundred bytes must stop at the limit
+        let mut bomb = vec![0x78u8, 0x9c, 0x63, 0x60, 0x18, 0x05, 0xa3, 0x60, 0x14, 0x0c, 0x77, 0x00, 0x00];
+        bomb.extend_from_slice(&[0, 0, 0, 0]);
+        assert!(zlib_decompress(&bomb, 1000).map(|v| v.len() <= 1000).unwrap_or(true));
+    }
+
+    // ── html ──
+
+    #[test]
+    fn html_is_stripped_and_entities_decoded() {
+        let h = "<html><head><title>T</title><style>p{color:red}</style><script>var a='<p>no</p>';</script></head>\
+                 <body><!-- hidden --><h1>Titlu &amp; Co</h1><p>Prima   linie<br>a doua &lt;b&gt; &#x21; &#33; &abreve;&scedil;&tcedil;</p>\
+                 <a href=\"x>y\">link</a> 5 < 6 &unknown; &</body></html>";
+        let t = html_to_text(h);
+        assert!(!t.contains("color") && !t.contains("var a") && !t.contains("hidden") && !t.contains("<p>"), "{t}");
+        assert!(t.contains("Titlu & Co"), "{t}");
+        assert!(t.contains("Prima linie\na doua <b> ! ! ăşţ"), "{t}");
+        assert!(t.contains("link 5 < 6 &unknown; &"), "{t}");
+        assert!(!t.contains("\n\n\n") && !t.starts_with('\n'));
+        // hostile: unterminated everything
+        for s in ["<", "<a", "<a href=\"", "<!--", "<script>", "&#99999999999;", "&#xD800;", "<p>\u{1F600}</p", "<style>x"] { let _ = html_to_text(s); }
+    }
+
+    // ── pdf ──
+
+    fn pdf_with(objs: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let mut p = b"%PDF-1.4\n".to_vec();
+        for (i, (dict, body)) in objs.iter().enumerate() {
+            p.extend_from_slice(format!("{} 0 obj\n<< {} /Length {} >>\nstream\n", i + 1, dict, body.len()).as_bytes());
+            p.extend_from_slice(body);
+            p.extend_from_slice(b"\nendstream\nendobj\n");
+        }
+        p.extend_from_slice(b"trailer\n<< /Size 9 >>\n%%EOF\n");
+        p
+    }
+
+    #[test]
+    fn plain_and_flate_pdf_text() {
+        let plain = pdf_with(&[("", b"BT /F1 12 Tf 72 700 Td (Hello \\(PDF\\) world \\351t\\351) Tj 0 -14 Td [(Second ) -300 (line)] TJ ET".to_vec())]);
+        let t = pdf_to_text(&plain).unwrap();
+        assert!(t.contains("Hello (PDF) world été"), "{t}");
+        assert!(t.contains("Second line"), "{t}");
+        assert!(t.find("Hello").unwrap() < t.find("Second").unwrap());
+        let flate = pdf_with(&[("/Filter /FlateDecode", unhex("789c15cab10a83301440d15fb96332485fb4e02e1aa453c1b7950ea58960792620057fbff4cc67502e31105a74a56fe945d0849bb359e53e46ce7a58623dea4eb4d7377bf483d084eb3f3edc92dfb5243c4d2782b3ad64ff446f4cfa03871c1926"))]);
+        let t = pdf_to_text(&flate).unwrap();
+        assert!(t.contains("Hello PDF world from Flate"), "{t}");
+    }
+
+    #[test]
+    fn pdf_refusals_are_honest() {
+        assert!(pdf_to_text(b"not a pdf").is_err());
+        let enc = pdf_with(&[("/Encrypt 1", b"BT (Secret text that is long enough) Tj ET".to_vec())]);
+        assert!(pdf_to_text(&enc).unwrap_err().to_string().contains("encrypted"));
+        let none = pdf_with(&[("/Subtype /Image", vec![1, 2, 3])]);
+        assert!(pdf_to_text(&none).is_err());
+        for n in 0..60 { let _ = pdf_to_text(&enc[..n.min(enc.len())]); }
+    }
+
+    // ── files ──
+
+    #[test]
+    fn text_decoding_and_offsets() {
+        let x = extract_text(DocKind::Text, "plain ăș text".as_bytes()).unwrap();
+        assert!(x.exact_offsets && x.text == "plain ăș text");
+        let bom = extract_text(DocKind::Markdown, b"\xef\xbb\xbfhi").unwrap();
+        assert!(!bom.exact_offsets && bom.text == "hi");
+        let l1 = extract_text(DocKind::Text, b"caf\xe9").unwrap();
+        assert!(!l1.exact_offsets && l1.text == "café");
+        let u16 = extract_text(DocKind::Text, &[0xff, 0xfe, b'h', 0, b'i', 0]).unwrap();
+        assert_eq!(u16.text, "hi");
+        let h = extract_text(DocKind::Html, b"<p>x</p>").unwrap();
+        assert!(!h.exact_offsets);
+        assert_eq!(DocKind::of_path(Path::new("a/B.MD")), Some(DocKind::Markdown));
+        assert_eq!(DocKind::of_path(Path::new("a.exe")), None);
+    }
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("corbul-ing-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn directory_ingestion_offsets_limits_and_reingest() {
+        let d = tmp("dir");
+        std::fs::create_dir_all(d.join("sub/deeper")).unwrap();
+        std::fs::create_dir_all(d.join(".hidden")).unwrap();
+        let a = "Alpha document about lighthouses and the sea. ".repeat(12);
+        std::fs::write(d.join("a.txt"), &a).unwrap();
+        std::fs::write(d.join("sub/b.md"), "# Titlu\n\nRust ownership and borrowing explained in detail for beginners.").unwrap();
+        std::fs::write(d.join("sub/deeper/c.html"), "<html><body><p>Volcanoes erupt ash and molten rock.</p><script>x()</script></body></html>").unwrap();
+        std::fs::write(d.join("sub/p.pdf"), pdf_with(&[("", b"BT (A simple pdf page about astronomy and telescopes) Tj ET".to_vec())])).unwrap();
+        std::fs::write(d.join("sub/scan.pdf"), pdf_with(&[("/Subtype /Image", vec![0; 10])])).unwrap();
+        std::fs::write(d.join(".hidden/h.txt"), "hidden file text that is ignored").unwrap();
+        std::fs::write(d.join("note.bin"), "ignored extension").unwrap();
+        std::fs::write(d.join("empty.txt"), "").unwrap();
+        std::fs::write(d.join("big.txt"), vec![b'x'; 5000]).unwrap();
+        #[cfg(unix)] std::os::unix::fs::symlink(d.join("a.txt"), d.join("link.txt")).unwrap();
+
+        let mut o = IngestOptions { chunk: small(), max_file_bytes: 4000, ..IngestOptions::default() };
+        let (files, skipped) = chunk_dir(&d, &o).unwrap();
+        let got: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(got, ["a.txt", "sub/b.md", "sub/deeper/c.html", "sub/p.pdf"], "{skipped:?}");
+        for n in ["big.txt", "empty.txt", "sub/scan.pdf"] { assert!(skipped.iter().any(|s| s.name == n), "{n} in {skipped:?}"); }
+        #[cfg(unix)] assert!(skipped.iter().any(|s| s.name == "link.txt" && s.reason.contains("symbolic")));
+        // offsets are real offsets into the text the chunks came from (and into the file for exact ones)
+        for f in &files {
+            for c in &f.chunks { assert_eq!(&f.text[c.byte_start..c.byte_end], c.text, "{}", f.name); }
+        }
+        let fa = &files[0];
+        assert!(fa.exact_offsets);
+        let raw = std::fs::read_to_string(d.join("a.txt")).unwrap();
+        for c in &fa.chunks { assert_eq!(&raw[c.byte_start..c.byte_end], c.text); }
+        assert!(!files[2].text.contains("x()"));
+
+        // ingest, search, re-ingest unchanged, change one file, delete one, prune
+        let mut k = kb();
+        let r1 = k.ingest_dir(&d, &o).unwrap();
+        assert_eq!(r1.added.len(), 4);
+        assert!(k.search("volcanoes ash", &so()).unwrap().iter().any(|h| h.text.contains("Volcanoes")));
+        let r2 = k.ingest_dir(&d, &o).unwrap();
+        assert_eq!((r2.added.len(), r2.replaced.len(), r2.unchanged.len()), (0, 0, 4));
+        std::fs::write(d.join("sub/b.md"), "# Titlu\n\nCompletely rewritten text on gardening and compost.").unwrap();
+        std::fs::remove_file(d.join("sub/p.pdf")).unwrap();
+        let r3 = k.ingest_dir(&d, &o).unwrap();
+        assert_eq!(r3.replaced, ["sub/b.md"]);
+        assert!(r3.removed.is_empty(), "no prune requested");
+        o.prune = true;
+        let r4 = k.ingest_dir(&d, &o).unwrap();
+        assert_eq!(r4.removed, ["sub/p.pdf"]);
+        assert_eq!(k.doc_count(), 3);
+        assert!(k.search("gardening compost", &so()).unwrap().iter().any(|h| h.text.contains("gardening")));
+        assert!(k.search("telescopes astronomy", &so()).unwrap().iter().all(|h| !h.text.contains("astronomy")));
+        // and it survives a save / load
+        let back = KnowledgeBase::from_bytes(&k.to_bytes(), Box::new(HashEmbedder::new(64, 7))).unwrap();
+        assert_eq!(back.documents(), k.documents());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn depth_and_count_limits_and_missing_directory() {
+        let d = tmp("lim");
+        std::fs::create_dir_all(d.join("l1/l2")).unwrap();
+        for p in ["x.txt", "l1/y.txt", "l1/l2/z.txt"] { std::fs::write(d.join(p), format!("some words in {p} to be indexed")).unwrap(); }
+        let mut o = IngestOptions { max_depth: 1, ..IngestOptions::default() };
+        let (f, s) = chunk_dir(&d, &o).unwrap();
+        assert_eq!(f.len(), 2);
+        assert!(s.iter().any(|x| x.name == "l1/l2"));
+        o.max_depth = 16;
+        o.max_files = 1;
+        let (f, s) = chunk_dir(&d, &o).unwrap();
+        assert_eq!(f.len(), 1);
+        assert!(s.iter().any(|x| x.reason.contains("limit")));
+        assert!(chunk_dir(&d.join("nope"), &o).is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

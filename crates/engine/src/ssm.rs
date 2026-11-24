@@ -201,7 +201,7 @@ pub struct Mamba1Weights {
     pub x_proj: Vec<f32>, pub dt_proj: Vec<f32>, pub dt_bias: Vec<f32>, pub a_log: Vec<f32>, pub d: Vec<f32>,
     pub out_proj: Vec<f32>, pub out_bias: Option<Vec<f32>>,
 }
-pub struct Mamba1 { cfg: Mamba1Config, w: Mamba1Weights }
+pub struct Mamba1 { cfg: Mamba1Config, w: Mamba1Weights, bcdt_w: Option<[Vec<f32>; 3]> }
 
 /// Per-sequence state: the conv window and the SSM hidden state.
 #[derive(Clone, Debug, PartialEq)]
@@ -223,7 +223,17 @@ impl Mamba1 {
         expect("D", w.d.len(), di)?;
         expect("out_proj", w.out_proj.len(), dm * di)?;
         opt_len("out_proj bias", &w.out_bias, dm)?;
-        Ok(Mamba1 { cfg, w })
+        Ok(Mamba1 { cfg, w, bcdt_w: None })
+    }
+    /// Give the RMS norms on Δ, B and C (enabled by `bcdt_rms_eps`) learned scales, as Jamba does
+    /// (`dt_layernorm`, `b_layernorm`, `c_layernorm`); Falcon-Mamba's norms have none.
+    pub fn with_bcdt_weights(mut self, dt: Vec<f32>, b: Vec<f32>, c: Vec<f32>) -> Result<Self, SsmError> {
+        if self.cfg.bcdt_rms_eps.is_none() { return Err(SsmError::Config("the norms on dt, B and C are not enabled (bcdt_rms_eps)".into())); }
+        expect("dt norm weight", dt.len(), self.cfg.dt_rank)?;
+        expect("B norm weight", b.len(), self.cfg.d_state)?;
+        expect("C norm weight", c.len(), self.cfg.d_state)?;
+        self.bcdt_w = Some([dt, b, c]);
+        Ok(self)
     }
     pub fn load(cfg: Mamba1Config, src: &dyn TensorSource, n: &MambaNames, a_negated: bool) -> Result<Self, SsmError> {
         let w = Mamba1Weights {
@@ -255,6 +265,11 @@ impl Mamba1 {
             let (b, cc) = bc.split_at_mut(n);
             rms_inplace(b, eps);
             rms_inplace(cc, eps);
+            if let Some([wd, wb, wc]) = &self.bcdt_w {
+                dt_part.iter_mut().zip(wd).for_each(|(v, w)| *v *= w);
+                b.iter_mut().zip(wb).for_each(|(v, w)| *v *= w);
+                cc.iter_mut().zip(wc).for_each(|(v, w)| *v *= w);
+            }
         }
         let (dt_r, bc) = dbc.split_at(r);
         let (b, cc) = bc.split_at(n);
