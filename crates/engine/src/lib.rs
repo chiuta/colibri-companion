@@ -11,6 +11,7 @@
 //! * [`plan`]  – decides what stays in RAM and what is streamed from disk, for any RAM budget.
 pub mod arch;
 pub mod gguf;
+pub mod loader;
 pub mod model;
 pub mod ops;
 pub mod plan;
