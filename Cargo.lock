@@ -705,6 +705,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "companion-engine"
+version = "0.1.0-alpha.7"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "companion-scholar"
 version = "0.1.0-alpha.7"
 dependencies = [

@@ -1,0 +1,10 @@
+[package]
+name = "companion-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Clean-room groundwork for a universal local inference engine: GGUF reader, quantisation kernels, architecture registry and memory planner"
+
+[dependencies]
+serde_json.workspace = true
