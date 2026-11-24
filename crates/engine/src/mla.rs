@@ -19,10 +19,16 @@ use crate::ops::{matvec, rmsnorm, softmax};
 use serde_json::Value;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum MlaError { Config(String), Shape(String), Input(String) }
+pub enum MlaError {
+    Config(String),
+    Shape(String),
+    Input(String),
+}
 impl std::fmt::Display for MlaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self { MlaError::Config(s) | MlaError::Shape(s) | MlaError::Input(s) => write!(f, "{s}") }
+        match self {
+            MlaError::Config(s) | MlaError::Shape(s) | MlaError::Input(s) => write!(f, "{s}"),
+        }
     }
 }
 impl std::error::Error for MlaError {}
@@ -54,24 +60,58 @@ pub struct MlaConfig {
 
 const MAX_DIM: usize = 1 << 20;
 
-fn ugte(c: &Value, k: &str) -> Option<usize> { c.get(k).and_then(Value::as_u64).map(|v| v as usize) }
-fn fget(c: &Value, k: &str) -> Option<f64> { c.get(k).and_then(Value::as_f64) }
+fn ugte(c: &Value, k: &str) -> Option<usize> {
+    c.get(k).and_then(Value::as_u64).map(|v| v as usize)
+}
+fn fget(c: &Value, k: &str) -> Option<f64> {
+    c.get(k).and_then(Value::as_f64)
+}
 
 impl MlaConfig {
     pub fn validate(&self) -> Result<(), MlaError> {
         let bad = |m: &str| Err(MlaError::Config(m.to_string()));
-        for (n, v) in [("hidden", self.hidden), ("heads", self.heads), ("kv_lora_rank", self.kv_lora_rank),
-            ("qk_nope_head_dim", self.qk_nope), ("qk_rope_head_dim", self.qk_rope), ("v_head_dim", self.v_head)] {
-            if v == 0 || v > MAX_DIM { return Err(MlaError::Config(format!("{n} = {v} is out of range"))); }
+        for (n, v) in [
+            ("hidden", self.hidden),
+            ("heads", self.heads),
+            ("kv_lora_rank", self.kv_lora_rank),
+            ("qk_nope_head_dim", self.qk_nope),
+            ("qk_rope_head_dim", self.qk_rope),
+            ("v_head_dim", self.v_head),
+        ] {
+            if v == 0 || v > MAX_DIM {
+                return Err(MlaError::Config(format!("{n} = {v} is out of range")));
+            }
         }
-        if self.q_lora_rank.is_some_and(|r| r == 0 || r > MAX_DIM) { return bad("q_lora_rank is out of range"); }
-        if !self.qk_rope.is_multiple_of(2) { return bad("qk_rope_head_dim must be even"); }
-        if self.heads.checked_mul(self.qk_nope + self.qk_rope + self.v_head).is_none_or(|n| n > (1 << 28)) { return bad("head dimensions are implausibly large"); }
-        if !(self.rope_theta.is_finite() && self.rope_theta > 1.0) { return bad("rope_theta must be > 1"); }
-        if !(self.eps.is_finite() && self.eps >= 0.0) { return bad("rms_norm_eps is invalid"); }
+        if self.q_lora_rank.is_some_and(|r| r == 0 || r > MAX_DIM) {
+            return bad("q_lora_rank is out of range");
+        }
+        if !self.qk_rope.is_multiple_of(2) {
+            return bad("qk_rope_head_dim must be even");
+        }
+        if self
+            .heads
+            .checked_mul(self.qk_nope + self.qk_rope + self.v_head)
+            .is_none_or(|n| n > (1 << 28))
+        {
+            return bad("head dimensions are implausibly large");
+        }
+        if !(self.rope_theta.is_finite() && self.rope_theta > 1.0) {
+            return bad("rope_theta must be > 1");
+        }
+        if !(self.eps.is_finite() && self.eps >= 0.0) {
+            return bad("rms_norm_eps is invalid");
+        }
         if let Some(y) = &self.yarn
-            && !(y.factor.is_finite() && y.factor >= 1.0 && y.original_max_position.is_finite() && y.original_max_position > 0.0
-                && y.beta_fast.is_finite() && y.beta_slow.is_finite() && y.mscale.is_finite() && y.mscale_all_dim.is_finite())
+            && !(y.factor.is_finite()
+                && y.factor >= 1.0
+                && y.original_max_position.is_finite()
+                && y.original_max_position > 0.0
+                && y.beta_fast.is_finite()
+                && y.beta_fast > 0.0
+                && y.beta_slow.is_finite()
+                && y.beta_slow > 0.0
+                && y.mscale.is_finite()
+                && y.mscale_all_dim.is_finite())
         {
             return bad("rope_scaling values are invalid");
         }
@@ -80,17 +120,34 @@ impl MlaConfig {
 
     /// Parse a Hugging Face DeepSeek-style `config.json` (a `text_config` wrapper is followed).
     pub fn from_hf_config(json: &str) -> Result<MlaConfig, MlaError> {
-        let root: Value = serde_json::from_str(json).map_err(|e| MlaError::Config(format!("bad JSON: {e}")))?;
-        if !root.is_object() { return Err(MlaError::Config("config is not an object".into())); }
-        let c = root.get("text_config").filter(|t| t.is_object()).unwrap_or(&root);
-        let need = |k: &str| ugte(c, k).ok_or_else(|| MlaError::Config(format!("config has no `{k}`")));
-        let rs = c.get("rope_scaling").filter(|v| v.is_object()).or_else(|| c.get("rope_parameters").filter(|v| v.is_object()));
+        let root: Value =
+            serde_json::from_str(json).map_err(|e| MlaError::Config(format!("bad JSON: {e}")))?;
+        if !root.is_object() {
+            return Err(MlaError::Config("config is not an object".into()));
+        }
+        let c = root
+            .get("text_config")
+            .filter(|t| t.is_object())
+            .unwrap_or(&root);
+        let need =
+            |k: &str| ugte(c, k).ok_or_else(|| MlaError::Config(format!("config has no `{k}`")));
+        let rs = c
+            .get("rope_scaling")
+            .filter(|v| v.is_object())
+            .or_else(|| c.get("rope_parameters").filter(|v| v.is_object()));
         let yarn = rs.and_then(|r| {
-            let ty = r.get("type").or_else(|| r.get("rope_type")).and_then(Value::as_str).unwrap_or("");
-            if ty != "yarn" { return None; }
+            let ty = r
+                .get("type")
+                .or_else(|| r.get("rope_type"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if ty != "yarn" {
+                return None;
+            }
             Some(Yarn {
                 factor: fget(r, "factor").unwrap_or(1.0),
-                original_max_position: fget(r, "original_max_position_embeddings").unwrap_or(4096.0),
+                original_max_position: fget(r, "original_max_position_embeddings")
+                    .unwrap_or(4096.0),
                 beta_fast: fget(r, "beta_fast").unwrap_or(32.0),
                 beta_slow: fget(r, "beta_slow").unwrap_or(1.0),
                 mscale: fget(r, "mscale").unwrap_or(1.0),
@@ -113,22 +170,35 @@ impl MlaConfig {
         Ok(cfg)
     }
 
-    fn q_head(&self) -> usize { self.qk_nope + self.qk_rope }
+    fn q_head(&self) -> usize {
+        self.qk_nope + self.qk_rope
+    }
     /// Floats cached per token by the absorbed implementation.
-    pub fn latent_floats_per_token(&self) -> usize { self.kv_lora_rank + self.qk_rope }
+    pub fn latent_floats_per_token(&self) -> usize {
+        self.kv_lora_rank + self.qk_rope
+    }
     /// Floats cached per token by the naive (expanded) implementation.
-    pub fn full_floats_per_token(&self) -> usize { self.heads * (self.qk_nope + self.qk_rope + self.v_head) }
-    pub fn latent_bytes_per_token(&self) -> usize { self.latent_floats_per_token() * 4 }
-    pub fn full_bytes_per_token(&self) -> usize { self.full_floats_per_token() * 4 }
+    pub fn full_floats_per_token(&self) -> usize {
+        self.heads * (self.qk_nope + self.qk_rope + self.v_head)
+    }
+    pub fn latent_bytes_per_token(&self) -> usize {
+        self.latent_floats_per_token() * 4
+    }
+    pub fn full_bytes_per_token(&self) -> usize {
+        self.full_floats_per_token() * 4
+    }
 }
 
 /// Dense projection weights, row-major `out × in`.
 #[derive(Clone, Debug, Default)]
 pub struct MlaWeights {
-    pub q_a: Vec<f32>, pub q_a_norm: Vec<f32>, pub q_b: Vec<f32>,
+    pub q_a: Vec<f32>,
+    pub q_a_norm: Vec<f32>,
+    pub q_b: Vec<f32>,
     /// Used instead of the three above when `q_lora_rank` is `None`.
     pub q_proj: Vec<f32>,
-    pub kv_a: Vec<f32>, pub kv_a_norm: Vec<f32>,
+    pub kv_a: Vec<f32>,
+    pub kv_a_norm: Vec<f32>,
     /// `heads·(nope+v) × kv_lora_rank`; per head the `nope` key rows come first, then the `v` rows.
     pub kv_b: Vec<f32>,
     pub o: Vec<f32>,
@@ -139,17 +209,32 @@ pub mod names {
     /// Hugging Face: (q_a, q_a_norm, q_b, q_proj, kv_a, kv_a_norm, kv_b, o).
     pub fn hf(layer: usize) -> [String; 8] {
         let p = format!("model.layers.{layer}.self_attn");
-        [format!("{p}.q_a_proj.weight"), format!("{p}.q_a_layernorm.weight"), format!("{p}.q_b_proj.weight"),
-         format!("{p}.q_proj.weight"), format!("{p}.kv_a_proj_with_mqa.weight"), format!("{p}.kv_a_layernorm.weight"),
-         format!("{p}.kv_b_proj.weight"), format!("{p}.o_proj.weight")]
+        [
+            format!("{p}.q_a_proj.weight"),
+            format!("{p}.q_a_layernorm.weight"),
+            format!("{p}.q_b_proj.weight"),
+            format!("{p}.q_proj.weight"),
+            format!("{p}.kv_a_proj_with_mqa.weight"),
+            format!("{p}.kv_a_layernorm.weight"),
+            format!("{p}.kv_b_proj.weight"),
+            format!("{p}.o_proj.weight"),
+        ]
     }
     /// GGUF: (q_a, q_a_norm, q_b, q, kv_a_mqa, kv_a_norm, k_b, v_b, output). llama.cpp stores
     /// `kv_b_proj` split in two; see [`super::join_kv_b`].
     pub fn gguf(layer: usize) -> [String; 9] {
         let p = format!("blk.{layer}");
-        [format!("{p}.attn_q_a.weight"), format!("{p}.attn_q_a_norm.weight"), format!("{p}.attn_q_b.weight"),
-         format!("{p}.attn_q.weight"), format!("{p}.attn_kv_a_mqa.weight"), format!("{p}.attn_kv_a_norm.weight"),
-         format!("{p}.attn_k_b.weight"), format!("{p}.attn_v_b.weight"), format!("{p}.attn_output.weight")]
+        [
+            format!("{p}.attn_q_a.weight"),
+            format!("{p}.attn_q_a_norm.weight"),
+            format!("{p}.attn_q_b.weight"),
+            format!("{p}.attn_q.weight"),
+            format!("{p}.attn_kv_a_mqa.weight"),
+            format!("{p}.attn_kv_a_norm.weight"),
+            format!("{p}.attn_k_b.weight"),
+            format!("{p}.attn_v_b.weight"),
+            format!("{p}.attn_output.weight"),
+        ]
     }
 }
 
@@ -161,7 +246,9 @@ pub fn join_kv_b(cfg: &MlaConfig, k_b: &[f32], v_b: &[f32]) -> Result<Vec<f32>, 
     cfg.validate()?;
     let (kv, n, v) = (cfg.kv_lora_rank, cfg.qk_nope, cfg.v_head);
     if k_b.len() != cfg.heads * n * kv || v_b.len() != cfg.heads * v * kv {
-        return Err(MlaError::Shape("k_b / v_b sizes do not match the configuration".into()));
+        return Err(MlaError::Shape(
+            "k_b / v_b sizes do not match the configuration".into(),
+        ));
     }
     let mut out = Vec::with_capacity(cfg.heads * (n + v) * kv);
     for h in 0..cfg.heads {
@@ -171,57 +258,126 @@ pub fn join_kv_b(cfg: &MlaConfig, k_b: &[f32], v_b: &[f32]) -> Result<Vec<f32>, 
     Ok(out)
 }
 
-fn yarn_mscale(scale: f64, m: f64) -> f64 { if scale <= 1.0 { 1.0 } else { 0.1 * m * scale.ln() + 1.0 } }
+fn yarn_mscale(scale: f64, m: f64) -> f64 {
+    if scale <= 1.0 {
+        1.0
+    } else {
+        0.1 * m * crate::simd::rmath::ln64(scale) + 1.0
+    }
+}
 
 /// Inverse frequencies (one per rotating pair) and the cos/sin magnitude factor.
 fn rope_table(cfg: &MlaConfig) -> (Vec<f64>, f64) {
     let d = cfg.qk_rope;
     let half = d / 2;
-    let extra: Vec<f64> = (0..half).map(|i| cfg.rope_theta.powf(-(2.0 * i as f64) / d as f64)).collect();
-    let Some(y) = &cfg.yarn else { return (extra, 1.0) };
-    let corr = |rot: f64| d as f64 * (y.original_max_position / (rot * 2.0 * std::f64::consts::PI)).ln() / (2.0 * cfg.rope_theta.ln());
+    let extra: Vec<f64> = (0..half)
+        .map(|i| crate::simd::rmath::powf64(cfg.rope_theta, -(2.0 * i as f64) / d as f64))
+        .collect();
+    let Some(y) = &cfg.yarn else {
+        return (extra, 1.0);
+    };
+    let corr = |rot: f64| {
+        d as f64
+            * crate::simd::rmath::ln64(y.original_max_position / (rot * 2.0 * std::f64::consts::PI))
+            / (2.0 * crate::simd::rmath::ln64(cfg.rope_theta))
+    };
     let low = corr(y.beta_fast).floor().max(0.0);
     let high = corr(y.beta_slow).ceil().min(d as f64 - 1.0);
-    let high = if (high - low).abs() < f64::EPSILON { high + 0.001 } else { high };
-    let freqs = (0..half).map(|i| {
-        let ramp = ((i as f64 - low) / (high - low)).clamp(0.0, 1.0);
-        let mask = 1.0 - ramp;
-        let inter = extra[i] / y.factor;
-        inter * (1.0 - mask) + extra[i] * mask
-    }).collect();
-    (freqs, yarn_mscale(y.factor, y.mscale) / yarn_mscale(y.factor, y.mscale_all_dim))
+    let high = if (high - low).abs() < f64::EPSILON {
+        high + 0.001
+    } else {
+        high
+    };
+    let freqs = (0..half)
+        .map(|i| {
+            let ramp = ((i as f64 - low) / (high - low)).clamp(0.0, 1.0);
+            let mask = 1.0 - ramp;
+            let inter = extra[i] / y.factor;
+            inter * (1.0 - mask) + extra[i] * mask
+        })
+        .collect();
+    (
+        freqs,
+        yarn_mscale(y.factor, y.mscale) / yarn_mscale(y.factor, y.mscale_all_dim),
+    )
 }
 
 /// Latent cache: per token the normalised compressed kv and the rotated shared key.
 #[derive(Clone, Debug, Default)]
-pub struct MlaCache { latent: Vec<f32>, k_pe: Vec<f32>, len: usize }
+pub struct MlaCache {
+    latent: Vec<f32>,
+    k_pe: Vec<f32>,
+    len: usize,
+}
 impl MlaCache {
-    pub fn new() -> MlaCache { MlaCache::default() }
-    pub fn len(&self) -> usize { self.len }
-    pub fn is_empty(&self) -> bool { self.len == 0 }
-    pub fn bytes(&self) -> usize { (self.latent.len() + self.k_pe.len()) * 4 }
+    pub fn new() -> MlaCache {
+        MlaCache::default()
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn bytes(&self) -> usize {
+        (self.latent.len() + self.k_pe.len()) * 4
+    }
 }
 
 /// Expanded cache of the naive implementation: per token and head `[k_nope, k_pe]` and `v`.
 #[derive(Clone, Debug, Default)]
-pub struct NaiveCache { k: Vec<f32>, v: Vec<f32>, len: usize }
+pub struct NaiveCache {
+    k: Vec<f32>,
+    v: Vec<f32>,
+    len: usize,
+}
 impl NaiveCache {
-    pub fn new() -> NaiveCache { NaiveCache::default() }
-    pub fn len(&self) -> usize { self.len }
-    pub fn is_empty(&self) -> bool { self.len == 0 }
-    pub fn bytes(&self) -> usize { (self.k.len() + self.v.len()) * 4 }
+    pub fn new() -> NaiveCache {
+        NaiveCache::default()
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn bytes(&self) -> usize {
+        (self.k.len() + self.v.len()) * 4
+    }
 }
 
-pub struct Mla { pub cfg: MlaConfig, w: MlaWeights, freqs: Vec<f64>, rope_ms: f64, scale: f32 }
+pub struct Mla {
+    pub cfg: MlaConfig,
+    w: MlaWeights,
+    freqs: Vec<f64>,
+    rope_ms: f64,
+    scale: f32,
+}
 
 impl Mla {
     pub fn new(cfg: MlaConfig, w: MlaWeights) -> Result<Mla, MlaError> {
         cfg.validate()?;
-        let (h, nh, qh, kv, rp) = (cfg.hidden, cfg.heads, cfg.q_head(), cfg.kv_lora_rank, cfg.qk_rope);
-        let chk = |n: &str, got: usize, want: usize| if got == want { Ok(()) } else { Err(MlaError::Shape(format!("{n}: {got} values, expected {want}"))) };
+        let (h, nh, qh, kv, rp) = (
+            cfg.hidden,
+            cfg.heads,
+            cfg.q_head(),
+            cfg.kv_lora_rank,
+            cfg.qk_rope,
+        );
+        let chk = |n: &str, got: usize, want: usize| {
+            if got == want {
+                Ok(())
+            } else {
+                Err(MlaError::Shape(format!(
+                    "{n}: {got} values, expected {want}"
+                )))
+            }
+        };
         match cfg.q_lora_rank {
             Some(r) => {
-                chk("q_a", w.q_a.len(), r * h)?; chk("q_a_norm", w.q_a_norm.len(), r)?; chk("q_b", w.q_b.len(), nh * qh * r)?;
+                chk("q_a", w.q_a.len(), r * h)?;
+                chk("q_a_norm", w.q_a_norm.len(), r)?;
+                chk("q_b", w.q_b.len(), nh * qh * r)?;
             }
             None => chk("q_proj", w.q_proj.len(), nh * qh * h)?,
         }
@@ -235,12 +391,18 @@ impl Mla {
             let m = yarn_mscale(y.factor, y.mscale_all_dim);
             scale *= m * m;
         }
-        Ok(Mla { cfg, w, freqs, rope_ms, scale: scale as f32 })
+        Ok(Mla {
+            cfg,
+            w,
+            freqs,
+            rope_ms,
+            scale: scale as f32,
+        })
     }
 
     fn rotate(&self, v: &mut [f32], pos: usize) {
         for (i, f) in self.freqs.iter().enumerate() {
-            let (s, c) = (pos as f64 * f).sin_cos();
+            let (s, c) = crate::simd::rmath::sin_cos64(pos as f64 * f);
             let (c, s) = (c * self.rope_ms, s * self.rope_ms);
             let (a, b) = (v[2 * i] as f64, v[2 * i + 1] as f64);
             v[2 * i] = (a * c - b * s) as f32;
@@ -249,8 +411,18 @@ impl Mla {
     }
 
     fn check(&self, x: &[f32], pos: usize, cached: usize) -> Result<(), MlaError> {
-        if x.len() != self.cfg.hidden { return Err(MlaError::Input(format!("input has {} values, expected {}", x.len(), self.cfg.hidden))); }
-        if pos != cached { return Err(MlaError::Input(format!("position {pos} does not follow the {cached} cached tokens"))); }
+        if x.len() != self.cfg.hidden {
+            return Err(MlaError::Input(format!(
+                "input has {} values, expected {}",
+                x.len(),
+                self.cfg.hidden
+            )));
+        }
+        if pos != cached {
+            return Err(MlaError::Input(format!(
+                "position {pos} does not follow the {cached} cached tokens"
+            )));
+        }
         Ok(())
     }
 
@@ -268,7 +440,9 @@ impl Mla {
             }
             None => matvec(&self.w.q_proj, c.hidden, x, &mut q),
         }
-        for hq in q.chunks_mut(c.q_head()) { self.rotate(&mut hq[c.qk_nope..], pos); }
+        for hq in q.chunks_mut(c.q_head()) {
+            self.rotate(&mut hq[c.qk_nope..], pos);
+        }
         q
     }
 
@@ -285,7 +459,12 @@ impl Mla {
     }
 
     /// Reference implementation: expand keys and values per head and cache them.
-    pub fn forward_naive(&self, cache: &mut NaiveCache, x: &[f32], pos: usize) -> Result<Vec<f32>, MlaError> {
+    pub fn forward_naive(
+        &self,
+        cache: &mut NaiveCache,
+        x: &[f32],
+        pos: usize,
+    ) -> Result<Vec<f32>, MlaError> {
         let c = &self.cfg;
         self.check(x, pos, cache.len)?;
         let q = self.queries(x, pos);
@@ -312,7 +491,9 @@ impl Mla {
             let out = &mut att[h * c.v_head..(h + 1) * c.v_head];
             for (t, p) in sc.iter().enumerate() {
                 let v = &cache.v[(t * c.heads + h) * c.v_head..(t * c.heads + h + 1) * c.v_head];
-                for (o, vv) in out.iter_mut().zip(v) { *o += p * vv; }
+                for (o, vv) in out.iter_mut().zip(v) {
+                    *o += p * vv;
+                }
             }
         }
         let mut y = vec![0.0; c.hidden];
@@ -321,7 +502,12 @@ impl Mla {
     }
 
     /// Absorbed implementation: caches only the latent and the rotary key.
-    pub fn forward(&self, cache: &mut MlaCache, x: &[f32], pos: usize) -> Result<Vec<f32>, MlaError> {
+    pub fn forward(
+        &self,
+        cache: &mut MlaCache,
+        x: &[f32],
+        pos: usize,
+    ) -> Result<Vec<f32>, MlaError> {
         let c = &self.cfg;
         self.check(x, pos, cache.len)?;
         let q = self.queries(x, pos);
@@ -339,7 +525,9 @@ impl Mla {
             qa.fill(0.0);
             for (i, qi) in qn.iter().enumerate() {
                 let row = &self.w.kv_b[(h * per + i) * kv..(h * per + i + 1) * kv];
-                for (a, w) in qa.iter_mut().zip(row) { *a += qi * w; }
+                for (a, w) in qa.iter_mut().zip(row) {
+                    *a += qi * w;
+                }
             }
             for (t, s) in sc.iter_mut().enumerate() {
                 let l = &cache.latent[t * kv..(t + 1) * kv];
@@ -352,12 +540,15 @@ impl Mla {
             ctx.fill(0.0);
             for (t, p) in sc.iter().enumerate() {
                 let l = &cache.latent[t * kv..(t + 1) * kv];
-                for (a, b) in ctx.iter_mut().zip(l) { *a += p * b; }
+                for (a, b) in ctx.iter_mut().zip(l) {
+                    *a += p * b;
+                }
             }
             // output = W_UV · ctx, with W_UV the `v` rows of the same block
             let out = &mut att[h * c.v_head..(h + 1) * c.v_head];
             for (j, o) in out.iter_mut().enumerate() {
-                let row = &self.w.kv_b[(h * per + c.qk_nope + j) * kv..(h * per + c.qk_nope + j + 1) * kv];
+                let row = &self.w.kv_b
+                    [(h * per + c.qk_nope + j) * kv..(h * per + c.qk_nope + j + 1) * kv];
                 *o = row.iter().zip(&ctx).map(|(a, b)| a * b).sum();
             }
         }
@@ -370,7 +561,11 @@ impl Mla {
     /// length. Returns the `n · hidden` outputs; attention is causal by construction.
     pub fn forward_batch(&self, cache: &mut MlaCache, xs: &[f32]) -> Result<Vec<f32>, MlaError> {
         let h = self.cfg.hidden;
-        if !xs.len().is_multiple_of(h) { return Err(MlaError::Input("batch is not a whole number of tokens".into())); }
+        if !xs.len().is_multiple_of(h) {
+            return Err(MlaError::Input(
+                "batch is not a whole number of tokens".into(),
+            ));
+        }
         let mut out = Vec::with_capacity(xs.len());
         for x in xs.chunks_exact(h) {
             let pos = cache.len;
@@ -385,23 +580,49 @@ mod tests {
     use super::*;
 
     fn rnd(s: &mut u64, scale: f32) -> f32 {
-        *s ^= *s << 13; *s ^= *s >> 7; *s ^= *s << 17;
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
         ((*s >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * scale
     }
-    fn mat(n: usize, s: &mut u64, sc: f32) -> Vec<f32> { (0..n).map(|_| rnd(s, sc)).collect() }
-    fn ones(n: usize, s: &mut u64) -> Vec<f32> { (0..n).map(|_| 1.0 + rnd(s, 0.2)).collect() }
+    fn mat(n: usize, s: &mut u64, sc: f32) -> Vec<f32> {
+        (0..n).map(|_| rnd(s, sc)).collect()
+    }
+    fn ones(n: usize, s: &mut u64) -> Vec<f32> {
+        (0..n).map(|_| 1.0 + rnd(s, 0.2)).collect()
+    }
 
     fn cfg(q_lora: Option<usize>, yarn: bool) -> MlaConfig {
-        MlaConfig { hidden: 24, heads: 4, q_lora_rank: q_lora, kv_lora_rank: 10, qk_nope: 6, qk_rope: 4, v_head: 5,
-            eps: 1e-6, rope_theta: 10_000.0,
-            yarn: yarn.then_some(Yarn { factor: 8.0, original_max_position: 64.0, beta_fast: 32.0, beta_slow: 1.0, mscale: 0.7, mscale_all_dim: 0.7 }) }
+        MlaConfig {
+            hidden: 24,
+            heads: 4,
+            q_lora_rank: q_lora,
+            kv_lora_rank: 10,
+            qk_nope: 6,
+            qk_rope: 4,
+            v_head: 5,
+            eps: 1e-6,
+            rope_theta: 10_000.0,
+            yarn: yarn.then_some(Yarn {
+                factor: 8.0,
+                original_max_position: 64.0,
+                beta_fast: 32.0,
+                beta_slow: 1.0,
+                mscale: 0.7,
+                mscale_all_dim: 0.7,
+            }),
+        }
     }
     fn build(c: &MlaConfig, seed: u64) -> Mla {
         let mut s = seed;
         let (h, nh, qh, kv) = (c.hidden, c.heads, c.qk_nope + c.qk_rope, c.kv_lora_rank);
         let mut w = MlaWeights::default();
         match c.q_lora_rank {
-            Some(r) => { w.q_a = mat(r * h, &mut s, 0.6); w.q_a_norm = ones(r, &mut s); w.q_b = mat(nh * qh * r, &mut s, 0.6); }
+            Some(r) => {
+                w.q_a = mat(r * h, &mut s, 0.6);
+                w.q_a_norm = ones(r, &mut s);
+                w.q_b = mat(nh * qh * r, &mut s, 0.6);
+            }
             None => w.q_proj = mat(nh * qh * h, &mut s, 0.6),
         }
         w.kv_a = mat((kv + c.qk_rope) * h, &mut s, 0.6);
@@ -413,7 +634,12 @@ mod tests {
 
     #[test]
     fn absorbed_equals_naive_over_many_positions_in_every_configuration() {
-        for (q, yarn) in [(None, false), (Some(7), false), (None, true), (Some(7), true)] {
+        for (q, yarn) in [
+            (None, false),
+            (Some(7), false),
+            (None, true),
+            (Some(7), true),
+        ] {
             let c = cfg(q, yarn);
             let m = build(&c, 0x1234_5678_9abc_def1);
             let (mut a, mut n) = (MlaCache::new(), NaiveCache::new());
@@ -423,7 +649,10 @@ mod tests {
                 let fast = m.forward(&mut a, &x, pos).unwrap();
                 let slow = m.forward_naive(&mut n, &x, pos).unwrap();
                 for (i, (p, r)) in fast.iter().zip(&slow).enumerate() {
-                    assert!((p - r).abs() < 1e-4, "q_lora {q:?} yarn {yarn} pos {pos} out {i}: {p} vs {r}");
+                    assert!(
+                        (p - r).abs() < 1e-4,
+                        "q_lora {q:?} yarn {yarn} pos {pos} out {i}: {p} vs {r}"
+                    );
                 }
             }
         }
@@ -454,7 +683,9 @@ mod tests {
         let (mut a, mut b) = (MlaCache::new(), MlaCache::new());
         let batch = m.forward_batch(&mut a, &xs).unwrap();
         let mut one = vec![];
-        for (i, x) in xs.chunks_exact(c.hidden).enumerate() { one.extend(m.forward(&mut b, x, i).unwrap()); }
+        for (i, x) in xs.chunks_exact(c.hidden).enumerate() {
+            one.extend(m.forward(&mut b, x, i).unwrap());
+        }
         assert_eq!(batch, one);
         assert!(m.forward_batch(&mut a, &xs[..c.hidden + 1]).is_err());
     }
@@ -476,8 +707,18 @@ mod tests {
         assert_eq!(n.bytes(), 9 * c.full_bytes_per_token());
         assert!(a.bytes() * 4 < n.bytes());
         // DeepSeek-V3 shape: 128 heads, nope 128, rope 64, v 128, latent 512 → 40960/576 ≈ 1/71
-        let v3 = MlaConfig { hidden: 7168, heads: 128, q_lora_rank: Some(1536), kv_lora_rank: 512, qk_nope: 128, qk_rope: 64, v_head: 128,
-            eps: 1e-6, rope_theta: 10_000.0, yarn: None };
+        let v3 = MlaConfig {
+            hidden: 7168,
+            heads: 128,
+            q_lora_rank: Some(1536),
+            kv_lora_rank: 512,
+            qk_nope: 128,
+            qk_rope: 64,
+            v_head: 128,
+            eps: 1e-6,
+            rope_theta: 10_000.0,
+            yarn: None,
+        };
         let ratio = v3.full_bytes_per_token() as f64 / v3.latent_bytes_per_token() as f64;
         assert!((ratio - 40960.0 / 576.0).abs() < 1e-9, "{ratio}");
     }
@@ -495,7 +736,10 @@ mod tests {
         let mut differs = false;
         for pos in 0..6 {
             let x = mat(plain.hidden, &mut s, 2.0);
-            let (p, q) = (a.forward(&mut ca, &x, pos).unwrap(), b.forward(&mut cb, &x, pos).unwrap());
+            let (p, q) = (
+                a.forward(&mut ca, &x, pos).unwrap(),
+                b.forward(&mut cb, &x, pos).unwrap(),
+            );
             differs |= p.iter().zip(&q).any(|(x, y)| (x - y).abs() > 1e-4);
         }
         assert!(differs);
@@ -506,7 +750,10 @@ mod tests {
         let mut c = cfg(None, true);
         c.qk_rope = 64;
         let (f, _) = rope_table(&c);
-        let plain = MlaConfig { yarn: None, ..c.clone() };
+        let plain = MlaConfig {
+            yarn: None,
+            ..c.clone()
+        };
         let (p, _) = rope_table(&plain);
         assert!((f[0] - p[0]).abs() < 1e-12); // fastest pair is untouched
         assert!((f[31] - p[31] / 8.0).abs() < 1e-12); // slowest pair is divided by the factor
@@ -530,8 +777,14 @@ mod tests {
         let mut c = cfg(None, false);
         c.qk_rope = 5;
         assert!(c.validate().is_err());
-        for f in [|c: &mut MlaConfig| c.heads = 0, |c: &mut MlaConfig| c.kv_lora_rank = 0, |c: &mut MlaConfig| c.v_head = usize::MAX,
-            |c: &mut MlaConfig| c.hidden = 1 << 30, |c: &mut MlaConfig| c.q_lora_rank = Some(0), |c: &mut MlaConfig| c.rope_theta = f64::NAN] {
+        for f in [
+            |c: &mut MlaConfig| c.heads = 0,
+            |c: &mut MlaConfig| c.kv_lora_rank = 0,
+            |c: &mut MlaConfig| c.v_head = usize::MAX,
+            |c: &mut MlaConfig| c.hidden = 1 << 30,
+            |c: &mut MlaConfig| c.q_lora_rank = Some(0),
+            |c: &mut MlaConfig| c.rope_theta = f64::NAN,
+        ] {
             let mut c = cfg(None, false);
             f(&mut c);
             assert!(c.validate().is_err());
@@ -554,7 +807,10 @@ mod tests {
             "qk_nope_head_dim":128,"qk_rope_head_dim":64,"v_head_dim":128,"rms_norm_eps":1e-6,"rope_theta":10000,
             "rope_scaling":{"type":"yarn","factor":40,"original_max_position_embeddings":4096,"beta_fast":32,"beta_slow":1,"mscale":1.0,"mscale_all_dim":1.0}}"#;
         let c = MlaConfig::from_hf_config(j).unwrap();
-        assert_eq!((c.heads, c.q_lora_rank, c.kv_lora_rank, c.qk_rope), (128, Some(1536), 512, 64));
+        assert_eq!(
+            (c.heads, c.q_lora_rank, c.kv_lora_rank, c.qk_rope),
+            (128, Some(1536), 512, 64)
+        );
         assert_eq!(c.yarn.as_ref().unwrap().factor, 40.0);
         let v2lite = r#"{"hidden_size":2048,"num_attention_heads":16,"q_lora_rank":null,"kv_lora_rank":512,"qk_nope_head_dim":128,"qk_rope_head_dim":64,"v_head_dim":128}"#;
         assert_eq!(MlaConfig::from_hf_config(v2lite).unwrap().q_lora_rank, None);
@@ -567,7 +823,10 @@ mod tests {
 
     #[test]
     fn tensor_names_and_split_kv_b_join() {
-        assert_eq!(names::hf(3)[4], "model.layers.3.self_attn.kv_a_proj_with_mqa.weight");
+        assert_eq!(
+            names::hf(3)[4],
+            "model.layers.3.self_attn.kv_a_proj_with_mqa.weight"
+        );
         assert_eq!(names::gguf(3)[6], "blk.3.attn_k_b.weight");
         let c = cfg(None, false);
         let (nh, n, v, kv) = (c.heads, c.qk_nope, c.v_head, c.kv_lora_rank);

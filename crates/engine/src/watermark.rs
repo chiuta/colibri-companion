@@ -44,11 +44,23 @@ pub struct WatermarkConfig {
     pub ignore: Vec<u32>,
 }
 impl Default for WatermarkConfig {
-    fn default() -> Self { WatermarkConfig { key: 0, gamma: 0.25, delta: 2.0, context: 1, ignore: vec![] } }
+    fn default() -> Self {
+        WatermarkConfig {
+            key: 0,
+            gamma: 0.25,
+            delta: 2.0,
+            context: 1,
+            ignore: vec![],
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum WatermarkError { Gamma, Delta, Context }
+pub enum WatermarkError {
+    Gamma,
+    Delta,
+    Context,
+}
 impl std::fmt::Display for WatermarkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -107,29 +119,55 @@ fn mix(mut x: u64) -> u64 {
 
 impl Watermark {
     pub fn new(cfg: WatermarkConfig) -> Result<Watermark, WatermarkError> {
-        if !(cfg.gamma.is_finite() && cfg.gamma > 0.0 && cfg.gamma < 1.0) { return Err(WatermarkError::Gamma); }
-        if !(cfg.delta.is_finite() && (0.0..=50.0).contains(&cfg.delta)) { return Err(WatermarkError::Delta); }
-        if !(1..=8).contains(&cfg.context) { return Err(WatermarkError::Context); }
+        if !(cfg.gamma.is_finite() && cfg.gamma > 0.0 && cfg.gamma < 1.0) {
+            return Err(WatermarkError::Gamma);
+        }
+        if !(cfg.delta.is_finite() && (0.0..=50.0).contains(&cfg.delta)) {
+            return Err(WatermarkError::Delta);
+        }
+        if !(1..=8).contains(&cfg.context) {
+            return Err(WatermarkError::Context);
+        }
         let mut ignore = cfg.ignore;
         ignore.sort_unstable();
         ignore.dedup();
-        Ok(Watermark { key: cfg.key, gamma: cfg.gamma as f64, delta: cfg.delta, context: cfg.context, ignore })
+        Ok(Watermark {
+            key: cfg.key,
+            gamma: cfg.gamma as f64,
+            delta: cfg.delta,
+            context: cfg.context,
+            ignore,
+        })
     }
 
-    pub fn gamma(&self) -> f64 { self.gamma }
-    pub fn delta(&self) -> f32 { self.delta }
-    pub fn context(&self) -> usize { self.context }
+    pub fn gamma(&self) -> f64 {
+        self.gamma
+    }
+    pub fn delta(&self) -> f32 {
+        self.delta
+    }
+    pub fn context(&self) -> usize {
+        self.context
+    }
 
     /// Hash of the key and the last `context` tokens of `prev` (fewer if there are fewer).
     fn context_hash(&self, prev: &[u32]) -> u64 {
         let tail = &prev[prev.len().saturating_sub(self.context)..];
         let mut h = mix(self.key ^ K1);
-        for &t in tail { h = mix(h ^ (t as u64 + 1).wrapping_mul(K1)); }
+        for &t in tail {
+            h = mix(h ^ (t as u64 + 1).wrapping_mul(K1));
+        }
         h
     }
-    fn token_hash(ctx: u64, token: u32) -> u64 { mix(ctx ^ (token as u64 + 1).wrapping_mul(K2)) }
-    fn is_green_hash(&self, h: u64) -> bool { (((h >> 11) as f64) * (1.0 / 9_007_199_254_740_992.0)) < self.gamma }
-    fn ignored(&self, t: u32) -> bool { !self.ignore.is_empty() && self.ignore.binary_search(&t).is_ok() }
+    fn token_hash(ctx: u64, token: u32) -> u64 {
+        mix(ctx ^ (token as u64 + 1).wrapping_mul(K2))
+    }
+    fn is_green_hash(&self, h: u64) -> bool {
+        (((h >> 11) as f64) * (1.0 / 9_007_199_254_740_992.0)) < self.gamma
+    }
+    fn ignored(&self, t: u32) -> bool {
+        !self.ignore.is_empty() && self.ignore.binary_search(&t).is_ok()
+    }
 
     /// Is `token` on the green list after the context `prev`?
     pub fn is_green(&self, prev: &[u32], token: u32) -> bool {
@@ -140,24 +178,42 @@ impl Watermark {
     /// tokens) and ignored tokens are left alone. `prev` is everything before the token to be
     /// sampled, prompt included.
     pub fn apply_to_logits(&self, prev: &[u32], logits: &mut [f32]) {
-        if self.delta == 0.0 { return; }
+        if self.delta == 0.0 {
+            return;
+        }
         let ctx = self.context_hash(prev);
         for (i, l) in logits.iter_mut().enumerate() {
-            if !l.is_finite() { continue; }
+            if !l.is_finite() {
+                continue;
+            }
             let id = i as u32;
-            if self.ignored(id) { continue; }
-            if self.is_green_hash(Self::token_hash(ctx, id)) { *l += self.delta; }
+            if self.ignored(id) {
+                continue;
+            }
+            if self.is_green_hash(Self::token_hash(ctx, id)) {
+                *l += self.delta;
+            }
         }
     }
 
     /// The same bias on a candidate list (any order; probabilities are recomputed on demand).
     pub fn apply_to_candidates(&self, prev: &[u32], cands: &mut Candidates) {
-        if self.delta == 0.0 { return; }
+        if self.delta == 0.0 {
+            return;
+        }
         let ctx = self.context_hash(prev);
-        let items: Vec<Cand> = std::mem::take(&mut cands.items).into_iter().map(|mut c| {
-            if c.logit.is_finite() && !self.ignored(c.id) && self.is_green_hash(Self::token_hash(ctx, c.id)) { c.logit += self.delta; }
-            c
-        }).collect();
+        let items: Vec<Cand> = std::mem::take(&mut cands.items)
+            .into_iter()
+            .map(|mut c| {
+                if c.logit.is_finite()
+                    && !self.ignored(c.id)
+                    && self.is_green_hash(Self::token_hash(ctx, c.id))
+                {
+                    c.logit += self.delta;
+                }
+                c
+            })
+            .collect();
         *cands = Candidates::from_items(items);
     }
 
@@ -165,7 +221,12 @@ impl Watermark {
     /// strongly this step can be marked).
     pub fn green_mass(&self, prev: &[u32], probs: &[f32]) -> f64 {
         let ctx = self.context_hash(prev);
-        probs.iter().enumerate().filter(|(i, _)| self.is_green_hash(Self::token_hash(ctx, *i as u32))).map(|(_, &p)| p as f64).sum()
+        probs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.is_green_hash(Self::token_hash(ctx, *i as u32)))
+            .map(|(_, &p)| p as f64)
+            .sum()
     }
 
     /// Count green tokens in `tokens`. `prefix` supplies context for the first tokens (the prompt's
@@ -179,27 +240,57 @@ impl Watermark {
         buf.extend_from_slice(tokens);
         for (i, &tok) in tokens.iter().enumerate() {
             let pos = take + i;
-            if pos < self.context || self.ignored(tok) { continue; }
+            if pos < self.context || self.ignored(tok) {
+                continue;
+            }
             let h = Self::token_hash(self.context_hash(&buf[..pos]), tok);
-            if dedup && !seen.insert(h) { continue; }
+            if dedup && !seen.insert(h) {
+                continue;
+            }
             n += 1;
-            if self.is_green_hash(h) { g += 1; }
+            if self.is_green_hash(h) {
+                g += 1;
+            }
         }
         self.detection(n, g)
     }
 
     fn detection(&self, n: usize, g: usize) -> Detection {
-        if n == 0 { return Detection { scored: 0, green: 0, expected: 0.0, z: 0.0, p_value: 1.0, green_fraction: 0.0 }; }
+        if n == 0 {
+            return Detection {
+                scored: 0,
+                green: 0,
+                expected: 0.0,
+                z: 0.0,
+                p_value: 1.0,
+                green_fraction: 0.0,
+            };
+        }
         let nf = n as f64;
         let expected = self.gamma * nf;
         let z = (g as f64 - expected) / (nf * self.gamma * (1.0 - self.gamma)).sqrt();
-        Detection { scored: n, green: g, expected, z, p_value: binomial_tail(n, g, self.gamma), green_fraction: g as f64 / nf }
+        Detection {
+            scored: n,
+            green: g,
+            expected,
+            z,
+            p_value: binomial_tail(n, g, self.gamma),
+            green_fraction: g as f64 / nf,
+        }
     }
 
     /// Slide a window of `window` tokens over the text (step a quarter window) and report the
     /// most surprising one, so a marked passage inside unmarked text is still found.
-    pub fn scan(&self, prefix: &[u32], tokens: &[u32], window: usize, dedup: bool) -> Option<WindowDetection> {
-        if tokens.is_empty() || window == 0 { return None; }
+    pub fn scan(
+        &self,
+        prefix: &[u32],
+        tokens: &[u32],
+        window: usize,
+        dedup: bool,
+    ) -> Option<WindowDetection> {
+        if tokens.is_empty() || window == 0 {
+            return None;
+        }
         let window = window.min(tokens.len());
         let step = (window / 4).max(1);
         let mut best: Option<(usize, Detection)> = None;
@@ -207,17 +298,36 @@ impl Watermark {
         let mut start = 0usize;
         loop {
             let end = (start + window).min(tokens.len());
-            let ctx_from = start.saturating_sub(self.context);
-            let pre: Vec<u32> = if start == 0 { prefix.to_vec() } else { tokens[ctx_from..start].to_vec() };
+            // The context is the last `self.context` tokens before the window, drawn from the prompt
+            // prefix as well when the window starts closer than that to the beginning.
+            let pre: Vec<u32> = if start >= self.context {
+                tokens[start - self.context..start].to_vec()
+            } else {
+                let need = self.context - start;
+                let p = &prefix[prefix.len().saturating_sub(need)..];
+                p.iter().chain(&tokens[..start]).copied().collect()
+            };
             let d = self.score(&pre, &tokens[start..end], dedup);
             windows += 1;
-            if best.as_ref().is_none_or(|(_, b)| d.p_value < b.p_value || (d.p_value == b.p_value && d.z > b.z)) { best = Some((start, d)); }
-            if end == tokens.len() { break; }
+            if best
+                .as_ref()
+                .is_none_or(|(_, b)| d.p_value < b.p_value || (d.p_value == b.p_value && d.z > b.z))
+            {
+                best = Some((start, d));
+            }
+            if end == tokens.len() {
+                break;
+            }
             start += step;
         }
         best.map(|(start, detection)| {
             let adjusted_p = (detection.p_value * windows as f64).min(1.0);
-            WindowDetection { start, detection, windows, adjusted_p }
+            WindowDetection {
+                start,
+                detection,
+                windows,
+                adjusted_p,
+            }
         })
     }
 }
@@ -228,66 +338,159 @@ impl Watermark {
 fn erfc(x: f64) -> f64 {
     let z = x.abs();
     let t = 1.0 / (1.0 + 0.5 * z);
-    let poly = -z * z - 1.265_512_23 + t * (1.000_023_68 + t * (0.374_091_96 + t * (0.096_784_18 + t * (-0.186_288_06 + t * (0.278_868_07
-        + t * (-1.135_203_98 + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
+    let poly = -z * z - 1.265_512_23
+        + t * (1.000_023_68
+            + t * (0.374_091_96
+                + t * (0.096_784_18
+                    + t * (-0.186_288_06
+                        + t * (0.278_868_07
+                            + t * (-1.135_203_98
+                                + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
     let r = t * poly.exp();
     if x >= 0.0 { r } else { 2.0 - r }
 }
 /// Upper tail of the standard normal distribution.
-pub fn normal_sf(z: f64) -> f64 { 0.5 * erfc(z / std::f64::consts::SQRT_2) }
+pub fn normal_sf(z: f64) -> f64 {
+    0.5 * erfc(z / std::f64::consts::SQRT_2)
+}
 
 /// `P(X >= g)` for `X ~ Binomial(n, p)`: exact up to 3000 trials, normal approximation with
 /// continuity correction beyond.
 pub fn binomial_tail(n: usize, g: usize, p: f64) -> f64 {
-    if g == 0 { return 1.0; }
-    if g > n { return 0.0; }
+    if g == 0 {
+        return 1.0;
+    }
+    if g > n {
+        return 0.0;
+    }
     if n > 3000 {
         let nf = n as f64;
         let sd = (nf * p * (1.0 - p)).sqrt();
         return normal_sf((g as f64 - 0.5 - nf * p) / sd).clamp(0.0, 1.0);
     }
     let mut lnf = vec![0f64; n + 1];
-    for i in 1..=n { lnf[i] = lnf[i - 1] + (i as f64).ln(); }
+    for i in 1..=n {
+        lnf[i] = lnf[i - 1] + (i as f64).ln();
+    }
     let (lp, lq) = (p.ln(), (1.0 - p).ln());
     let mut s = 0f64;
-    for i in g..=n { s += (lnf[n] - lnf[i] - lnf[n - i] + i as f64 * lp + (n - i) as f64 * lq).exp(); }
+    for i in g..=n {
+        s += (lnf[n] - lnf[i] - lnf[n - i] + i as f64 * lp + (n - i) as f64 * lq).exp();
+    }
     s.clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scan_windows_near_the_start_see_the_prompt_as_context() {
+        let w = wm(5, 0.25, 2.0, 3);
+        let prefix: Vec<u32> = vec![7, 8, 9, 10];
+        let toks = generate(Some(&w), 50, 40, 3, &prefix);
+        let step = 2usize;
+        let r = w.scan(&prefix, &toks, 8, false).unwrap();
+        // recompute the detection of the reported window with the true 3-token context
+        let mut full = prefix.clone();
+        full.extend(&toks);
+        let from = prefix.len() + r.start;
+        let pre = &full[from - 3..from];
+        let d = w.score(pre, &toks[r.start..(r.start + 8).min(toks.len())], false);
+        assert_eq!(
+            d.p_value, r.detection.p_value,
+            "start {} (step {step})",
+            r.start
+        );
+    }
+
     use super::*;
     use crate::sampling::Rng;
 
-    fn wm(key: u64, gamma: f32, delta: f32, context: usize) -> Watermark { Watermark::new(WatermarkConfig { key, gamma, delta, context, ignore: vec![] }).unwrap() }
+    fn wm(key: u64, gamma: f32, delta: f32, context: usize) -> Watermark {
+        Watermark::new(WatermarkConfig {
+            key,
+            gamma,
+            delta,
+            context,
+            ignore: vec![],
+        })
+        .unwrap()
+    }
 
     /// Sample `n` tokens from a random model: per step, noisy logits over `vocab` tokens (std about 2),
     /// biased by the watermark when given, then drawn from the softmax.
-    fn generate(w: Option<&Watermark>, vocab: usize, n: usize, seed: u64, prompt: &[u32]) -> Vec<u32> {
+    fn generate(
+        w: Option<&Watermark>,
+        vocab: usize,
+        n: usize,
+        seed: u64,
+        prompt: &[u32],
+    ) -> Vec<u32> {
         let mut rng = Rng::new(seed);
         let mut seq: Vec<u32> = prompt.to_vec();
         for _ in 0..n {
-            let mut l: Vec<f32> = (0..vocab).map(|_| ((rng.f32() + rng.f32() + rng.f32() + rng.f32()) - 2.0) * 3.4).collect();
-            if let Some(w) = w { w.apply_to_logits(&seq, &mut l); }
+            let mut l: Vec<f32> = (0..vocab)
+                .map(|_| ((rng.f32() + rng.f32() + rng.f32() + rng.f32()) - 2.0) * 3.4)
+                .collect();
+            if let Some(w) = w {
+                w.apply_to_logits(&seq, &mut l);
+            }
             let m = l.iter().cloned().fold(f32::MIN, f32::max);
             let e: Vec<f64> = l.iter().map(|x| ((x - m) as f64).exp()).collect();
             let s: f64 = e.iter().sum();
             let mut u = rng.f32() as f64 * s;
             let mut pick = vocab - 1;
-            for (i, v) in e.iter().enumerate() { if u < *v { pick = i; break; } u -= v; }
+            for (i, v) in e.iter().enumerate() {
+                if u < *v {
+                    pick = i;
+                    break;
+                }
+                u -= v;
+            }
             seq.push(pick as u32);
         }
         seq[prompt.len()..].to_vec()
     }
-    fn uniform_tokens(seed: u64, n: usize, vocab: u32) -> Vec<u32> { let mut r = Rng::new(seed); (0..n).map(|_| (r.next_u64() % vocab as u64) as u32).collect() }
+    fn uniform_tokens(seed: u64, n: usize, vocab: u32) -> Vec<u32> {
+        let mut r = Rng::new(seed);
+        (0..n)
+            .map(|_| (r.next_u64() % vocab as u64) as u32)
+            .collect()
+    }
 
     #[test]
     fn configuration_is_validated() {
         let ok = WatermarkConfig::default();
         assert!(Watermark::new(ok.clone()).is_ok());
-        for g in [0.0, 1.0, -0.5, 1.5, f32::NAN, f32::INFINITY] { assert_eq!(Watermark::new(WatermarkConfig { gamma: g, ..ok.clone() }).unwrap_err(), WatermarkError::Gamma); }
-        for d in [-1.0, f32::NAN, f32::INFINITY, 51.0] { assert_eq!(Watermark::new(WatermarkConfig { delta: d, ..ok.clone() }).unwrap_err(), WatermarkError::Delta); }
-        for c in [0, 9, 1000] { assert_eq!(Watermark::new(WatermarkConfig { context: c, ..ok.clone() }).unwrap_err(), WatermarkError::Context); }
+        for g in [0.0, 1.0, -0.5, 1.5, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                Watermark::new(WatermarkConfig {
+                    gamma: g,
+                    ..ok.clone()
+                })
+                .unwrap_err(),
+                WatermarkError::Gamma
+            );
+        }
+        for d in [-1.0, f32::NAN, f32::INFINITY, 51.0] {
+            assert_eq!(
+                Watermark::new(WatermarkConfig {
+                    delta: d,
+                    ..ok.clone()
+                })
+                .unwrap_err(),
+                WatermarkError::Delta
+            );
+        }
+        for c in [0, 9, 1000] {
+            assert_eq!(
+                Watermark::new(WatermarkConfig {
+                    context: c,
+                    ..ok.clone()
+                })
+                .unwrap_err(),
+                WatermarkError::Context
+            );
+        }
         assert!(Watermark::new(WatermarkConfig { delta: 0.0, ..ok }).is_ok());
     }
 
@@ -296,17 +499,32 @@ mod tests {
         for gamma in [0.1f32, 0.25, 0.5, 0.9] {
             let w = wm(7, gamma, 2.0, 1);
             let g = (0..200_000u32).filter(|&t| w.is_green(&[42], t)).count() as f64 / 200_000.0;
-            assert!((g - gamma as f64).abs() < 0.01, "gamma {gamma}: green share {g}");
+            assert!(
+                (g - gamma as f64).abs() < 0.01,
+                "gamma {gamma}: green share {g}"
+            );
         }
         let (a, b) = (wm(1, 0.5, 2.0, 1), wm(2, 0.5, 2.0, 1));
-        let same = (0..5000u32).filter(|&t| a.is_green(&[9], t) == b.is_green(&[9], t)).count();
-        assert!((2200..2800).contains(&same), "different keys give unrelated lists ({same}/5000 agree)");
-        let diff_ctx = (0..5000u32).filter(|&t| a.is_green(&[9], t) == a.is_green(&[10], t)).count();
-        assert!((2200..2800).contains(&diff_ctx), "different contexts give unrelated lists ({diff_ctx}/5000 agree)");
+        let same = (0..5000u32)
+            .filter(|&t| a.is_green(&[9], t) == b.is_green(&[9], t))
+            .count();
+        assert!(
+            (2200..2800).contains(&same),
+            "different keys give unrelated lists ({same}/5000 agree)"
+        );
+        let diff_ctx = (0..5000u32)
+            .filter(|&t| a.is_green(&[9], t) == a.is_green(&[10], t))
+            .count();
+        assert!(
+            (2200..2800).contains(&diff_ctx),
+            "different contexts give unrelated lists ({diff_ctx}/5000 agree)"
+        );
         assert_eq!(a.is_green(&[9], 77), a.is_green(&[9], 77));
         // only the last `context` tokens matter
         let w2 = wm(1, 0.5, 2.0, 2);
-        for t in 0..200 { assert_eq!(w2.is_green(&[5, 6, 7], t), w2.is_green(&[1, 6, 7], t)); }
+        for t in 0..200 {
+            assert_eq!(w2.is_green(&[5, 6, 7], t), w2.is_green(&[1, 6, 7], t));
+        }
     }
 
     #[test]
@@ -318,17 +536,40 @@ mod tests {
         let orig = l.clone();
         w.apply_to_logits(&[5], &mut l);
         for i in 0..1000 {
-            if i == 11 { assert!(l[i].is_nan()); continue; }
-            let expect = if orig[i].is_finite() && w.is_green(&[5], i as u32) { orig[i] + 2.5 } else { orig[i] };
+            if i == 11 {
+                assert!(l[i].is_nan());
+                continue;
+            }
+            let expect = if orig[i].is_finite() && w.is_green(&[5], i as u32) {
+                orig[i] + 2.5
+            } else {
+                orig[i]
+            };
             assert_eq!(l[i], expect, "token {i}");
         }
         assert_eq!(l[10], f32::NEG_INFINITY, "banned tokens stay banned");
         // candidates give the same numbers
         let mut c = Candidates::from_logits(&orig);
         w.apply_to_candidates(&[5], &mut c);
-        for cand in &c.items { assert_eq!(cand.logit, if w.is_green(&[5], cand.id) { orig[cand.id as usize] + 2.5 } else { orig[cand.id as usize] }); }
+        for cand in &c.items {
+            assert_eq!(
+                cand.logit,
+                if w.is_green(&[5], cand.id) {
+                    orig[cand.id as usize] + 2.5
+                } else {
+                    orig[cand.id as usize]
+                }
+            );
+        }
         // ignored tokens are untouched, delta 0 is a no-op
-        let wi = Watermark::new(WatermarkConfig { key: 3, gamma: 0.9, delta: 4.0, context: 1, ignore: vec![0, 1, 2, 2] }).unwrap();
+        let wi = Watermark::new(WatermarkConfig {
+            key: 3,
+            gamma: 0.9,
+            delta: 4.0,
+            context: 1,
+            ignore: vec![0, 1, 2, 2],
+        })
+        .unwrap();
         let mut z = vec![0f32; 50];
         wi.apply_to_logits(&[1], &mut z);
         assert!(z[..3].iter().all(|x| *x == 0.0) && z[3..].contains(&4.0));
@@ -353,9 +594,15 @@ mod tests {
         assert_eq!(binomial_tail(10, 11, 0.3), 0.0);
         assert!((binomial_tail(8, 8, 0.25) - 0.25f64.powi(8)).abs() < 1e-15);
         // exact and normal agree around the switch-over
-        let (e, a) = (binomial_tail(3000, 800, 0.25), binomial_tail(3001, 800, 0.25));
+        let (e, a) = (
+            binomial_tail(3000, 800, 0.25),
+            binomial_tail(3001, 800, 0.25),
+        );
         assert!(e > 0.0 && (a / e).ln().abs() < 0.3, "{e} vs {a}");
-        assert!(binomial_tail(100_000, 30_000, 0.25) < 1e-100 || binomial_tail(100_000, 30_000, 0.25) == 0.0);
+        assert!(
+            binomial_tail(100_000, 30_000, 0.25) < 1e-100
+                || binomial_tail(100_000, 30_000, 0.25) == 0.0
+        );
     }
 
     #[test]
@@ -367,14 +614,22 @@ mod tests {
             let t = uniform_tokens(1000 + s, 200, 5000);
             let d = w.score(&[], &t, true);
             assert!(d.scored >= 190, "{}", d.scored);
-            if d.p_value < 0.01 { hits += 1; }
+            if d.p_value < 0.01 {
+                hits += 1;
+            }
             sum += d.z;
             sq += d.z * d.z;
         }
         let rate = hits as f64 / trials as f64;
         assert!(rate < 0.02, "false positive rate at p<0.01 was {rate}");
-        let (mean, var) = (sum / trials as f64, sq / trials as f64 - (sum / trials as f64).powi(2));
-        assert!(mean.abs() < 0.1 && (var - 1.0).abs() < 0.15, "z has mean {mean}, variance {var}");
+        let (mean, var) = (
+            sum / trials as f64,
+            sq / trials as f64 - (sum / trials as f64).powi(2),
+        );
+        assert!(
+            mean.abs() < 0.1 && (var - 1.0).abs() < 0.15,
+            "z has mean {mean}, variance {var}"
+        );
     }
 
     #[test]
@@ -386,7 +641,9 @@ mod tests {
         for s in 0..60 {
             let t = generate(Some(&w), 500, 200, s, &prompt);
             let d = w.score(&prompt, &t, true);
-            if d.p_value < 1e-4 { detected += 1; }
+            if d.p_value < 1e-4 {
+                detected += 1;
+            }
             worst_z = worst_z.min(d.z);
         }
         assert!(detected >= 57, "detected {detected}/60 (worst z {worst_z})");
@@ -395,9 +652,13 @@ mod tests {
         let other = wm(4321, 0.25, 2.0, 1);
         for s in 0..60 {
             let plain = generate(None, 500, 200, 500 + s, &prompt);
-            if w.score(&prompt, &plain, true).p_value < 1e-4 { flagged += 1; }
+            if w.score(&prompt, &plain, true).p_value < 1e-4 {
+                flagged += 1;
+            }
             let marked = generate(Some(&w), 500, 200, 900 + s, &prompt);
-            if other.score(&prompt, &marked, true).p_value < 1e-4 { flagged += 1; }
+            if other.score(&prompt, &marked, true).p_value < 1e-4 {
+                flagged += 1;
+            }
         }
         assert!(flagged <= 1, "{flagged} false alarms");
         // context of two tokens works the same way
@@ -424,8 +685,15 @@ mod tests {
         let whole = w.score(&[], &doc, true);
         let found = w.scan(&[], &doc, 100, true).unwrap();
         assert!(found.adjusted_p < 1e-6, "adjusted p {}", found.adjusted_p);
-        assert!((350..=520).contains(&found.start), "best window starts at {}", found.start);
-        assert!(found.detection.z > whole.z, "the window is clearer than the whole document");
+        assert!(
+            (350..=520).contains(&found.start),
+            "best window starts at {}",
+            found.start
+        );
+        assert!(
+            found.detection.z > whole.z,
+            "the window is clearer than the whole document"
+        );
         assert!(found.windows > 10);
         // an unmarked document of the same length is not flagged by scanning
         let plain = uniform_tokens(4, 1000, 500);
@@ -434,15 +702,38 @@ mod tests {
         assert!(w.score(&[], &marked[57..], true).p_value < 1e-6);
         assert!(w.score(&[], &marked[..90], true).p_value < 1e-3);
         // a prefix supplies the context of the first token
-        assert_eq!(w.score(&[1], &marked, true).scored, w.score(&[], &marked, true).scored + 1);
+        assert_eq!(
+            w.score(&[1], &marked, true).scored,
+            w.score(&[], &marked, true).scored + 1
+        );
         // replacing tokens weakens the signal gradually; replacing all removes it
         let mut r = Rng::new(9);
-        let edit = |frac: f32, r: &mut Rng| -> Vec<u32> { marked.iter().map(|&t| if r.f32() < frac { (r.next_u64() % 500) as u32 } else { t }).collect() };
-        let (z30, z60) = (w.score(&[], &edit(0.3, &mut r), true).z, w.score(&[], &edit(0.6, &mut r), true).z);
+        let edit = |frac: f32, r: &mut Rng| -> Vec<u32> {
+            marked
+                .iter()
+                .map(|&t| {
+                    if r.f32() < frac {
+                        (r.next_u64() % 500) as u32
+                    } else {
+                        t
+                    }
+                })
+                .collect()
+        };
+        let (z30, z60) = (
+            w.score(&[], &edit(0.3, &mut r), true).z,
+            w.score(&[], &edit(0.6, &mut r), true).z,
+        );
         let z_full = w.score(&[], &marked, true).z;
-        assert!(z_full > z30 && z30 > z60, "z falls with edits: {z_full} {z30} {z60}");
+        assert!(
+            z_full > z30 && z30 > z60,
+            "z falls with edits: {z_full} {z30} {z60}"
+        );
         assert!(z30 > 5.0, "30% replaced is still clearly marked, z={z30}");
-        assert!(w.score(&[], &edit(1.0, &mut r), true).p_value > 1e-3, "fully rewritten text carries no mark");
+        assert!(
+            w.score(&[], &edit(1.0, &mut r), true).p_value > 1e-3,
+            "fully rewritten text carries no mark"
+        );
     }
 
     #[test]
@@ -452,7 +743,12 @@ mod tests {
             let t = generate(Some(&w), 300, 8, s, &[7]);
             let d = w.score(&[7], &t, true);
             assert!(d.scored <= 8);
-            assert!(d.p_value >= 0.25f64.powi(d.scored as i32) * 0.999, "p {} below the floor for n={}", d.p_value, d.scored);
+            assert!(
+                d.p_value >= 0.25f64.powi(d.scored as i32) * 0.999,
+                "p {} below the floor for n={}",
+                d.p_value,
+                d.scored
+            );
         }
         // a looping phrase would be scored hundreds of times without deduplication
         let phrase = uniform_tokens(5, 5, 1000);
@@ -466,7 +762,14 @@ mod tests {
         let e = w.score(&[], &[], true);
         assert_eq!((e.scored, e.green, e.z, e.p_value), (0, 0, 0.0, 1.0));
         assert!(w.scan(&[], &[], 10, true).is_none() && w.scan(&[], &[1, 2], 0, true).is_none());
-        let wi = Watermark::new(WatermarkConfig { key: 8, gamma: 0.25, delta: 2.0, context: 1, ignore: vec![5] }).unwrap();
+        let wi = Watermark::new(WatermarkConfig {
+            key: 8,
+            gamma: 0.25,
+            delta: 2.0,
+            context: 1,
+            ignore: vec![5],
+        })
+        .unwrap();
         assert_eq!(wi.score(&[], &[5, 5, 5, 5], false).scored, 0);
     }
 
@@ -482,7 +785,14 @@ mod tests {
         let d = w.score(&[u32::MAX; 20], &t, false);
         assert!(d.p_value.is_finite() && d.z.is_finite());
         assert!(w.scan(&[1, 2, 3], &t, 1000, true).is_some());
-        let big = Watermark::new(WatermarkConfig { key: u64::MAX, gamma: 0.999, delta: 50.0, context: 8, ignore: vec![u32::MAX] }).unwrap();
+        let big = Watermark::new(WatermarkConfig {
+            key: u64::MAX,
+            gamma: 0.999,
+            delta: 50.0,
+            context: 8,
+            ignore: vec![u32::MAX],
+        })
+        .unwrap();
         let mut l = vec![f32::MAX; 16];
         big.apply_to_logits(&[1; 3], &mut l);
         assert!(l.iter().all(|x| !x.is_nan()));

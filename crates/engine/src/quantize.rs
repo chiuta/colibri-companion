@@ -13,9 +13,16 @@
 //!
 //! Weights (`w`) come from an [`Imatrix`] (the mean squared activation of each input column): columns the
 //! model is sensitive to get a finer grid. Without one, a magnitude-based weighting is used.
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::neg_cmp_op_on_partial_ord, clippy::collapsible_if, clippy::manual_is_multiple_of, clippy::single_match)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::neg_cmp_op_on_partial_ord,
+    clippy::collapsible_if,
+    clippy::manual_is_multiple_of,
+    clippy::single_match
+)]
 use crate::gguf_write::MetaValue;
-use crate::quant::{f16_to_f32, DType};
+use crate::quant::{DType, f16_to_f32};
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -46,34 +53,48 @@ pub fn f32_to_f16(x: f32) -> u16 {
     let sign = ((b >> 16) & 0x8000) as u16;
     let e = ((b >> 23) & 0xff) as i32;
     let m = b & 0x7f_ffff;
-    if e == 0xff { return sign | 0x7c00 | if m != 0 { 0x200 | (m >> 13) as u16 } else { 0 }; }
+    if e == 0xff {
+        return sign | 0x7c00 | if m != 0 { 0x200 | (m >> 13) as u16 } else { 0 };
+    }
     let ne = e - 127 + 15;
-    if ne >= 31 { return sign | 0x7c00; }
+    if ne >= 31 {
+        return sign | 0x7c00;
+    }
     if ne <= 0 {
-        if ne < -10 { return sign; }
+        if ne < -10 {
+            return sign;
+        }
         let mm = m | 0x80_0000;
         let shift = (14 - ne) as u32;
         let mut h = (mm >> shift) as u16;
         let rem = mm & ((1 << shift) - 1);
         let half = 1u32 << (shift - 1);
-        if rem > half || (rem == half && h & 1 == 1) { h += 1; }
+        if rem > half || (rem == half && h & 1 == 1) {
+            h += 1;
+        }
         return sign | h;
     }
     let mut h = (((ne as u32) << 10) | (m >> 13)) as u16;
     let rem = m & 0x1fff;
-    if rem > 0x1000 || (rem == 0x1000 && h & 1 == 1) { h += 1; } // a carry into the exponent is correct (→ infinity)
+    if rem > 0x1000 || (rem == 0x1000 && h & 1 == 1) {
+        h += 1;
+    } // a carry into the exponent is correct (→ infinity)
     sign | h
 }
 
 /// f32 → bfloat16, round to nearest even (NaN stays NaN).
 pub fn f32_to_bf16(x: f32) -> u16 {
     let b = x.to_bits();
-    if x.is_nan() { return ((b >> 16) | 0x40) as u16; }
+    if x.is_nan() {
+        return ((b >> 16) | 0x40) as u16;
+    }
     ((b as u64 + 0x7fff + ((b >> 16) & 1) as u64) >> 16) as u16
 }
 
 #[cfg(test)]
-fn r16(x: f32) -> f32 { f16_to_f32(f32_to_f16(x)) }
+fn r16(x: f32) -> f32 {
+    f16_to_f32(f32_to_f16(x))
+}
 
 // ------------------------------------------------------------------ weights and fits
 
@@ -83,18 +104,37 @@ fn block_weights(x: &[f32], imp: Option<&[f32]>, w: &mut [f32]) {
     let n = x.len();
     let sigma2 = x.iter().map(|v| v * v).sum::<f32>() / n as f32;
     match imp {
-        Some(q) => for i in 0..n { w[i] = q[i].max(0.0) * (sigma2 + x[i] * x[i]).sqrt(); },
-        None => { let s = sigma2.sqrt(); for i in 0..n { w[i] = s + x[i].abs(); } }
+        Some(q) => {
+            for i in 0..n {
+                w[i] = q[i].max(0.0) * (sigma2 + x[i] * x[i]).sqrt();
+            }
+        }
+        None => {
+            let s = sigma2.sqrt();
+            for i in 0..n {
+                w[i] = s + x[i].abs();
+            }
+        }
     }
-    if w[..n].iter().all(|v| !(*v > 0.0)) { w[..n].fill(1.0); }
+    if w[..n].iter().all(|v| !(*v > 0.0)) {
+        w[..n].fill(1.0);
+    }
 }
 
 /// Symmetric fit: `x ≈ s·q` with integer `q ∈ [-nmax, nmax-1]`. Returns `s` (may be negative) and fills `q`.
 fn fit_sym(x: &[f32], w: &[f32], nmax: i32, q: &mut [i8]) -> f32 {
     let mut amax = 0f32;
     let mut signed = 0f32;
-    for &v in x { if v.abs() > amax { amax = v.abs(); signed = v; } }
-    if amax == 0.0 { q.iter_mut().for_each(|v| *v = 0); return 0.0; }
+    for &v in x {
+        if v.abs() > amax {
+            amax = v.abs();
+            signed = v;
+        }
+    }
+    if amax == 0.0 {
+        q.iter_mut().for_each(|v| *v = 0);
+        return 0.0;
+    }
     let mut best = -1f32;
     let mut best_scale = 0f32;
     let mut tmp = [0i8; 256];
@@ -102,7 +142,9 @@ fn fit_sym(x: &[f32], w: &[f32], nmax: i32, q: &mut [i8]) -> f32 {
         let iscale = -(nmax as f32 + 0.1 * is as f32) / signed;
         let (mut sumlx, mut suml2) = (0f32, 0f32);
         for i in 0..x.len() {
-            let l = (iscale * x[i]).round().clamp(-(nmax as f32), (nmax - 1) as f32);
+            let l = (iscale * x[i])
+                .round()
+                .clamp(-(nmax as f32), (nmax - 1) as f32);
             tmp[i] = l as i8;
             sumlx += w[i] * x[i] * l;
             suml2 += w[i] * l * l;
@@ -118,14 +160,31 @@ fn fit_sym(x: &[f32], w: &[f32], nmax: i32, q: &mut [i8]) -> f32 {
 
 /// Affine fit: `x ≈ s·L + off` with integer `L ∈ [0, nmax]`. Returns `(s, off)` and fills `l`.
 /// With `off_le_zero` the offset is constrained to ≤ 0 (the K-quant form `s·L − min`).
-fn fit_affine(x: &[f32], w: &[f32], nmax: i32, nstep: i32, rmin: f32, rdelta: f32, off_le_zero: bool, l: &mut [u8]) -> (f32, f32) {
+fn fit_affine(
+    x: &[f32],
+    w: &[f32],
+    nmax: i32,
+    nstep: i32,
+    rmin: f32,
+    rdelta: f32,
+    off_le_zero: bool,
+    l: &mut [u8],
+) -> (f32, f32) {
     let n = x.len();
     let mut mn = x.iter().copied().fold(f32::INFINITY, f32::min);
     let mx = x.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    if off_le_zero { mn = mn.min(0.0); }
-    if mx <= mn { l[..n].fill(0); return (0.0, mn); }
+    if off_le_zero {
+        mn = mn.min(0.0);
+    }
+    if mx <= mn {
+        l[..n].fill(0);
+        return (0.0, mn);
+    }
     let (mut sum_w, mut sum_x) = (0f32, 0f32);
-    for i in 0..n { sum_w += w[i]; sum_x += w[i] * x[i]; }
+    for i in 0..n {
+        sum_w += w[i];
+        sum_x += w[i] * x[i];
+    }
     let nm = nmax as f32;
     let mut best_scale = (mx - mn) / nm;
     let mut best_off = mn;
@@ -144,17 +203,34 @@ fn fit_affine(x: &[f32], w: &[f32], nmax: i32, nstep: i32, rmin: f32, rdelta: f3
         for i in 0..n {
             let li = (iscale * (x[i] - mn)).round().clamp(0.0, nm);
             tmp[i] = li as u8;
-            sl += w[i] * li; sl2 += w[i] * li * li; sxl += w[i] * li * x[i];
+            sl += w[i] * li;
+            sl2 += w[i] * li * li;
+            sxl += w[i] * li * x[i];
         }
         let det = sum_w * sl2 - sl * sl;
-        if det <= 0.0 { continue; }
+        if det <= 0.0 {
+            continue;
+        }
         let mut sc = (sum_w * sxl - sum_x * sl) / det;
         let mut off = (sl2 * sum_x - sl * sxl) / det;
-        if off_le_zero && off > 0.0 { off = 0.0; sc = if sl2 > 0.0 { sxl / sl2 } else { 0.0 }; }
-        if !(sc.is_finite() && off.is_finite()) { continue; }
+        if off_le_zero && off > 0.0 {
+            off = 0.0;
+            sc = if sl2 > 0.0 { sxl / sl2 } else { 0.0 };
+        }
+        if !(sc.is_finite() && off.is_finite()) {
+            continue;
+        }
         let mut err = 0f32;
-        for i in 0..n { let d = sc * tmp[i] as f32 + off - x[i]; err += w[i] * d * d; }
-        if err < best_err { best_err = err; best_scale = sc; best_off = off; l[..n].copy_from_slice(&tmp[..n]); }
+        for i in 0..n {
+            let d = sc * tmp[i] as f32 + off - x[i];
+            err += w[i] * d * d;
+        }
+        if err < best_err {
+            best_err = err;
+            best_scale = sc;
+            best_off = off;
+            l[..n].copy_from_slice(&tmp[..n]);
+        }
     }
     (best_scale, best_off)
 }
@@ -170,14 +246,22 @@ fn put16(b: &mut [u8], at: usize, v: f32) -> f32 {
 fn enc_q8_0(x: &[f32], _w: &[f32], b: &mut [u8]) {
     let amax = x.iter().fold(0f32, |a, v| a.max(v.abs()));
     let d = put16(b, 0, amax / 127.0);
-    for i in 0..32 { b[2 + i] = if d > 0.0 { (x[i] / d).round().clamp(-127.0, 127.0) as i8 as u8 } else { 0 }; }
+    for i in 0..32 {
+        b[2 + i] = if d > 0.0 {
+            (x[i] / d).round().clamp(-127.0, 127.0) as i8 as u8
+        } else {
+            0
+        };
+    }
 }
 
 fn enc_q4_0(x: &[f32], w: &[f32], b: &mut [u8]) {
     let mut q = [0i8; 32];
     let s = fit_sym(x, w, 8, &mut q);
     put16(b, 0, s);
-    for j in 0..16 { b[2 + j] = (q[j] + 8) as u8 | (((q[j + 16] + 8) as u8) << 4); }
+    for j in 0..16 {
+        b[2 + j] = (q[j] + 8) as u8 | (((q[j + 16] + 8) as u8) << 4);
+    }
 }
 
 fn enc_q5_0(x: &[f32], w: &[f32], b: &mut [u8]) {
@@ -198,15 +282,29 @@ fn enc_q4_1(x: &[f32], w: &[f32], b: &mut [u8]) {
     let mut l = [0u8; 32];
     let (s, off) = fit_affine(x, w, 15, 15, -1.0, 0.1, false, &mut l);
     let (d, m) = (put16(b, 0, s), put16(b, 2, off));
-    for i in 0..32 { l[i] = if d > 0.0 { ((x[i] - m) / d).round().clamp(0.0, 15.0) as u8 } else { 0 }; }
-    for j in 0..16 { b[4 + j] = l[j] | (l[j + 16] << 4); }
+    for i in 0..32 {
+        l[i] = if d > 0.0 {
+            ((x[i] - m) / d).round().clamp(0.0, 15.0) as u8
+        } else {
+            0
+        };
+    }
+    for j in 0..16 {
+        b[4 + j] = l[j] | (l[j + 16] << 4);
+    }
 }
 
 fn enc_q5_1(x: &[f32], w: &[f32], b: &mut [u8]) {
     let mut l = [0u8; 32];
     let (s, off) = fit_affine(x, w, 31, 15, -1.0, 0.1, false, &mut l);
     let (d, m) = (put16(b, 0, s), put16(b, 2, off));
-    for i in 0..32 { l[i] = if d > 0.0 { ((x[i] - m) / d).round().clamp(0.0, 31.0) as u8 } else { 0 }; }
+    for i in 0..32 {
+        l[i] = if d > 0.0 {
+            ((x[i] - m) / d).round().clamp(0.0, 31.0) as u8
+        } else {
+            0
+        };
+    }
     let mut qh = 0u32;
     for j in 0..16 {
         b[8 + j] = (l[j] & 0xf) | ((l[j + 16] & 0xf) << 4);
@@ -222,11 +320,17 @@ fn enc_q8_k(x: &[f32], _w: &[f32], b: &mut [u8]) {
     b[0..4].copy_from_slice(&d.to_le_bytes());
     let mut sums = [0i32; 16];
     for i in 0..256 {
-        let q = if d > 0.0 { (x[i] / d).round().clamp(-127.0, 127.0) as i32 } else { 0 };
+        let q = if d > 0.0 {
+            (x[i] / d).round().clamp(-127.0, 127.0) as i32
+        } else {
+            0
+        };
         b[4 + i] = q as i8 as u8;
         sums[i / 16] += q;
     }
-    for (g, s) in sums.iter().enumerate() { b[260 + 2 * g..262 + 2 * g].copy_from_slice(&(*s as i16).to_le_bytes()); }
+    for (g, s) in sums.iter().enumerate() {
+        b[260 + 2 * g..262 + 2 * g].copy_from_slice(&(*s as i16).to_le_bytes());
+    }
 }
 
 /// The 6-bit scale/min packing shared by Q4_K and Q5_K (inverse of `scale_min_k4`).
@@ -244,23 +348,56 @@ fn pack_scale_min(ls: &[u8; 8], lm: &[u8; 8], out: &mut [u8]) {
 
 /// Shared first half of Q4_K / Q5_K: fit eight 32-element sub-blocks, quantise their scales and mins to
 /// 6 bits, and re-derive the values from the scales the decoder will see.
-fn k_affine8(x: &[f32], w: &[f32], nmax: i32, rmin: f32, b: &mut [u8], q: &mut [u8; 256], ls: &mut [u8; 8], lm: &mut [u8; 8]) {
+fn k_affine8(
+    x: &[f32],
+    w: &[f32],
+    nmax: i32,
+    rmin: f32,
+    b: &mut [u8],
+    q: &mut [u8; 256],
+    ls: &mut [u8; 8],
+    lm: &mut [u8; 8],
+) {
     let (mut sc, mut mn) = ([0f32; 8], [0f32; 8]);
     let mut l = [0u8; 32];
     for j in 0..8 {
-        let (s, off) = fit_affine(&x[j * 32..j * 32 + 32], &w[j * 32..j * 32 + 32], nmax, 15, rmin, 0.1, true, &mut l);
+        let (s, off) = fit_affine(
+            &x[j * 32..j * 32 + 32],
+            &w[j * 32..j * 32 + 32],
+            nmax,
+            15,
+            rmin,
+            0.1,
+            true,
+            &mut l,
+        );
         sc[j] = s.max(0.0);
         mn[j] = (-off).max(0.0);
     }
-    let (ms, mm) = (sc.iter().fold(0f32, |a, &v| a.max(v)), mn.iter().fold(0f32, |a, &v| a.max(v)));
+    let (ms, mm) = (
+        sc.iter().fold(0f32, |a, &v| a.max(v)),
+        mn.iter().fold(0f32, |a, &v| a.max(v)),
+    );
     let d = put16(b, 0, ms / 63.0);
     let dmin = put16(b, 2, mm / 63.0);
     for j in 0..8 {
-        ls[j] = if d > 0.0 { (sc[j] / d).round().clamp(0.0, 63.0) as u8 } else { 0 };
-        lm[j] = if dmin > 0.0 { (mn[j] / dmin).round().clamp(0.0, 63.0) as u8 } else { 0 };
+        ls[j] = if d > 0.0 {
+            (sc[j] / d).round().clamp(0.0, 63.0) as u8
+        } else {
+            0
+        };
+        lm[j] = if dmin > 0.0 {
+            (mn[j] / dmin).round().clamp(0.0, 63.0) as u8
+        } else {
+            0
+        };
         let (dl, ml) = (d * ls[j] as f32, dmin * lm[j] as f32);
         for i in 0..32 {
-            q[j * 32 + i] = if dl > 0.0 { ((x[j * 32 + i] + ml) / dl).round().clamp(0.0, nmax as f32) as u8 } else { 0 };
+            q[j * 32 + i] = if dl > 0.0 {
+                ((x[j * 32 + i] + ml) / dl).round().clamp(0.0, nmax as f32) as u8
+            } else {
+                0
+            };
         }
     }
     pack_scale_min(ls, lm, &mut b[4..16]);
@@ -269,69 +406,125 @@ fn k_affine8(x: &[f32], w: &[f32], nmax: i32, rmin: f32, b: &mut [u8], q: &mut [
 fn enc_q4_k(x: &[f32], w: &[f32], b: &mut [u8]) {
     let (mut q, mut ls, mut lm) = ([0u8; 256], [0u8; 8], [0u8; 8]);
     k_affine8(x, w, 15, -1.0, b, &mut q, &mut ls, &mut lm);
-    for c in 0..4 { for l in 0..32 { b[16 + c * 32 + l] = q[c * 64 + l] | (q[c * 64 + 32 + l] << 4); } }
+    for c in 0..4 {
+        for l in 0..32 {
+            b[16 + c * 32 + l] = q[c * 64 + l] | (q[c * 64 + 32 + l] << 4);
+        }
+    }
 }
 
 fn enc_q5_k(x: &[f32], w: &[f32], b: &mut [u8]) {
     let (mut q, mut ls, mut lm) = ([0u8; 256], [0u8; 8], [0u8; 8]);
     k_affine8(x, w, 31, -0.5, b, &mut q, &mut ls, &mut lm);
-    for c in 0..4 { for l in 0..32 {
-        let (lo, hi) = (q[c * 64 + l], q[c * 64 + 32 + l]);
-        b[48 + c * 32 + l] = (lo & 0xf) | ((hi & 0xf) << 4);
-        b[16 + l] |= ((lo >> 4) << (2 * c)) | ((hi >> 4) << (2 * c + 1));
-    } }
+    for c in 0..4 {
+        for l in 0..32 {
+            let (lo, hi) = (q[c * 64 + l], q[c * 64 + 32 + l]);
+            b[48 + c * 32 + l] = (lo & 0xf) | ((hi & 0xf) << 4);
+            b[16 + l] |= ((lo >> 4) << (2 * c)) | ((hi >> 4) << (2 * c + 1));
+        }
+    }
 }
 
 fn enc_q6_k(x: &[f32], w: &[f32], b: &mut [u8]) {
     let mut qs = [0i8; 256];
     let mut sc = [0f32; 16];
-    for j in 0..16 { sc[j] = fit_sym(&x[j * 16..j * 16 + 16], &w[j * 16..j * 16 + 16], 32, &mut qs[j * 16..j * 16 + 16]); }
-    let smax = sc.iter().copied().fold(0f32, |a, v| if v.abs() > a.abs() { v } else { a });
+    for j in 0..16 {
+        sc[j] = fit_sym(
+            &x[j * 16..j * 16 + 16],
+            &w[j * 16..j * 16 + 16],
+            32,
+            &mut qs[j * 16..j * 16 + 16],
+        );
+    }
+    let smax = sc
+        .iter()
+        .copied()
+        .fold(0f32, |a, v| if v.abs() > a.abs() { v } else { a });
     let d = put16(b, 208, smax / -128.0);
     let mut u = [0u8; 256];
     for j in 0..16 {
-        let ls = if d != 0.0 { (sc[j] / d).round().clamp(-128.0, 127.0) as i8 } else { 0 };
+        let ls = if d != 0.0 {
+            (sc[j] / d).round().clamp(-128.0, 127.0) as i8
+        } else {
+            0
+        };
         b[192 + j] = ls as u8;
         let dl = d * ls as f32;
         for i in 0..16 {
-            let q = if dl != 0.0 { (x[j * 16 + i] / dl).round().clamp(-32.0, 31.0) as i32 } else { 0 };
+            let q = if dl != 0.0 {
+                (x[j * 16 + i] / dl).round().clamp(-32.0, 31.0) as i32
+            } else {
+                0
+            };
             u[j * 16 + i] = (q + 32) as u8;
         }
     }
-    for half in 0..2 { for l in 0..32 {
-        let o = half * 128;
-        let (q1, q2, q3, q4) = (u[o + l], u[o + l + 32], u[o + l + 64], u[o + l + 96]);
-        b[half * 64 + l] = (q1 & 0xf) | ((q3 & 0xf) << 4);
-        b[half * 64 + l + 32] = (q2 & 0xf) | ((q4 & 0xf) << 4);
-        b[128 + half * 32 + l] = (q1 >> 4) | ((q2 >> 4) << 2) | ((q3 >> 4) << 4) | ((q4 >> 4) << 6);
-    } }
+    for half in 0..2 {
+        for l in 0..32 {
+            let o = half * 128;
+            let (q1, q2, q3, q4) = (u[o + l], u[o + l + 32], u[o + l + 64], u[o + l + 96]);
+            b[half * 64 + l] = (q1 & 0xf) | ((q3 & 0xf) << 4);
+            b[half * 64 + l + 32] = (q2 & 0xf) | ((q4 & 0xf) << 4);
+            b[128 + half * 32 + l] =
+                (q1 >> 4) | ((q2 >> 4) << 2) | ((q3 >> 4) << 4) | ((q4 >> 4) << 6);
+        }
+    }
 }
 
 fn enc_q3_k(x: &[f32], w: &[f32], b: &mut [u8]) {
     let mut qs = [0i8; 256];
     let mut sc = [0f32; 16];
-    for j in 0..16 { sc[j] = fit_sym(&x[j * 16..j * 16 + 16], &w[j * 16..j * 16 + 16], 4, &mut qs[j * 16..j * 16 + 16]); }
-    let smax = sc.iter().copied().fold(0f32, |a, v| if v.abs() > a.abs() { v } else { a });
+    for j in 0..16 {
+        sc[j] = fit_sym(
+            &x[j * 16..j * 16 + 16],
+            &w[j * 16..j * 16 + 16],
+            4,
+            &mut qs[j * 16..j * 16 + 16],
+        );
+    }
+    let smax = sc
+        .iter()
+        .copied()
+        .fold(0f32, |a, v| if v.abs() > a.abs() { v } else { a });
     let d = put16(b, 108, smax / -32.0);
     let mut q = [0i32; 256];
     let mut ls = [0i32; 16];
     for j in 0..16 {
-        ls[j] = if d != 0.0 { (sc[j] / d).round().clamp(-32.0, 31.0) as i32 } else { 0 };
+        ls[j] = if d != 0.0 {
+            (sc[j] / d).round().clamp(-32.0, 31.0) as i32
+        } else {
+            0
+        };
         let dl = d * ls[j] as f32;
-        for i in 0..16 { q[j * 16 + i] = if dl != 0.0 { (x[j * 16 + i] / dl).round().clamp(-4.0, 3.0) as i32 } else { 0 }; }
+        for i in 0..16 {
+            q[j * 16 + i] = if dl != 0.0 {
+                (x[j * 16 + i] / dl).round().clamp(-4.0, 3.0) as i32
+            } else {
+                0
+            };
+        }
     }
     // scales: 6 bits each (value + 32), low nibbles in bytes 0..8 (two per byte), high pairs in 8..12
     for (i, &s) in ls.iter().enumerate() {
         let u = (s + 32) as u8;
         let (lo, hi) = (u & 0xf, u >> 4);
-        if i < 8 { b[96 + i] |= lo } else { b[96 + i - 8] |= lo << 4 }
+        if i < 8 {
+            b[96 + i] |= lo
+        } else {
+            b[96 + i - 8] |= lo << 4
+        }
         b[96 + 8 + i % 4] |= hi << (2 * (i / 4));
     }
     for e in 0..256 {
         let (n, r) = (e / 128, e % 128);
         let (j, half, l) = (r / 32, (r % 32) / 16, r % 16);
         let v = q[e];
-        let q2 = if v >= 0 { b[half * 16 + l] |= 1 << (n * 4 + j); v } else { v + 4 };
+        let q2 = if v >= 0 {
+            b[half * 16 + l] |= 1 << (n * 4 + j);
+            v
+        } else {
+            v + 4
+        };
         b[32 + n * 32 + half * 16 + l] |= (q2 as u8) << (2 * j);
     }
 }
@@ -340,20 +533,46 @@ fn enc_q2_k(x: &[f32], w: &[f32], b: &mut [u8]) {
     let (mut sc, mut mn) = ([0f32; 16], [0f32; 16]);
     let mut l = [0u8; 16];
     for j in 0..16 {
-        let (s, off) = fit_affine(&x[j * 16..j * 16 + 16], &w[j * 16..j * 16 + 16], 3, 15, -0.5, 0.1, true, &mut l);
+        let (s, off) = fit_affine(
+            &x[j * 16..j * 16 + 16],
+            &w[j * 16..j * 16 + 16],
+            3,
+            15,
+            -0.5,
+            0.1,
+            true,
+            &mut l,
+        );
         sc[j] = s.max(0.0);
         mn[j] = (-off).max(0.0);
     }
-    let (ms, mm) = (sc.iter().fold(0f32, |a, &v| a.max(v)), mn.iter().fold(0f32, |a, &v| a.max(v)));
+    let (ms, mm) = (
+        sc.iter().fold(0f32, |a, &v| a.max(v)),
+        mn.iter().fold(0f32, |a, &v| a.max(v)),
+    );
     let d = put16(b, 80, ms / 15.0);
     let dmin = put16(b, 82, mm / 15.0);
     let mut q = [0u8; 256];
     for j in 0..16 {
-        let ls = if d > 0.0 { (sc[j] / d).round().clamp(0.0, 15.0) as u8 } else { 0 };
-        let lm = if dmin > 0.0 { (mn[j] / dmin).round().clamp(0.0, 15.0) as u8 } else { 0 };
+        let ls = if d > 0.0 {
+            (sc[j] / d).round().clamp(0.0, 15.0) as u8
+        } else {
+            0
+        };
+        let lm = if dmin > 0.0 {
+            (mn[j] / dmin).round().clamp(0.0, 15.0) as u8
+        } else {
+            0
+        };
         b[j] = ls | (lm << 4);
         let (dl, ml) = (d * ls as f32, dmin * lm as f32);
-        for i in 0..16 { q[j * 16 + i] = if dl > 0.0 { ((x[j * 16 + i] + ml) / dl).round().clamp(0.0, 3.0) as u8 } else { 0 }; }
+        for i in 0..16 {
+            q[j * 16 + i] = if dl > 0.0 {
+                ((x[j * 16 + i] + ml) / dl).round().clamp(0.0, 3.0) as u8
+            } else {
+                0
+            };
+        }
     }
     for e in 0..256 {
         let (n, r) = (e / 128, e % 128);
@@ -366,27 +585,73 @@ type BlockEnc = fn(&[f32], &[f32], &mut [u8]);
 
 fn block_encoder(t: DType) -> Option<BlockEnc> {
     Some(match t {
-        DType::Q8_0 => enc_q8_0, DType::Q4_0 => enc_q4_0, DType::Q5_0 => enc_q5_0, DType::Q4_1 => enc_q4_1,
-        DType::Q5_1 => enc_q5_1, DType::Q8K => enc_q8_k, DType::Q4K => enc_q4_k, DType::Q5K => enc_q5_k,
-        DType::Q6K => enc_q6_k, DType::Q3K => enc_q3_k, DType::Q2K => enc_q2_k,
+        DType::Q8_0 => enc_q8_0,
+        DType::Q4_0 => enc_q4_0,
+        DType::Q5_0 => enc_q5_0,
+        DType::Q4_1 => enc_q4_1,
+        DType::Q5_1 => enc_q5_1,
+        DType::Q8K => enc_q8_k,
+        DType::Q4K => enc_q4_k,
+        DType::Q5K => enc_q5_k,
+        DType::Q6K => enc_q6_k,
+        DType::Q3K => enc_q3_k,
+        DType::Q2K => enc_q2_k,
         _ => return None,
     })
 }
 
 /// Encode one row (`x.len()` a whole number of blocks) into `out` (exactly the row's byte size).
 /// `imp` is the per-column importance for this row (same length as `x`), if any.
-pub fn quantize_row_into(t: DType, x: &[f32], imp: Option<&[f32]>, out: &mut [u8]) -> Result<(), QuantizeError> {
+pub fn quantize_row_into(
+    t: DType,
+    x: &[f32],
+    imp: Option<&[f32]>,
+    out: &mut [u8],
+) -> Result<(), QuantizeError> {
     let (e, bsz) = t.geometry().ok_or(QuantizeError::Unsupported(t))?;
-    let need = t.bytes_for(x.len() as u64).ok_or_else(|| QuantizeError::BadShape(format!("{} values are not a whole number of {t:?} blocks", x.len())))? as usize;
-    if out.len() != need { return Err(QuantizeError::BadShape(format!("output buffer is {} bytes, {need} needed", out.len()))); }
-    if let Some(q) = imp { if q.len() != x.len() { return Err(QuantizeError::BadShape("importance vector length differs from the row".into())); } }
+    let need = t.bytes_for(x.len() as u64).ok_or_else(|| {
+        QuantizeError::BadShape(format!(
+            "{} values are not a whole number of {t:?} blocks",
+            x.len()
+        ))
+    })? as usize;
+    if out.len() != need {
+        return Err(QuantizeError::BadShape(format!(
+            "output buffer is {} bytes, {need} needed",
+            out.len()
+        )));
+    }
+    if let Some(q) = imp {
+        if q.len() != x.len() {
+            return Err(QuantizeError::BadShape(
+                "importance vector length differs from the row".into(),
+            ));
+        }
+    }
     match t {
-        DType::F32 => { for (o, v) in out.chunks_exact_mut(4).zip(x) { o.copy_from_slice(&v.to_le_bytes()); } return Ok(()); }
-        DType::F16 => { for (o, v) in out.chunks_exact_mut(2).zip(x) { o.copy_from_slice(&f32_to_f16(*v).to_le_bytes()); } return Ok(()); }
-        DType::BF16 => { for (o, v) in out.chunks_exact_mut(2).zip(x) { o.copy_from_slice(&f32_to_bf16(*v).to_le_bytes()); } return Ok(()); }
+        DType::F32 => {
+            for (o, v) in out.chunks_exact_mut(4).zip(x) {
+                o.copy_from_slice(&v.to_le_bytes());
+            }
+            return Ok(());
+        }
+        DType::F16 => {
+            for (o, v) in out.chunks_exact_mut(2).zip(x) {
+                o.copy_from_slice(&f32_to_f16(*v).to_le_bytes());
+            }
+            return Ok(());
+        }
+        DType::BF16 => {
+            for (o, v) in out.chunks_exact_mut(2).zip(x) {
+                o.copy_from_slice(&f32_to_bf16(*v).to_le_bytes());
+            }
+            return Ok(());
+        }
         _ => {}
     }
-    if x.iter().any(|v| !v.is_finite()) { return Err(QuantizeError::NonFinite); }
+    if x.iter().any(|v| !v.is_finite()) {
+        return Err(QuantizeError::NonFinite);
+    }
     let enc = block_encoder(t).ok_or(QuantizeError::Unsupported(t))?;
     let mut w = [0f32; 256];
     out.fill(0);
@@ -399,7 +664,9 @@ pub fn quantize_row_into(t: DType, x: &[f32], imp: Option<&[f32]>, out: &mut [u8
 
 /// Encode one row into a fresh vector.
 pub fn quantize_row(t: DType, x: &[f32], imp: Option<&[f32]>) -> Result<Vec<u8>, QuantizeError> {
-    let n = t.bytes_for(x.len() as u64).ok_or_else(|| QuantizeError::BadShape(format!("{} values do not fit {t:?} blocks", x.len())))? as usize;
+    let n = t.bytes_for(x.len() as u64).ok_or_else(|| {
+        QuantizeError::BadShape(format!("{} values do not fit {t:?} blocks", x.len()))
+    })? as usize;
     let mut v = vec![0u8; n];
     quantize_row_into(t, x, imp, &mut v)?;
     Ok(v)
@@ -407,23 +674,61 @@ pub fn quantize_row(t: DType, x: &[f32], imp: Option<&[f32]>) -> Result<Vec<u8>,
 
 /// Encode a `rows × cols` matrix (row-major). Rows are independent, so the work is split across
 /// `threads` and the result is bit-identical for any thread count. `imp` has `cols` entries.
-pub fn quantize_matrix(t: DType, data: &[f32], cols: usize, imp: Option<&[f32]>, threads: usize) -> Result<Vec<u8>, QuantizeError> {
-    if cols == 0 || data.len() % cols != 0 { return Err(QuantizeError::BadShape(format!("{} values are not a whole number of rows of {cols}", data.len()))); }
+pub fn quantize_matrix(
+    t: DType,
+    data: &[f32],
+    cols: usize,
+    imp: Option<&[f32]>,
+    threads: usize,
+) -> Result<Vec<u8>, QuantizeError> {
+    if cols == 0 || data.len() % cols != 0 {
+        return Err(QuantizeError::BadShape(format!(
+            "{} values are not a whole number of rows of {cols}",
+            data.len()
+        )));
+    }
     let rows = data.len() / cols;
-    let rb = t.bytes_for(cols as u64).ok_or_else(|| QuantizeError::BadShape(format!("a row of {cols} is not a whole number of {t:?} blocks")))? as usize;
-    if let Some(q) = imp { if q.len() != cols { return Err(QuantizeError::BadShape("importance vector length differs from the row length".into())); } }
-    let total = rows.checked_mul(rb).ok_or_else(|| QuantizeError::BadShape("tensor too large".into()))?;
+    let rb = t.bytes_for(cols as u64).ok_or_else(|| {
+        QuantizeError::BadShape(format!(
+            "a row of {cols} is not a whole number of {t:?} blocks"
+        ))
+    })? as usize;
+    if let Some(q) = imp {
+        if q.len() != cols {
+            return Err(QuantizeError::BadShape(
+                "importance vector length differs from the row length".into(),
+            ));
+        }
+    }
+    let total = rows
+        .checked_mul(rb)
+        .ok_or_else(|| QuantizeError::BadShape("tensor too large".into()))?;
     let mut out = vec![0u8; total];
     let threads = threads.clamp(1, rows.max(1));
     let per = rows.div_ceil(threads).max(1);
     let result: Vec<Result<(), QuantizeError>> = std::thread::scope(|s| {
-        let hs: Vec<_> = out.chunks_mut(per * rb).zip(data.chunks(per * cols)).map(|(o, d)| s.spawn(move || {
-            for (orow, xrow) in o.chunks_exact_mut(rb).zip(d.chunks_exact(cols)) { quantize_row_into(t, xrow, imp, orow)?; }
-            Ok(())
-        })).collect();
-        hs.into_iter().map(|h| h.join().unwrap_or(Err(QuantizeError::BadShape("a worker panicked".into())))).collect()
+        let hs: Vec<_> = out
+            .chunks_mut(per * rb)
+            .zip(data.chunks(per * cols))
+            .map(|(o, d)| {
+                s.spawn(move || {
+                    for (orow, xrow) in o.chunks_exact_mut(rb).zip(d.chunks_exact(cols)) {
+                        quantize_row_into(t, xrow, imp, orow)?;
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+        hs.into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or(Err(QuantizeError::BadShape("a worker panicked".into())))
+            })
+            .collect()
     });
-    for r in result { r?; }
+    for r in result {
+        r?;
+    }
     Ok(out)
 }
 
@@ -450,17 +755,37 @@ impl std::fmt::Display for ConvertError {
     }
 }
 impl std::error::Error for ConvertError {}
-impl From<std::io::Error> for ConvertError { fn from(e: std::io::Error) -> Self { ConvertError::Io(e) } }
-impl From<QuantizeError> for ConvertError { fn from(e: QuantizeError) -> Self { ConvertError::Quantize(e) } }
-impl From<crate::gguf_write::WriteError> for ConvertError { fn from(e: crate::gguf_write::WriteError) -> Self { ConvertError::Write(e) } }
-impl From<crate::loader::LoadError> for ConvertError { fn from(e: crate::loader::LoadError) -> Self { ConvertError::Format(e.to_string()) } }
-fn fmt_err<T>(s: impl Into<String>) -> Result<T, ConvertError> { Err(ConvertError::Format(s.into())) }
+impl From<std::io::Error> for ConvertError {
+    fn from(e: std::io::Error) -> Self {
+        ConvertError::Io(e)
+    }
+}
+impl From<QuantizeError> for ConvertError {
+    fn from(e: QuantizeError) -> Self {
+        ConvertError::Quantize(e)
+    }
+}
+impl From<crate::gguf_write::WriteError> for ConvertError {
+    fn from(e: crate::gguf_write::WriteError) -> Self {
+        ConvertError::Write(e)
+    }
+}
+impl From<crate::loader::LoadError> for ConvertError {
+    fn from(e: crate::loader::LoadError) -> Self {
+        ConvertError::Format(e.to_string())
+    }
+}
+fn fmt_err<T>(s: impl Into<String>) -> Result<T, ConvertError> {
+    Err(ConvertError::Format(s.into()))
+}
 
 // ------------------------------------------------------------------ importance matrix
 
 /// Per-tensor, per-input-column importance (mean squared activation), keyed by GGUF tensor name.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Imatrix { pub weights: HashMap<String, Vec<f32>> }
+pub struct Imatrix {
+    pub weights: HashMap<String, Vec<f32>>,
+}
 
 const MAX_IMATRIX_VALUES: usize = 1 << 28;
 
@@ -468,28 +793,52 @@ impl Imatrix {
     /// The weights for a tensor with `cols` input columns. Several rows (one per expert) are averaged.
     pub fn for_cols(&self, name: &str, cols: usize) -> Option<Vec<f32>> {
         let w = self.weights.get(name)?;
-        if cols == 0 || w.is_empty() || w.len() % cols != 0 { return None; }
+        if cols == 0 || w.is_empty() || w.len() % cols != 0 {
+            return None;
+        }
         let rows = w.len() / cols;
-        if rows == 1 { return Some(w.clone()); }
+        if rows == 1 {
+            return Some(w.clone());
+        }
         let mut o = vec![0f32; cols];
-        for r in w.chunks_exact(cols) { for (a, b) in o.iter_mut().zip(r) { *a += b / rows as f32; } }
+        for r in w.chunks_exact(cols) {
+            for (a, b) in o.iter_mut().zip(r) {
+                *a += b / rows as f32;
+            }
+        }
         Some(o)
     }
 
     /// `{"blk.0.attn_q.weight": [..], ...}`, optionally nested under `"tensors"`.
     pub fn from_json(s: &str) -> Result<Imatrix, ConvertError> {
-        let v: serde_json::Value = serde_json::from_str(s).map_err(|e| ConvertError::Format(format!("imatrix JSON: {e}")))?;
-        let obj = v.get("tensors").filter(|t| t.is_object()).unwrap_or(&v).as_object().ok_or_else(|| ConvertError::Format("imatrix JSON must be an object".into()))?;
+        let v: serde_json::Value = serde_json::from_str(s)
+            .map_err(|e| ConvertError::Format(format!("imatrix JSON: {e}")))?;
+        let obj = v
+            .get("tensors")
+            .filter(|t| t.is_object())
+            .unwrap_or(&v)
+            .as_object()
+            .ok_or_else(|| ConvertError::Format("imatrix JSON must be an object".into()))?;
         let mut weights = HashMap::new();
         let mut total = 0usize;
         for (k, a) in obj {
-            let a = a.as_array().ok_or_else(|| ConvertError::Format(format!("imatrix entry {k} is not an array")))?;
+            let a = a.as_array().ok_or_else(|| {
+                ConvertError::Format(format!("imatrix entry {k} is not an array"))
+            })?;
             total = total.saturating_add(a.len());
-            if total > MAX_IMATRIX_VALUES { return fmt_err("imatrix is implausibly large"); }
+            if total > MAX_IMATRIX_VALUES {
+                return fmt_err("imatrix is implausibly large");
+            }
             let mut w = Vec::with_capacity(a.len());
             for x in a {
-                let f = x.as_f64().ok_or_else(|| ConvertError::Format(format!("imatrix entry {k} holds a non-number")))? as f32;
-                if !f.is_finite() || f < 0.0 { return fmt_err(format!("imatrix entry {k} holds a negative or non-finite weight")); }
+                let f = x.as_f64().ok_or_else(|| {
+                    ConvertError::Format(format!("imatrix entry {k} holds a non-number"))
+                })? as f32;
+                if !f.is_finite() || f < 0.0 {
+                    return fmt_err(format!(
+                        "imatrix entry {k} holds a negative or non-finite weight"
+                    ));
+                }
                 w.push(f);
             }
             weights.insert(k.clone(), w);
@@ -500,7 +849,9 @@ impl Imatrix {
         let mut keys: Vec<&String> = self.weights.keys().collect();
         keys.sort();
         let mut m = serde_json::Map::new();
-        for k in keys { m.insert(k.clone(), serde_json::json!(self.weights[k])); }
+        for k in keys {
+            m.insert(k.clone(), serde_json::json!(self.weights[k]));
+        }
         serde_json::Value::Object(m).to_string()
     }
 
@@ -510,31 +861,51 @@ impl Imatrix {
     pub fn from_dat(b: &[u8]) -> Result<Imatrix, ConvertError> {
         let mut p = 0usize;
         let i32_ = |p: &mut usize| -> Result<i32, ConvertError> {
-            let s = b.get(*p..*p + 4).ok_or_else(|| ConvertError::Format("imatrix.dat is truncated".into()))?;
+            let s = b
+                .get(*p..*p + 4)
+                .ok_or_else(|| ConvertError::Format("imatrix.dat is truncated".into()))?;
             *p += 4;
             Ok(i32::from_le_bytes([s[0], s[1], s[2], s[3]]))
         };
         let n = i32_(&mut p)?;
-        if !(0..=(1 << 20)).contains(&n) { return fmt_err("imatrix.dat: implausible entry count"); }
+        if !(0..=(1 << 20)).contains(&n) {
+            return fmt_err("imatrix.dat: implausible entry count");
+        }
         let mut weights = HashMap::new();
         let mut total = 0usize;
         for _ in 0..n {
             let len = i32_(&mut p)?;
-            if !(1..=4096).contains(&len) { return fmt_err("imatrix.dat: implausible name length"); }
-            let name = b.get(p..p + len as usize).ok_or_else(|| ConvertError::Format("imatrix.dat is truncated".into()))?;
+            if !(1..=4096).contains(&len) {
+                return fmt_err("imatrix.dat: implausible name length");
+            }
+            let name = b
+                .get(p..p + len as usize)
+                .ok_or_else(|| ConvertError::Format("imatrix.dat is truncated".into()))?;
             p += len as usize;
-            let name = String::from_utf8(name.to_vec()).map_err(|_| ConvertError::Format("imatrix.dat: name is not UTF-8".into()))?;
+            let name = String::from_utf8(name.to_vec())
+                .map_err(|_| ConvertError::Format("imatrix.dat: name is not UTF-8".into()))?;
             let ncall = i32_(&mut p)?;
             let nval = i32_(&mut p)?;
-            if nval < 0 || ncall < 0 { return fmt_err("imatrix.dat: negative count"); }
+            if nval < 0 || ncall < 0 {
+                return fmt_err("imatrix.dat: negative count");
+            }
             let nval = nval as usize;
             total = total.saturating_add(nval);
-            if total > MAX_IMATRIX_VALUES { return fmt_err("imatrix.dat is implausibly large"); }
-            let raw = b.get(p..p + nval * 4).ok_or_else(|| ConvertError::Format("imatrix.dat is truncated".into()))?;
+            if total > MAX_IMATRIX_VALUES {
+                return fmt_err("imatrix.dat is implausibly large");
+            }
+            let raw = b
+                .get(p..p + nval * 4)
+                .ok_or_else(|| ConvertError::Format("imatrix.dat is truncated".into()))?;
             p += nval * 4;
             let div = ncall.max(1) as f32;
-            let mut w: Vec<f32> = raw.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]) / div).collect();
-            if w.iter().any(|v| !v.is_finite() || *v < 0.0) { return fmt_err("imatrix.dat holds a negative or non-finite value"); }
+            let mut w: Vec<f32> = raw
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]) / div)
+                .collect();
+            if w.iter().any(|v| !v.is_finite() || *v < 0.0) {
+                return fmt_err("imatrix.dat holds a negative or non-finite value");
+            }
             w.shrink_to_fit();
             weights.insert(name, w);
         }
@@ -550,7 +921,9 @@ impl Imatrix {
             o.extend(k.as_bytes());
             o.extend(1i32.to_le_bytes());
             o.extend((w.len() as i32).to_le_bytes());
-            for v in w { o.extend(v.to_le_bytes()); }
+            for v in w {
+                o.extend(v.to_le_bytes());
+            }
         }
         o
     }
@@ -562,61 +935,117 @@ impl Imatrix {
         let f = crate::loader::GgufFile::open(path)?;
         let mut weights = HashMap::new();
         for t in f.infos() {
-            let Some(base) = t.name.strip_suffix(".in_sum2") else { continue };
+            let Some(base) = t.name.strip_suffix(".in_sum2") else {
+                continue;
+            };
             let sums = f.read(&t.name)?;
-            let counts = if f.has(&format!("{base}.counts")) { f.read(&format!("{base}.counts"))? } else { vec![1.0] };
+            let counts = if f.has(&format!("{base}.counts")) {
+                f.read(&format!("{base}.counts"))?
+            } else {
+                vec![1.0]
+            };
             // sums are [n_expert, cols] (cols fastest); counts one per expert
             let rows = counts.len().max(1);
-            if sums.len() % rows != 0 { return fmt_err(format!("{base}: in_sum2 and counts disagree")); }
+            if sums.len() % rows != 0 {
+                return fmt_err(format!("{base}: in_sum2 and counts disagree"));
+            }
             let cols = sums.len() / rows;
             let mut w = vec![0f32; cols];
             let mut used = 0f32;
             for (r, row) in sums.chunks_exact(cols.max(1)).enumerate() {
                 let c = counts.get(r).copied().unwrap_or(1.0);
-                if c > 0.0 { used += 1.0; for (a, b) in w.iter_mut().zip(row) { *a += b / c; } }
+                if c > 0.0 {
+                    used += 1.0;
+                    for (a, b) in w.iter_mut().zip(row) {
+                        *a += b / c;
+                    }
+                }
             }
-            if used > 0.0 { w.iter_mut().for_each(|v| *v /= used); }
-            if w.iter().any(|v| !v.is_finite() || *v < 0.0) { return fmt_err(format!("{base}: non-finite importance")); }
+            if used > 0.0 {
+                w.iter_mut().for_each(|v| *v /= used);
+            }
+            if w.iter().any(|v| !v.is_finite() || *v < 0.0) {
+                return fmt_err(format!("{base}: non-finite importance"));
+            }
             weights.insert(base.to_string(), w);
         }
-        if weights.is_empty() { return fmt_err("no *.in_sum2 tensors found: not an imatrix GGUF"); }
+        if weights.is_empty() {
+            return fmt_err("no *.in_sum2 tensors found: not an imatrix GGUF");
+        }
         Ok(Imatrix { weights })
     }
 
     /// Load by file extension / magic: `.json`, `.dat`, or a GGUF.
     pub fn load(path: &std::path::Path) -> Result<Imatrix, ConvertError> {
         let b = std::fs::read(path)?;
-        if b.starts_with(b"GGUF") { return Self::from_gguf(path); }
-        if path.extension().is_some_and(|e| e == "json") || b.first() == Some(&b'{') { return Self::from_json(&String::from_utf8_lossy(&b)); }
+        if b.starts_with(b"GGUF") {
+            return Self::from_gguf(path);
+        }
+        if path.extension().is_some_and(|e| e == "json") || b.first() == Some(&b'{') {
+            return Self::from_json(&String::from_utf8_lossy(&b));
+        }
         Self::from_dat(&b)
     }
 }
 
 /// Accumulates mean squared activations while calibration text is run through the model.
 #[derive(Default)]
-pub struct ImatrixAccumulator { sums: HashMap<String, (Vec<f64>, u64)> }
+pub struct ImatrixAccumulator {
+    sums: HashMap<String, (Vec<f64>, u64)>,
+}
 impl ImatrixAccumulator {
     /// `acts` holds whole rows of `cols` inputs of the tensor named `name` (GGUF name).
     pub fn add(&mut self, name: &str, cols: usize, acts: &[f32]) -> Result<(), QuantizeError> {
-        if cols == 0 || acts.len() % cols != 0 { return Err(QuantizeError::BadShape(format!("{name}: activations are not whole rows of {cols}"))); }
-        let e = self.sums.entry(name.to_string()).or_insert_with(|| (vec![0.0; cols], 0));
-        if e.0.len() != cols { return Err(QuantizeError::BadShape(format!("{name}: column count changed between calls"))); }
+        if cols == 0 || acts.len() % cols != 0 {
+            return Err(QuantizeError::BadShape(format!(
+                "{name}: activations are not whole rows of {cols}"
+            )));
+        }
+        let e = self
+            .sums
+            .entry(name.to_string())
+            .or_insert_with(|| (vec![0.0; cols], 0));
+        if e.0.len() != cols {
+            return Err(QuantizeError::BadShape(format!(
+                "{name}: column count changed between calls"
+            )));
+        }
         for row in acts.chunks_exact(cols) {
-            for (s, v) in e.0.iter_mut().zip(row) { *s += (*v as f64) * (*v as f64); }
+            for (s, v) in e.0.iter_mut().zip(row) {
+                *s += (*v as f64) * (*v as f64);
+            }
             e.1 += 1;
         }
         Ok(())
     }
     pub fn finish(self) -> Imatrix {
-        Imatrix { weights: self.sums.into_iter().map(|(k, (s, n))| (k, s.into_iter().map(|v| (v / n.max(1) as f64) as f32).collect())).collect() }
+        Imatrix {
+            weights: self
+                .sums
+                .into_iter()
+                .map(|(k, (s, n))| {
+                    (
+                        k,
+                        s.into_iter()
+                            .map(|v| (v / n.max(1) as f64) as f32)
+                            .collect(),
+                    )
+                })
+                .collect(),
+        }
     }
 }
 
 /// Run `run` once per calibration sample (token ids); it feeds the activations of every linear layer into
 /// the accumulator. Returns the importance matrix.
-pub fn compute_imatrix<E>(samples: &[Vec<u32>], mut run: impl FnMut(&[u32], &mut ImatrixAccumulator) -> Result<(), E>) -> Result<Imatrix, E> {
+pub fn compute_imatrix<E>(
+    samples: &[Vec<u32>],
+    mut run: impl FnMut(&[u32], &mut ImatrixAccumulator) -> Result<(), E>,
+) -> Result<Imatrix, E> {
     let mut acc = ImatrixAccumulator::default();
-    for s in samples { run(s, &mut acc)?; }
+    for s in samples {
+        run(s, &mut acc)?;
+    }
     Ok(acc.finish())
 }
 
@@ -628,10 +1057,16 @@ pub enum LayerSel {
     /// llama.cpp's `use_more_bits`: the first eighth, the last eighth, and every third layer between.
     MoreBits,
 }
-fn use_more_bits(i: usize, n: usize) -> bool { i < n / 8 || i >= 7 * n / 8 || (i - n / 8) % 3 == 2 }
+fn use_more_bits(i: usize, n: usize) -> bool {
+    i < n / 8 || i >= 7 * n / 8 || (i - n / 8) % 3 == 2
+}
 
 #[derive(Clone, Debug)]
-pub struct Rule { pub pattern: String, pub dtype: DType, pub layers: LayerSel }
+pub struct Rule {
+    pub pattern: String,
+    pub dtype: DType,
+    pub layers: LayerSel,
+}
 
 /// A per-tensor quantisation plan: user `overrides` first, then the table `rules` (first match wins),
 /// then `default`. Norms, biases and routers stay f32 unless an override says otherwise.
@@ -650,12 +1085,24 @@ pub fn glob(pat: &str, s: &str) -> bool {
     let (p, s) = (pat.as_bytes(), s.as_bytes());
     let (mut pi, mut si, mut star, mut mark) = (0, 0, usize::MAX, 0);
     while si < s.len() {
-        if pi < p.len() && p[pi] == b'*' { star = pi; mark = si; pi += 1; }
-        else if pi < p.len() && p[pi] == s[si] { pi += 1; si += 1; }
-        else if star != usize::MAX { pi = star + 1; mark += 1; si = mark; }
-        else { return false; }
+        if pi < p.len() && p[pi] == b'*' {
+            star = pi;
+            mark = si;
+            pi += 1;
+        } else if pi < p.len() && p[pi] == s[si] {
+            pi += 1;
+            si += 1;
+        } else if star != usize::MAX {
+            pi = star + 1;
+            mark += 1;
+            si = mark;
+        } else {
+            return false;
+        }
     }
-    while pi < p.len() && p[pi] == b'*' { pi += 1; }
+    while pi < p.len() && p[pi] == b'*' {
+        pi += 1;
+    }
     pi == p.len()
 }
 
@@ -666,26 +1113,57 @@ fn layer_of(name: &str) -> Option<usize> {
 
 pub fn dtype_name(t: DType) -> String {
     match t {
-        DType::Q4_0 => "Q4_0", DType::Q4_1 => "Q4_1", DType::Q5_0 => "Q5_0", DType::Q5_1 => "Q5_1", DType::Q8_0 => "Q8_0",
-        DType::Q2K => "Q2_K", DType::Q3K => "Q3_K", DType::Q4K => "Q4_K", DType::Q5K => "Q5_K", DType::Q6K => "Q6_K", DType::Q8K => "Q8_K",
-        DType::F32 => "F32", DType::F16 => "F16", DType::BF16 => "BF16", DType::Other(n) => return format!("type{n}"),
-    }.to_string()
+        DType::Q4_0 => "Q4_0",
+        DType::Q4_1 => "Q4_1",
+        DType::Q5_0 => "Q5_0",
+        DType::Q5_1 => "Q5_1",
+        DType::Q8_0 => "Q8_0",
+        DType::Q2K => "Q2_K",
+        DType::Q3K => "Q3_K",
+        DType::Q4K => "Q4_K",
+        DType::Q5K => "Q5_K",
+        DType::Q6K => "Q6_K",
+        DType::Q8K => "Q8_K",
+        DType::F32 => "F32",
+        DType::F16 => "F16",
+        DType::BF16 => "BF16",
+        DType::Other(n) => return format!("type{n}"),
+    }
+    .to_string()
 }
 pub fn parse_dtype(s: &str) -> Option<DType> {
     Some(match s.to_ascii_uppercase().replace('-', "_").as_str() {
-        "Q4_0" => DType::Q4_0, "Q4_1" => DType::Q4_1, "Q5_0" => DType::Q5_0, "Q5_1" => DType::Q5_1, "Q8_0" => DType::Q8_0,
-        "Q2_K" => DType::Q2K, "Q3_K" => DType::Q3K, "Q4_K" => DType::Q4K, "Q5_K" => DType::Q5K, "Q6_K" => DType::Q6K, "Q8_K" => DType::Q8K,
-        "F32" => DType::F32, "F16" => DType::F16, "BF16" => DType::BF16,
+        "Q4_0" => DType::Q4_0,
+        "Q4_1" => DType::Q4_1,
+        "Q5_0" => DType::Q5_0,
+        "Q5_1" => DType::Q5_1,
+        "Q8_0" => DType::Q8_0,
+        "Q2_K" => DType::Q2K,
+        "Q3_K" => DType::Q3K,
+        "Q4_K" => DType::Q4K,
+        "Q5_K" => DType::Q5K,
+        "Q6_K" => DType::Q6K,
+        "Q8_K" => DType::Q8K,
+        "F32" => DType::F32,
+        "F16" => DType::F16,
+        "BF16" => DType::BF16,
         _ => return None,
     })
 }
 
 impl Recipe {
-    pub const NAMES: [&'static str; 15] = ["F32", "F16", "BF16", "Q8_0", "Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q2_K", "Q3_K_M", "Q4_K_S", "Q4_K_M", "Q5_K_S", "Q5_K_M", "Q6_K"];
+    pub const NAMES: [&'static str; 15] = [
+        "F32", "F16", "BF16", "Q8_0", "Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q2_K", "Q3_K_M", "Q4_K_S",
+        "Q4_K_M", "Q5_K_S", "Q5_K_M", "Q6_K",
+    ];
 
     pub fn named(name: &str) -> Option<Recipe> {
         let key = name.to_ascii_uppercase().replace('-', "_");
-        let r = |pattern: &str, dtype, layers| Rule { pattern: pattern.into(), dtype, layers };
+        let r = |pattern: &str, dtype, layers| Rule {
+            pattern: pattern.into(),
+            dtype,
+            layers,
+        };
         let (file_type, default, rules): (u32, DType, Vec<Rule>) = match key.as_str() {
             "F32" => (0, DType::F32, vec![]),
             "F16" => (1, DType::F16, vec![]),
@@ -695,38 +1173,92 @@ impl Recipe {
             "Q4_1" => (3, DType::Q4_1, vec![]),
             "Q5_0" => (8, DType::Q5_0, vec![]),
             "Q5_1" => (9, DType::Q5_1, vec![]),
-            "Q2_K" => (10, DType::Q2K, vec![r("output.weight", DType::Q6K, LayerSel::All)]),
-            "Q3_K_M" | "Q3_K" => (12, DType::Q3K, vec![r("output.weight", DType::Q6K, LayerSel::All),
-                r("*attn_v.weight", DType::Q5K, LayerSel::MoreBits), r("*ffn_down.weight", DType::Q5K, LayerSel::MoreBits),
-                r("*ffn_down_exps.weight", DType::Q5K, LayerSel::MoreBits)]),
-            "Q4_K_S" => (14, DType::Q4K, vec![r("output.weight", DType::Q6K, LayerSel::All)]),
-            "Q4_K_M" | "Q4_K" => (15, DType::Q4K, vec![r("output.weight", DType::Q6K, LayerSel::All), r("token_embd.weight", DType::Q6K, LayerSel::All),
-                r("*attn_v.weight", DType::Q6K, LayerSel::MoreBits), r("*ffn_down.weight", DType::Q6K, LayerSel::MoreBits),
-                r("*ffn_down_exps.weight", DType::Q6K, LayerSel::MoreBits)]),
-            "Q5_K_S" => (16, DType::Q5K, vec![r("output.weight", DType::Q6K, LayerSel::All)]),
-            "Q5_K_M" | "Q5_K" => (17, DType::Q5K, vec![r("output.weight", DType::Q6K, LayerSel::All), r("token_embd.weight", DType::Q6K, LayerSel::All),
-                r("*attn_v.weight", DType::Q6K, LayerSel::MoreBits), r("*ffn_down.weight", DType::Q6K, LayerSel::MoreBits),
-                r("*ffn_down_exps.weight", DType::Q6K, LayerSel::MoreBits)]),
+            "Q2_K" => (
+                10,
+                DType::Q2K,
+                vec![r("output.weight", DType::Q6K, LayerSel::All)],
+            ),
+            "Q3_K_M" | "Q3_K" => (
+                12,
+                DType::Q3K,
+                vec![
+                    r("output.weight", DType::Q6K, LayerSel::All),
+                    r("*attn_v.weight", DType::Q5K, LayerSel::MoreBits),
+                    r("*ffn_down.weight", DType::Q5K, LayerSel::MoreBits),
+                    r("*ffn_down_exps.weight", DType::Q5K, LayerSel::MoreBits),
+                ],
+            ),
+            "Q4_K_S" => (
+                14,
+                DType::Q4K,
+                vec![r("output.weight", DType::Q6K, LayerSel::All)],
+            ),
+            "Q4_K_M" | "Q4_K" => (
+                15,
+                DType::Q4K,
+                vec![
+                    r("output.weight", DType::Q6K, LayerSel::All),
+                    r("token_embd.weight", DType::Q6K, LayerSel::All),
+                    r("*attn_v.weight", DType::Q6K, LayerSel::MoreBits),
+                    r("*ffn_down.weight", DType::Q6K, LayerSel::MoreBits),
+                    r("*ffn_down_exps.weight", DType::Q6K, LayerSel::MoreBits),
+                ],
+            ),
+            "Q5_K_S" => (
+                16,
+                DType::Q5K,
+                vec![r("output.weight", DType::Q6K, LayerSel::All)],
+            ),
+            "Q5_K_M" | "Q5_K" => (
+                17,
+                DType::Q5K,
+                vec![
+                    r("output.weight", DType::Q6K, LayerSel::All),
+                    r("token_embd.weight", DType::Q6K, LayerSel::All),
+                    r("*attn_v.weight", DType::Q6K, LayerSel::MoreBits),
+                    r("*ffn_down.weight", DType::Q6K, LayerSel::MoreBits),
+                    r("*ffn_down_exps.weight", DType::Q6K, LayerSel::MoreBits),
+                ],
+            ),
             "Q6_K" => (18, DType::Q6K, vec![]),
             _ => return None,
         };
-        Some(Recipe { name: key, file_type, default, rules, overrides: vec![] })
+        Some(Recipe {
+            name: key,
+            file_type,
+            default,
+            rules,
+            overrides: vec![],
+        })
     }
 
     /// Force tensors matching `pattern` (`*` wildcards, matched against the GGUF name) to `dtype`.
-    pub fn with_override(mut self, pattern: &str, dtype: DType) -> Recipe { self.overrides.push((pattern.to_string(), dtype)); self }
+    pub fn with_override(mut self, pattern: &str, dtype: DType) -> Recipe {
+        self.overrides.push((pattern.to_string(), dtype));
+        self
+    }
 
     /// The stored type of a tensor. `shape` is row-major; the last dimension is the row length.
     pub fn plan(&self, name: &str, shape: &[u64], n_layers: usize) -> DType {
         let cols = shape.last().copied().unwrap_or(0);
-        let wanted = if let Some((_, t)) = self.overrides.iter().find(|(p, _)| glob(p, name)) { *t }
-        else if shape.len() < 2 || name.contains("ffn_gate_inp") || name.ends_with(".bias") { DType::F32 }
-        else {
+        let wanted = if let Some((_, t)) = self.overrides.iter().find(|(p, _)| glob(p, name)) {
+            *t
+        } else if shape.len() < 2 || name.contains("ffn_gate_inp") || name.ends_with(".bias") {
+            DType::F32
+        } else {
             let i = layer_of(name);
-            self.rules.iter().find(|r| glob(&r.pattern, name) && match r.layers {
-                LayerSel::All => true,
-                LayerSel::MoreBits => i.is_some_and(|i| n_layers > 0 && i < n_layers && use_more_bits(i, n_layers)),
-            }).map_or(self.default, |r| r.dtype)
+            self.rules
+                .iter()
+                .find(|r| {
+                    glob(&r.pattern, name)
+                        && match r.layers {
+                            LayerSel::All => true,
+                            LayerSel::MoreBits => i.is_some_and(|i| {
+                                n_layers > 0 && i < n_layers && use_more_bits(i, n_layers)
+                            }),
+                        }
+                })
+                .map_or(self.default, |r| r.dtype)
         };
         fit_type(wanted, cols)
     }
@@ -740,8 +1272,12 @@ fn fit_type(mut t: DType, cols: u64) -> DType {
             _ => {}
         }
         t = match t {
-            DType::Q2K | DType::Q3K => DType::Q4_0, DType::Q4K => DType::Q5_0, DType::Q5K => DType::Q5_1,
-            DType::Q6K | DType::Q8K => DType::Q8_0, DType::F32 => return DType::F32, _ => DType::F16,
+            DType::Q2K | DType::Q3K => DType::Q4_0,
+            DType::Q4K => DType::Q5_0,
+            DType::Q5K => DType::Q5_1,
+            DType::Q6K | DType::Q8K => DType::Q8_0,
+            DType::F32 => return DType::F32,
+            _ => DType::F16,
         };
     }
     DType::F16
@@ -753,7 +1289,10 @@ fn fit_type(mut t: DType, cols: u64) -> DType {
 /// [`crate::loader::unpermute_rows`]. `rows = n_head × head_dim`.
 pub fn permute_rows(w: &[f32], rows: usize, cols: usize, n_head: usize) -> Vec<f32> {
     let mut out = vec![0f32; w.len()];
-    if n_head == 0 || rows % n_head != 0 || w.len() != rows * cols { out.copy_from_slice(w); return out; }
+    if n_head == 0 || rows % n_head != 0 || w.len() != rows * cols {
+        out.copy_from_slice(w);
+        return out;
+    }
     let hd = rows / n_head;
     let half = hd / 2;
     for h in 0..n_head {
@@ -778,7 +1317,12 @@ pub struct ConvertOptions {
 }
 impl ConvertOptions {
     pub fn new(recipe: Recipe) -> ConvertOptions {
-        ConvertOptions { recipe, imatrix: None, threads: std::thread::available_parallelism().map_or(1, |n| n.get()), name: None }
+        ConvertOptions {
+            recipe,
+            imatrix: None,
+            threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
+            name: None,
+        }
     }
 }
 
@@ -792,10 +1336,22 @@ pub struct ConvertReport {
     pub types: Vec<(String, DType)>,
 }
 
-fn encode_f32(t: DType, data: &[f32], cols: usize, name: &str, o: &ConvertOptions) -> Result<Vec<u8>, ConvertError> {
-    let imp = if t.geometry().is_some_and(|g| g.0 > 1) { o.imatrix.as_ref().and_then(|m| m.for_cols(name, cols)) } else { None };
+fn encode_f32(
+    t: DType,
+    data: &[f32],
+    cols: usize,
+    name: &str,
+    o: &ConvertOptions,
+) -> Result<Vec<u8>, ConvertError> {
+    let imp = if t.geometry().is_some_and(|g| g.0 > 1) {
+        o.imatrix.as_ref().and_then(|m| m.for_cols(name, cols))
+    } else {
+        None
+    };
     quantize_matrix(t, data, cols, imp.as_deref(), o.threads.max(1)).map_err(|e| match e {
-        QuantizeError::NonFinite => ConvertError::Format(format!("{name}: the tensor contains NaN or infinity")),
+        QuantizeError::NonFinite => {
+            ConvertError::Format(format!("{name}: the tensor contains NaN or infinity"))
+        }
         e => e.into(),
     })
 }
@@ -803,61 +1359,119 @@ fn encode_f32(t: DType, data: &[f32], cols: usize, name: &str, o: &ConvertOption
 // ------------------------------------------------------------------ HF → GGUF names
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Role { Plain, Q, K, Norm }
+enum Role {
+    Plain,
+    Q,
+    K,
+    Norm,
+}
 enum Mapped {
     Skip,
     One(String, Role),
     /// One expert of a stacked tensor.
-    Expert { layer: usize, part: &'static str, idx: usize },
+    Expert {
+        layer: usize,
+        part: &'static str,
+        idx: usize,
+    },
 }
 
 fn gguf_arch(family: &str) -> Option<&'static str> {
     Some(match family {
-        "llama" | "mistral" | "mixtral" => "llama", "qwen2" => "qwen2", "qwen3" => "qwen3",
-        "gemma" => "gemma", "gemma2" => "gemma2", "gemma3" | "gemma3_text" => "gemma3",
-        "phi3" => "phi3", "qwen2_moe" | "qwen2moe" => "qwen2moe", "qwen3_moe" | "qwen3moe" => "qwen3moe", "olmoe" => "olmoe",
+        "llama" | "mistral" | "mixtral" => "llama",
+        "qwen2" => "qwen2",
+        "qwen3" => "qwen3",
+        "gemma" => "gemma",
+        "gemma2" => "gemma2",
+        "gemma3" | "gemma3_text" => "gemma3",
+        "phi3" => "phi3",
+        "qwen2_moe" | "qwen2moe" => "qwen2moe",
+        "qwen3_moe" | "qwen3moe" => "qwen3moe",
+        "olmoe" => "olmoe",
         _ => return None,
     })
 }
 
 fn split_wb(s: &str) -> Option<(&str, &str)> {
-    if let Some(b) = s.strip_suffix(".weight") { Some((b, "weight")) } else { s.strip_suffix(".bias").map(|b| (b, "bias")) }
+    if let Some(b) = s.strip_suffix(".weight") {
+        Some((b, "weight"))
+    } else {
+        s.strip_suffix(".bias").map(|b| (b, "bias"))
+    }
 }
 
 fn map_hf(name: &str, post_norms: bool, moe: bool) -> Result<Mapped, ConvertError> {
     let mut n = name;
-    while let Some(r) = n.strip_prefix("language_model.") { n = r; }
+    while let Some(r) = n.strip_prefix("language_model.") {
+        n = r;
+    }
     let top = match n {
         "model.embed_tokens.weight" => Some("token_embd.weight"),
         "model.norm.weight" | "model.final_layernorm.weight" => Some("output_norm.weight"),
         "lm_head.weight" => Some("output.weight"),
         _ => None,
     };
-    if let Some(t) = top { return Ok(Mapped::One(t.into(), if t == "output_norm.weight" { Role::Norm } else { Role::Plain })); }
-    if n.starts_with("vision_tower") || n.starts_with("multi_modal_projector") || n.starts_with("visual.") || n.starts_with("vision_model") {
+    if let Some(t) = top {
+        return Ok(Mapped::One(
+            t.into(),
+            if t == "output_norm.weight" {
+                Role::Norm
+            } else {
+                Role::Plain
+            },
+        ));
+    }
+    if n.starts_with("vision_tower")
+        || n.starts_with("multi_modal_projector")
+        || n.starts_with("visual.")
+        || n.starts_with("vision_model")
+    {
         return Ok(Mapped::Skip);
     }
-    let unsupported = || ConvertError::Unsupported(format!("tensor {name} has no GGUF mapping in this converter"));
+    let unsupported = || {
+        ConvertError::Unsupported(format!(
+            "tensor {name} has no GGUF mapping in this converter"
+        ))
+    };
     let rest = n.strip_prefix("model.layers.").ok_or_else(unsupported)?;
     let (idx, rest) = rest.split_once('.').ok_or_else(unsupported)?;
     let i: usize = idx.parse().map_err(|_| unsupported())?;
-    if rest.ends_with("rotary_emb.inv_freq") { return Ok(Mapped::Skip); }
+    if rest.ends_with("rotary_emb.inv_freq") {
+        return Ok(Mapped::Skip);
+    }
     let one = |s: String, r: Role| Ok(Mapped::One(format!("blk.{i}.{s}"), r));
     // MoE experts
-    if let Some(r) = rest.strip_prefix("block_sparse_moe.experts.").or_else(|| rest.strip_prefix("mlp.experts.")) {
+    if let Some(r) = rest
+        .strip_prefix("block_sparse_moe.experts.")
+        .or_else(|| rest.strip_prefix("mlp.experts."))
+    {
         let (e, w) = r.split_once('.').ok_or_else(unsupported)?;
         let e: usize = e.parse().map_err(|_| unsupported())?;
         let part = match w {
-            "w1.weight" | "gate_proj.weight" => "gate", "w3.weight" | "up_proj.weight" => "up", "w2.weight" | "down_proj.weight" => "down",
+            "w1.weight" | "gate_proj.weight" => "gate",
+            "w3.weight" | "up_proj.weight" => "up",
+            "w2.weight" | "down_proj.weight" => "down",
             _ => return Err(unsupported()),
         };
-        return Ok(Mapped::Expert { layer: i, part, idx: e });
+        return Ok(Mapped::Expert {
+            layer: i,
+            part,
+            idx: e,
+        });
     }
     let (base, wb) = split_wb(rest).ok_or_else(unsupported)?;
     let is_w = wb == "weight";
     match base {
         "input_layernorm" if is_w => one("attn_norm.weight".into(), Role::Norm),
-        "post_attention_layernorm" if is_w => one(if post_norms { "post_attention_norm.weight" } else { "ffn_norm.weight" }.into(), Role::Norm),
+        "post_attention_layernorm" if is_w => one(
+            if post_norms {
+                "post_attention_norm.weight"
+            } else {
+                "ffn_norm.weight"
+            }
+            .into(),
+            Role::Norm,
+        ),
         "pre_feedforward_layernorm" if is_w => one("ffn_norm.weight".into(), Role::Norm),
         "post_feedforward_layernorm" if is_w => one("post_ffw_norm.weight".into(), Role::Norm),
         "self_attn.q_proj" => one(format!("attn_q.{wb}"), Role::Q),
@@ -875,11 +1489,17 @@ fn map_hf(name: &str, post_norms: bool, moe: bool) -> Result<Mapped, ConvertErro
         "mlp.gate_up_proj" => one(format!("ffn_up.{wb}"), Role::Plain),
         "block_sparse_moe.gate" if is_w => one("ffn_gate_inp.weight".into(), Role::Plain),
         "mlp.gate" if is_w && moe => one("ffn_gate_inp.weight".into(), Role::Plain),
-        "mlp.shared_expert_gate" | "mlp.shared_experts_gate" if is_w => one("ffn_gate_inp_shexp.weight".into(), Role::Plain),
+        "mlp.shared_expert_gate" | "mlp.shared_experts_gate" if is_w => {
+            one("ffn_gate_inp_shexp.weight".into(), Role::Plain)
+        }
         b if b.starts_with("mlp.shared_expert.") || b.starts_with("mlp.shared_experts.") => {
             let p = b.rsplit('.').next().unwrap_or("");
-            match p { "gate_proj" => one("ffn_gate_shexp.weight".into(), Role::Plain), "up_proj" => one("ffn_up_shexp.weight".into(), Role::Plain),
-                "down_proj" => one("ffn_down_shexp.weight".into(), Role::Plain), _ => Err(unsupported()) }
+            match p {
+                "gate_proj" => one("ffn_gate_shexp.weight".into(), Role::Plain),
+                "up_proj" => one("ffn_up_shexp.weight".into(), Role::Plain),
+                "down_proj" => one("ffn_down_shexp.weight".into(), Role::Plain),
+                _ => Err(unsupported()),
+            }
         }
         _ => Err(unsupported()),
     }
@@ -888,10 +1508,18 @@ fn map_hf(name: &str, post_norms: bool, moe: bool) -> Result<Mapped, ConvertErro
 // ------------------------------------------------------------------ metadata
 
 fn u32v(v: u64, what: &str) -> Result<MetaValue, ConvertError> {
-    u32::try_from(v).map(MetaValue::U32).map_err(|_| ConvertError::Format(format!("{what} does not fit 32 bits")))
+    u32::try_from(v)
+        .map(MetaValue::U32)
+        .map_err(|_| ConvertError::Format(format!("{what} does not fit 32 bits")))
 }
 
-fn arch_metadata(spec: &crate::arch::Spec, cfg: &serde_json::Value, a: &str, name: &str, o: &ConvertOptions) -> Result<Vec<(String, MetaValue)>, ConvertError> {
+fn arch_metadata(
+    spec: &crate::arch::Spec,
+    cfg: &serde_json::Value,
+    a: &str,
+    name: &str,
+    o: &ConvertOptions,
+) -> Result<Vec<(String, MetaValue)>, ConvertError> {
     use crate::arch::{NormKind, RopeScaling};
     let mut m: Vec<(String, MetaValue)> = vec![];
     let mut put = |k: &str, v: MetaValue| m.push((k.to_string(), v));
@@ -905,40 +1533,123 @@ fn arch_metadata(spec: &crate::arch::Spec, cfg: &serde_json::Value, a: &str, nam
     put(&k("block_count"), u32v(spec.layers, "layer count")?);
     put(&k("feed_forward_length"), u32v(spec.ffn, "ffn size")?);
     put(&k("attention.head_count"), u32v(spec.heads, "head count")?);
-    put(&k("attention.head_count_kv"), u32v(spec.kv_heads, "kv head count")?);
-    put(&k("attention.key_length"), u32v(spec.head_dim, "head size")?);
-    put(&k("attention.value_length"), u32v(spec.head_dim, "head size")?);
-    let eps_key = if spec.norm == NormKind::Layer { "attention.layer_norm_epsilon" } else { "attention.layer_norm_rms_epsilon" };
+    put(
+        &k("attention.head_count_kv"),
+        u32v(spec.kv_heads, "kv head count")?,
+    );
+    put(
+        &k("attention.key_length"),
+        u32v(spec.head_dim, "head size")?,
+    );
+    put(
+        &k("attention.value_length"),
+        u32v(spec.head_dim, "head size")?,
+    );
+    let eps_key = if spec.norm == NormKind::Layer {
+        "attention.layer_norm_epsilon"
+    } else {
+        "attention.layer_norm_rms_epsilon"
+    };
     put(&k(eps_key), MetaValue::F32(spec.norm_eps as f32));
     put(&k("rope.freq_base"), MetaValue::F32(spec.rope_theta as f32));
-    if spec.rotary_dim != spec.head_dim { put(&k("rope.dimension_count"), u32v(spec.rotary_dim, "rotary dim")?); }
-    if spec.rope_theta_local > 0.0 { put(&k("rope.freq_base_swa"), MetaValue::F32(spec.rope_theta_local as f32)); }
+    if spec.rotary_dim != spec.head_dim {
+        put(
+            &k("rope.dimension_count"),
+            u32v(spec.rotary_dim, "rotary dim")?,
+        );
+    }
+    if spec.rope_theta_local > 0.0 {
+        put(
+            &k("rope.freq_base_swa"),
+            MetaValue::F32(spec.rope_theta_local as f32),
+        );
+    }
     match &spec.rope_scaling {
-        RopeScaling::Linear { factor } => { put(&k("rope.scaling.type"), MetaValue::str("linear")); put(&k("rope.scaling.factor"), MetaValue::F32(*factor as f32)); }
-        RopeScaling::Yarn { factor, original_max, .. } => {
+        RopeScaling::Linear { factor } => {
+            put(&k("rope.scaling.type"), MetaValue::str("linear"));
+            put(&k("rope.scaling.factor"), MetaValue::F32(*factor as f32));
+        }
+        RopeScaling::Yarn {
+            factor,
+            original_max,
+            ..
+        } => {
             put(&k("rope.scaling.type"), MetaValue::str("yarn"));
             put(&k("rope.scaling.factor"), MetaValue::F32(*factor as f32));
-            put(&k("rope.scaling.original_context_length"), MetaValue::U32(*original_max as u32));
+            put(
+                &k("rope.scaling.original_context_length"),
+                MetaValue::U32(*original_max as u32),
+            );
         }
         _ => {}
     }
     if spec.experts > 0 {
         put(&k("expert_count"), u32v(spec.experts, "expert count")?);
-        put(&k("expert_used_count"), u32v(spec.experts_used, "experts used")?);
-        if spec.moe_ffn > 0 { put(&k("expert_feed_forward_length"), u32v(spec.moe_ffn, "expert ffn size")?); }
-        if spec.shared_experts > 0 { put(&k("expert_shared_count"), u32v(spec.shared_experts, "shared experts")?); }
-        put(&k("expert_weights_norm"), MetaValue::Bool(spec.norm_topk_prob));
-        if spec.routed_scale != 1.0 { put(&k("expert_weights_scale"), MetaValue::F32(spec.routed_scale as f32)); }
+        put(
+            &k("expert_used_count"),
+            u32v(spec.experts_used, "experts used")?,
+        );
+        if spec.moe_ffn > 0 {
+            put(
+                &k("expert_feed_forward_length"),
+                u32v(spec.moe_ffn, "expert ffn size")?,
+            );
+        }
+        if spec.shared_experts > 0 {
+            put(
+                &k("expert_shared_count"),
+                u32v(spec.shared_experts, "shared experts")?,
+            );
+        }
+        put(
+            &k("expert_weights_norm"),
+            MetaValue::Bool(spec.norm_topk_prob),
+        );
+        if spec.routed_scale != 1.0 {
+            put(
+                &k("expert_weights_scale"),
+                MetaValue::F32(spec.routed_scale as f32),
+            );
+        }
     }
-    if spec.attn_softcap != 0.0 { put(&k("attn_logit_softcapping"), MetaValue::F32(spec.attn_softcap as f32)); }
-    if spec.final_softcap != 0.0 { put(&k("final_logit_softcapping"), MetaValue::F32(spec.final_softcap as f32)); }
-    if spec.attn_scale > 0.0 { put(&k("attention.scale"), MetaValue::F32(spec.attn_scale as f32)); }
+    if spec.attn_softcap != 0.0 {
+        put(
+            &k("attn_logit_softcapping"),
+            MetaValue::F32(spec.attn_softcap as f32),
+        );
+    }
+    if spec.final_softcap != 0.0 {
+        put(
+            &k("final_logit_softcapping"),
+            MetaValue::F32(spec.final_softcap as f32),
+        );
+    }
+    if spec.attn_scale > 0.0 {
+        put(
+            &k("attention.scale"),
+            MetaValue::F32(spec.attn_scale as f32),
+        );
+    }
     if spec.sliding_window > 0 {
-        put(&k("attention.sliding_window"), u32v(spec.sliding_window, "sliding window")?);
+        put(
+            &k("attention.sliding_window"),
+            u32v(spec.sliding_window, "sliding window")?,
+        );
         // smallest period p with `layer i is local ⇔ (i+1) % p != 0` that reproduces the per-layer list
         let n = spec.layers;
-        let pat = (2..=n + 1).chain([1, 0]).find(|&p| (0..n).all(|i| spec.sliding_layers.get(i as usize).copied().unwrap_or(false) == (p == 0 || (i + 1) % p != 0)));
-        match pat { Some(p) => put(&k("attention.sliding_window_pattern"), u32v(p, "pattern")?), None => {} }
+        let pat = (2..=n + 1).chain([1, 0]).find(|&p| {
+            (0..n).all(|i| {
+                spec.sliding_layers
+                    .get(i as usize)
+                    .copied()
+                    .unwrap_or(false)
+                    == (p == 0 || (i + 1) % p != 0)
+            })
+        });
+        match pat {
+            Some(p) => put(&k("attention.sliding_window_pattern"), u32v(p, "pattern")?),
+            None => {}
+        }
     }
     let _ = cfg;
     Ok(m)
@@ -947,11 +1658,18 @@ fn arch_metadata(spec: &crate::arch::Spec, cfg: &serde_json::Value, a: &str, nam
 // ------------------------------------------------------------------ tokenizer metadata
 
 fn tok_text(v: &serde_json::Value) -> Option<String> {
-    match v { serde_json::Value::String(s) => Some(s.clone()), serde_json::Value::Object(o) => o.get("content").and_then(|c| c.as_str()).map(String::from), _ => None }
+    match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Object(o) => o.get("content").and_then(|c| c.as_str()).map(String::from),
+        _ => None,
+    }
 }
 fn has_byte_level(v: &serde_json::Value) -> bool {
     match v {
-        serde_json::Value::Object(o) => o.get("type").and_then(|t| t.as_str()) == Some("ByteLevel") || o.values().any(has_byte_level),
+        serde_json::Value::Object(o) => {
+            o.get("type").and_then(|t| t.as_str()) == Some("ByteLevel")
+                || o.values().any(has_byte_level)
+        }
         serde_json::Value::Array(a) => a.iter().any(has_byte_level),
         _ => false,
     }
@@ -960,9 +1678,17 @@ fn split_regexes(v: &serde_json::Value, out: &mut Vec<String>) {
     match v {
         serde_json::Value::Object(o) => {
             if o.get("type").and_then(|t| t.as_str()) == Some("Split") {
-                if let Some(r) = o.get("pattern").and_then(|p| p.get("Regex")).and_then(|r| r.as_str()) { out.push(r.to_string()); }
+                if let Some(r) = o
+                    .get("pattern")
+                    .and_then(|p| p.get("Regex"))
+                    .and_then(|r| r.as_str())
+                {
+                    out.push(r.to_string());
+                }
             }
-            for x in o.values() { split_regexes(x, out); }
+            for x in o.values() {
+                split_regexes(x, out);
+            }
         }
         serde_json::Value::Array(a) => a.iter().for_each(|x| split_regexes(x, out)),
         _ => {}
@@ -970,85 +1696,181 @@ fn split_regexes(v: &serde_json::Value, out: &mut Vec<String>) {
 }
 fn pre_name(rx: &[String]) -> &'static str {
     let all = rx.join("|");
-    if all.contains("\\p{N}{1,3}") { "llama-bpe" }
-    else if all.contains("\\p{N}") && !all.contains("\\p{N}+") && all.contains("(?i:") { "qwen2" }
-    else { "gpt-2" }
+    if all.contains("\\p{N}{1,3}") {
+        "llama-bpe"
+    } else if all.contains("\\p{N}") && !all.contains("\\p{N}+") && all.contains("(?i:") {
+        "qwen2"
+    } else {
+        "gpt-2"
+    }
 }
 
 /// `tokenizer.ggml.*` entries from `tokenizer.json` (+ `tokenizer_config.json`, `config.json`). A model folder
 /// without a tokenizer yields a warning and no entries.
-fn tokenizer_metadata(dir: &std::path::Path, cfg: &serde_json::Value, warnings: &mut Vec<String>) -> Result<Vec<(String, MetaValue)>, ConvertError> {
+fn tokenizer_metadata(
+    dir: &std::path::Path,
+    cfg: &serde_json::Value,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<(String, MetaValue)>, ConvertError> {
     let tj = dir.join("tokenizer.json");
-    if !tj.exists() { warnings.push("no tokenizer.json: the GGUF has no tokenizer metadata".into()); return Ok(vec![]); }
-    let t: serde_json::Value = serde_json::from_slice(&std::fs::read(&tj)?).map_err(|e| ConvertError::Format(format!("tokenizer.json: {e}")))?;
+    if !tj.exists() {
+        warnings.push("no tokenizer.json: the GGUF has no tokenizer metadata".into());
+        return Ok(vec![]);
+    }
+    let t: serde_json::Value = serde_json::from_slice(&std::fs::read(&tj)?)
+        .map_err(|e| ConvertError::Format(format!("tokenizer.json: {e}")))?;
     let tc: serde_json::Value = match std::fs::read(dir.join("tokenizer_config.json")) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| ConvertError::Format(format!("tokenizer_config.json: {e}")))?,
+        Ok(b) => serde_json::from_slice(&b)
+            .map_err(|e| ConvertError::Format(format!("tokenizer_config.json: {e}")))?,
         Err(_) => serde_json::Value::Null,
     };
-    let model = t.get("model").ok_or_else(|| ConvertError::Format("tokenizer.json has no model".into()))?;
+    let model = t
+        .get("model")
+        .ok_or_else(|| ConvertError::Format("tokenizer.json has no model".into()))?;
     let kind = model.get("type").and_then(|v| v.as_str()).unwrap_or("BPE");
-    let byte_level = has_byte_level(t.get("pre_tokenizer").unwrap_or(&serde_json::Value::Null)) || has_byte_level(t.get("decoder").unwrap_or(&serde_json::Value::Null));
+    let byte_level = has_byte_level(t.get("pre_tokenizer").unwrap_or(&serde_json::Value::Null))
+        || has_byte_level(t.get("decoder").unwrap_or(&serde_json::Value::Null));
     const MAX_VOCAB: usize = 1 << 22;
     let mut entries: Vec<(usize, String, f32)> = vec![];
     match (model.get("vocab"), kind) {
-        (Some(serde_json::Value::Object(v)), _) => for (tok, id) in v {
-            let id = id.as_u64().ok_or_else(|| ConvertError::Format("tokenizer vocab id is not a number".into()))? as usize;
-            if id >= MAX_VOCAB { return fmt_err("tokenizer vocab id is implausibly large"); }
-            entries.push((id, tok.clone(), -(id as f32)));
-        },
-        (Some(serde_json::Value::Array(v)), _) => for (id, e) in v.iter().enumerate() {
-            let a = e.as_array().ok_or_else(|| ConvertError::Format("unigram vocab entry is not [token, score]".into()))?;
-            entries.push((id, a.first().and_then(|x| x.as_str()).unwrap_or("").to_string(), a.get(1).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32));
-            if id >= MAX_VOCAB { return fmt_err("tokenizer vocab is implausibly large"); }
-        },
+        (Some(serde_json::Value::Object(v)), _) => {
+            for (tok, id) in v {
+                let id = id.as_u64().ok_or_else(|| {
+                    ConvertError::Format("tokenizer vocab id is not a number".into())
+                })? as usize;
+                if id >= MAX_VOCAB {
+                    return fmt_err("tokenizer vocab id is implausibly large");
+                }
+                entries.push((id, tok.clone(), -(id as f32)));
+            }
+        }
+        (Some(serde_json::Value::Array(v)), _) => {
+            for (id, e) in v.iter().enumerate() {
+                let a = e.as_array().ok_or_else(|| {
+                    ConvertError::Format("unigram vocab entry is not [token, score]".into())
+                })?;
+                entries.push((
+                    id,
+                    a.first().and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    a.get(1).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+                ));
+                if id >= MAX_VOCAB {
+                    return fmt_err("tokenizer vocab is implausibly large");
+                }
+            }
+        }
         _ => return fmt_err("tokenizer.json has no vocab"),
     }
     let mut added: HashMap<usize, (String, bool)> = HashMap::new();
     if let Some(a) = t.get("added_tokens").and_then(|a| a.as_array()) {
         for e in a {
-            let (Some(id), Some(c)) = (e.get("id").and_then(|i| i.as_u64()), e.get("content").and_then(|c| c.as_str())) else { continue };
-            if id as usize >= MAX_VOCAB { return fmt_err("added token id is implausibly large"); }
-            added.insert(id as usize, (c.to_string(), e.get("special").and_then(|s| s.as_bool()).unwrap_or(false)));
+            let (Some(id), Some(c)) = (
+                e.get("id").and_then(|i| i.as_u64()),
+                e.get("content").and_then(|c| c.as_str()),
+            ) else {
+                continue;
+            };
+            if id as usize >= MAX_VOCAB {
+                return fmt_err("added token id is implausibly large");
+            }
+            added.insert(
+                id as usize,
+                (
+                    c.to_string(),
+                    e.get("special").and_then(|s| s.as_bool()).unwrap_or(false),
+                ),
+            );
         }
     }
-    let n = entries.iter().map(|e| e.0 + 1).chain(added.keys().map(|k| k + 1)).max().unwrap_or(0);
-    if n == 0 { return fmt_err("tokenizer has an empty vocabulary"); }
+    let n = entries
+        .iter()
+        .map(|e| e.0 + 1)
+        .chain(added.keys().map(|k| k + 1))
+        .max()
+        .unwrap_or(0);
+    if n == 0 {
+        return fmt_err("tokenizer has an empty vocabulary");
+    }
     let mut tokens: Vec<String> = (0..n).map(|i| format!("[PAD{i}]")).collect();
     let mut types = vec![5i32; n];
     let mut scores = vec![0f32; n];
-    let unk_text = tc.get("unk_token").and_then(tok_text).or_else(|| model.get("unk_token").and_then(|u| u.as_str()).map(String::from));
+    let unk_text = tc.get("unk_token").and_then(tok_text).or_else(|| {
+        model
+            .get("unk_token")
+            .and_then(|u| u.as_str())
+            .map(String::from)
+    });
     for (id, tok, sc) in entries {
-        types[id] = if tok.len() == 6 && tok.starts_with("<0x") && tok.ends_with('>') && !byte_level { 6 } else { 1 };
-        if unk_text.as_deref() == Some(tok.as_str()) { types[id] = 2; }
+        types[id] = if tok.len() == 6 && tok.starts_with("<0x") && tok.ends_with('>') && !byte_level
+        {
+            6
+        } else {
+            1
+        };
+        if unk_text.as_deref() == Some(tok.as_str()) {
+            types[id] = 2;
+        }
         tokens[id] = tok;
         scores[id] = sc;
     }
     for (id, (c, special)) in &added {
-        if types[*id] == 5 || tokens[*id] != *c { tokens[*id] = c.clone(); }
-        types[*id] = if unk_text.as_deref() == Some(c.as_str()) { 2 } else if *special { 3 } else { 4 };
+        if types[*id] == 5 || tokens[*id] != *c {
+            tokens[*id] = c.clone();
+        }
+        types[*id] = if unk_text.as_deref() == Some(c.as_str()) {
+            2
+        } else if *special {
+            3
+        } else {
+            4
+        };
     }
     let mut m: Vec<(String, MetaValue)> = vec![];
     let ggml_model = if byte_level { "gpt2" } else { "llama" };
     m.push(("tokenizer.ggml.model".into(), MetaValue::str(ggml_model)));
     if byte_level {
         let mut rx = vec![];
-        split_regexes(t.get("pre_tokenizer").unwrap_or(&serde_json::Value::Null), &mut rx);
+        split_regexes(
+            t.get("pre_tokenizer").unwrap_or(&serde_json::Value::Null),
+            &mut rx,
+        );
         m.push(("tokenizer.ggml.pre".into(), MetaValue::str(pre_name(&rx))));
     } else if kind == "BPE" {
         warnings.push("SentencePiece-style BPE tokenizer.json has no scores: they were set to -token id; convert from tokenizer.model for exact scores".into());
     }
-    let ids: HashMap<&str, usize> = tokens.iter().enumerate().map(|(i, s)| (s.as_str(), i)).collect();
-    m.push(("tokenizer.ggml.tokens".into(), MetaValue::strings(tokens.iter().cloned())));
-    m.push(("tokenizer.ggml.scores".into(), MetaValue::Array(scores.iter().map(|s| MetaValue::F32(*s)).collect())));
-    m.push(("tokenizer.ggml.token_type".into(), MetaValue::Array(types.iter().map(|s| MetaValue::I32(*s)).collect())));
+    let ids: HashMap<&str, usize> = tokens
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.as_str(), i))
+        .collect();
+    m.push((
+        "tokenizer.ggml.tokens".into(),
+        MetaValue::strings(tokens.iter().cloned()),
+    ));
+    m.push((
+        "tokenizer.ggml.scores".into(),
+        MetaValue::Array(scores.iter().map(|s| MetaValue::F32(*s)).collect()),
+    ));
+    m.push((
+        "tokenizer.ggml.token_type".into(),
+        MetaValue::Array(types.iter().map(|s| MetaValue::I32(*s)).collect()),
+    ));
     if byte_level || kind == "BPE" {
         if let Some(mg) = model.get("merges").and_then(|v| v.as_array()) {
-            if mg.len() >= (1 << 20) { return fmt_err("more than 2^20 merges: this build's GGUF reader would truncate them"); }
+            if mg.len() >= (1 << 20) {
+                return fmt_err(
+                    "more than 2^20 merges: this build's GGUF reader would truncate them",
+                );
+            }
             let mut v = Vec::with_capacity(mg.len());
             for e in mg {
                 v.push(match e {
                     serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Array(a) if a.len() == 2 => format!("{} {}", a[0].as_str().unwrap_or(""), a[1].as_str().unwrap_or("")),
+                    serde_json::Value::Array(a) if a.len() == 2 => format!(
+                        "{} {}",
+                        a[0].as_str().unwrap_or(""),
+                        a[1].as_str().unwrap_or("")
+                    ),
                     _ => return fmt_err("a merge is neither a string nor a pair"),
                 });
             }
@@ -1056,55 +1878,127 @@ fn tokenizer_metadata(dir: &std::path::Path, cfg: &serde_json::Value, warnings: 
         }
     }
     let id_of = |k: &str, cfgk: &str| -> Option<u32> {
-        tc.get(k).and_then(tok_text).and_then(|s| ids.get(s.as_str()).copied())
-            .or_else(|| cfg.get(cfgk).and_then(|v| v.as_u64().or_else(|| v.as_array().and_then(|a| a.first()).and_then(|x| x.as_u64()))).map(|x| x as usize))
-            .filter(|i| *i < n).map(|i| i as u32)
+        tc.get(k)
+            .and_then(tok_text)
+            .and_then(|s| ids.get(s.as_str()).copied())
+            .or_else(|| {
+                cfg.get(cfgk)
+                    .and_then(|v| {
+                        v.as_u64().or_else(|| {
+                            v.as_array()
+                                .and_then(|a| a.first())
+                                .and_then(|x| x.as_u64())
+                        })
+                    })
+                    .map(|x| x as usize)
+            })
+            .filter(|i| *i < n)
+            .map(|i| i as u32)
     };
-    for (k, ck, key) in [("bos_token", "bos_token_id", "bos_token_id"), ("eos_token", "eos_token_id", "eos_token_id"), ("unk_token", "unk_token_id", "unknown_token_id"), ("pad_token", "pad_token_id", "padding_token_id")] {
-        if let Some(i) = id_of(k, ck) { m.push((format!("tokenizer.ggml.{key}"), MetaValue::U32(i))); }
+    for (k, ck, key) in [
+        ("bos_token", "bos_token_id", "bos_token_id"),
+        ("eos_token", "eos_token_id", "eos_token_id"),
+        ("unk_token", "unk_token_id", "unknown_token_id"),
+        ("pad_token", "pad_token_id", "padding_token_id"),
+    ] {
+        if let Some(i) = id_of(k, ck) {
+            m.push((format!("tokenizer.ggml.{key}"), MetaValue::U32(i)));
+        }
     }
-    for (jk, key) in [("add_bos_token", "add_bos_token"), ("add_eos_token", "add_eos_token")] {
-        if let Some(b) = tc.get(jk).and_then(|v| v.as_bool()) { m.push((format!("tokenizer.ggml.{key}"), MetaValue::Bool(b))); }
+    for (jk, key) in [
+        ("add_bos_token", "add_bos_token"),
+        ("add_eos_token", "add_eos_token"),
+    ] {
+        if let Some(b) = tc.get(jk).and_then(|v| v.as_bool()) {
+            m.push((format!("tokenizer.ggml.{key}"), MetaValue::Bool(b)));
+        }
     }
     let tpl = match tc.get("chat_template") {
         Some(serde_json::Value::String(s)) => Some(s.clone()),
-        Some(serde_json::Value::Array(a)) => a.iter().find(|e| e.get("name").and_then(|n| n.as_str()) == Some("default")).or_else(|| a.first())
-            .and_then(|e| e.get("template")).and_then(|t| t.as_str()).map(String::from),
+        Some(serde_json::Value::Array(a)) => a
+            .iter()
+            .find(|e| e.get("name").and_then(|n| n.as_str()) == Some("default"))
+            .or_else(|| a.first())
+            .and_then(|e| e.get("template"))
+            .and_then(|t| t.as_str())
+            .map(String::from),
         _ => None,
     };
-    if let Some(s) = tpl { m.push(("tokenizer.chat_template".into(), MetaValue::Str(s))); }
+    if let Some(s) = tpl {
+        m.push(("tokenizer.chat_template".into(), MetaValue::Str(s)));
+    }
     Ok(m)
 }
 
 // ------------------------------------------------------------------ convert
 
-struct Out { name: String, shape: Vec<u64>, src: Src, permute: Option<usize>, plus_one: bool, key: (u8, usize, String) }
-enum Src { One(String), Stack(Vec<String>) }
+struct Out {
+    name: String,
+    shape: Vec<u64>,
+    src: Src,
+    permute: Option<usize>,
+    plus_one: bool,
+    key: (u8, usize, String),
+}
+enum Src {
+    One(String),
+    Stack(Vec<String>),
+}
 
 fn out_key(name: &str) -> (u8, usize, String) {
     match layer_of(name) {
         Some(l) => (1, l, name.to_string()),
-        None => (match name { "token_embd.weight" => 0, "output_norm.weight" => 2, _ => 3 }, 0, name.to_string()),
+        None => (
+            match name {
+                "token_embd.weight" => 0,
+                "output_norm.weight" => 2,
+                _ => 3,
+            },
+            0,
+            name.to_string(),
+        ),
     }
 }
 
 /// Convert a Hugging Face model folder (`config.json`, `*.safetensors`, `tokenizer.json`…) into one GGUF file.
 /// Tensors are read, converted and written one at a time, so peak memory is one tensor (one layer's
 /// stacked experts for mixture-of-experts models), never the whole model.
-pub fn convert_hf_dir(dir: &std::path::Path, out: &std::path::Path, opts: &ConvertOptions) -> Result<ConvertReport, ConvertError> {
+pub fn convert_hf_dir(
+    dir: &std::path::Path,
+    out: &std::path::Path,
+    opts: &ConvertOptions,
+) -> Result<ConvertReport, ConvertError> {
     use crate::loader::{SafeTensors, TensorSource};
     let cfg_text = std::fs::read_to_string(dir.join("config.json"))?;
-    let cfg: serde_json::Value = serde_json::from_str(&cfg_text).map_err(|e| ConvertError::Format(format!("config.json: {e}")))?;
-    let spec = crate::arch::from_hf_config(&cfg_text).map_err(|e| ConvertError::Format(format!("config.json: {e}")))?;
-    let a = gguf_arch(&spec.family).ok_or_else(|| ConvertError::Unsupported(format!("model family {:?} has no GGUF architecture mapping here", spec.family)))?;
-    let mut rep = ConvertReport { arch: a.to_string(), ..Default::default() };
-    if let crate::arch::Support::Planned(why) = &spec.support { rep.warnings.push(format!("the engine cannot run {} yet ({why}), the file is still written", spec.family)); }
+    let cfg: serde_json::Value = serde_json::from_str(&cfg_text)
+        .map_err(|e| ConvertError::Format(format!("config.json: {e}")))?;
+    let spec = crate::arch::from_hf_config(&cfg_text)
+        .map_err(|e| ConvertError::Format(format!("config.json: {e}")))?;
+    let a = gguf_arch(&spec.family).ok_or_else(|| {
+        ConvertError::Unsupported(format!(
+            "model family {:?} has no GGUF architecture mapping here",
+            spec.family
+        ))
+    })?;
+    let mut rep = ConvertReport {
+        arch: a.to_string(),
+        ..Default::default()
+    };
+    if let crate::arch::Support::Planned(why) = &spec.support {
+        rep.warnings.push(format!(
+            "the engine cannot run {} yet ({why}), the file is still written",
+            spec.family
+        ));
+    }
     let st = SafeTensors::open(dir)?;
     let infos = st.infos();
     let gemma = a.starts_with("gemma");
     let permute_qk = a == "llama";
     let moe = spec.experts > 0;
-    let shape_of: HashMap<&str, &[u64]> = infos.iter().map(|t| (t.name.as_str(), t.dims.as_slice())).collect();
+    let shape_of: HashMap<&str, &[u64]> = infos
+        .iter()
+        .map(|t| (t.name.as_str(), t.dims.as_slice()))
+        .collect();
 
     // ---- plan the output tensors
     let mut outs: Vec<Out> = vec![];
@@ -1118,50 +2012,113 @@ pub fn convert_hf_dir(dir: &std::path::Path, out: &std::path::Path, opts: &Conve
             Mapped::One(name, role) => {
                 let permute = match role {
                     Role::Q if permute_qk && name.ends_with(".weight") => Some(spec.heads as usize),
-                    Role::K if permute_qk && name.ends_with(".weight") => Some(spec.kv_heads as usize),
+                    Role::K if permute_qk && name.ends_with(".weight") => {
+                        Some(spec.kv_heads as usize)
+                    }
                     _ => None,
                 };
                 if permute_qk && matches!(role, Role::Q | Role::K) && name.ends_with(".bias") {
-                    rep.warnings.push(format!("{name}: llama.cpp permutes this bias too, this converter leaves it as is"));
+                    rep.warnings.push(format!(
+                        "{name}: llama.cpp permutes this bias too, this converter leaves it as is"
+                    ));
                 }
                 if let Some(h) = permute {
                     let ok = t.dims.len() == 2 && h > 0 && t.dims[0] % (2 * h as u64) == 0;
-                    if !ok { return fmt_err(format!("{}: shape {:?} cannot be split into {h} heads", t.name, t.dims)); }
+                    if !ok {
+                        return fmt_err(format!(
+                            "{}: shape {:?} cannot be split into {h} heads",
+                            t.name, t.dims
+                        ));
+                    }
                 }
-                if outs.iter().any(|o| o.name == name) { return fmt_err(format!("two tensors map to {name}")); }
-                outs.push(Out { key: out_key(&name), name, shape: t.dims.clone(), src: Src::One(t.name.clone()), permute, plus_one: gemma && role == Role::Norm });
+                if outs.iter().any(|o| o.name == name) {
+                    return fmt_err(format!("two tensors map to {name}"));
+                }
+                outs.push(Out {
+                    key: out_key(&name),
+                    name,
+                    shape: t.dims.clone(),
+                    src: Src::One(t.name.clone()),
+                    permute,
+                    plus_one: gemma && role == Role::Norm,
+                });
             }
             Mapped::Expert { layer, part, idx } => {
-                if spec.experts == 0 { return fmt_err(format!("{}: expert tensor in a model with no experts", t.name)); }
-                if idx as u64 >= spec.experts { return fmt_err(format!("{}: expert index {idx} is outside 0..{}", t.name, spec.experts)); }
-                let slot = stacks.entry((layer, part)).or_insert_with(|| vec![None; spec.experts as usize]);
-                if slot[idx].replace(t.name.clone()).is_some() { return fmt_err(format!("{}: duplicate expert", t.name)); }
+                if spec.experts == 0 {
+                    return fmt_err(format!(
+                        "{}: expert tensor in a model with no experts",
+                        t.name
+                    ));
+                }
+                if idx as u64 >= spec.experts {
+                    return fmt_err(format!(
+                        "{}: expert index {idx} is outside 0..{}",
+                        t.name, spec.experts
+                    ));
+                }
+                let slot = stacks
+                    .entry((layer, part))
+                    .or_insert_with(|| vec![None; spec.experts as usize]);
+                if slot[idx].replace(t.name.clone()).is_some() {
+                    return fmt_err(format!("{}: duplicate expert", t.name));
+                }
             }
         }
     }
     let mut stack_keys: Vec<_> = stacks.keys().copied().collect();
     stack_keys.sort();
     for (layer, part) in stack_keys {
-        let names: Vec<String> = stacks[&(layer, part)].iter().enumerate()
-            .map(|(e, n)| n.clone().ok_or_else(|| ConvertError::Format(format!("layer {layer}: expert {e} of the {part} projection is missing"))))
+        let names: Vec<String> = stacks[&(layer, part)]
+            .iter()
+            .enumerate()
+            .map(|(e, n)| {
+                n.clone().ok_or_else(|| {
+                    ConvertError::Format(format!(
+                        "layer {layer}: expert {e} of the {part} projection is missing"
+                    ))
+                })
+            })
             .collect::<Result<_, _>>()?;
         let first = shape_of[names[0].as_str()];
-        if first.len() != 2 { return fmt_err(format!("{}: expert weights must be 2-D", names[0])); }
-        if names.iter().any(|n| shape_of[n.as_str()] != first) { return fmt_err(format!("layer {layer}: the {part} experts differ in shape")); }
+        if first.len() != 2 {
+            return fmt_err(format!("{}: expert weights must be 2-D", names[0]));
+        }
+        if names.iter().any(|n| shape_of[n.as_str()] != first) {
+            return fmt_err(format!("layer {layer}: the {part} experts differ in shape"));
+        }
         let mut shape = vec![names.len() as u64];
         shape.extend_from_slice(first);
         let name = format!("blk.{layer}.ffn_{part}_exps.weight");
-        outs.push(Out { key: out_key(&name), name, shape, src: Src::Stack(names), permute: None, plus_one: false });
+        outs.push(Out {
+            key: out_key(&name),
+            name,
+            shape,
+            src: Src::Stack(names),
+            permute: None,
+            plus_one: false,
+        });
     }
-    if outs.is_empty() { return fmt_err("the folder holds no tensors this converter knows"); }
-    if skipped > 0 { rep.warnings.push(format!("{skipped} non-text tensors (vision tower, rotary tables) were skipped")); }
+    if outs.is_empty() {
+        return fmt_err("the folder holds no tensors this converter knows");
+    }
+    if skipped > 0 {
+        rep.warnings.push(format!(
+            "{skipped} non-text tensors (vision tower, rotary tables) were skipped"
+        ));
+    }
     for must in ["token_embd.weight"] {
-        if !outs.iter().any(|o| o.name == must) { return fmt_err(format!("the model has no {must}")); }
+        if !outs.iter().any(|o| o.name == must) {
+            return fmt_err(format!("the model has no {must}"));
+        }
     }
     outs.sort_by(|x, y| x.key.cmp(&y.key));
 
     // ---- metadata and tensor table
-    let folder = dir.file_name().and_then(|n| n.to_str()).unwrap_or("model").to_string();
+    let folder = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("model")
+        .to_string();
     let name = opts.name.clone().unwrap_or(folder);
     let mut meta = arch_metadata(&spec, &cfg, a, &name, opts)?;
     meta.extend(tokenizer_metadata(dir, &cfg, &mut rep.warnings)?);
@@ -1169,7 +2126,11 @@ pub fn convert_hf_dir(dir: &std::path::Path, out: &std::path::Path, opts: &Conve
     let mut descs = vec![];
     for o in &outs {
         let t = opts.recipe.plan(&o.name, &o.shape, n_layers);
-        let t = if o.name.len() > crate::gguf_write::MAX_NAME { return fmt_err(format!("{}: name longer than 64 bytes", o.name)) } else { t };
+        let t = if o.name.len() > crate::gguf_write::MAX_NAME {
+            return fmt_err(format!("{}: name longer than 64 bytes", o.name));
+        } else {
+            t
+        };
         descs.push(crate::gguf_write::TensorDesc::new(&o.name, &o.shape, t));
         rep.types.push((o.name.clone(), t));
     }
@@ -1183,24 +2144,50 @@ pub fn convert_hf_dir(dir: &std::path::Path, out: &std::path::Path, opts: &Conve
             let cols = *o.shape.last().unwrap_or(&1) as usize;
             let one = |hf: &str| -> Result<Vec<f32>, ConvertError> {
                 let mut v = st.read(hf)?;
-                if let Some(h) = o.permute { v = permute_rows(&v, o.shape[0] as usize, cols, h); }
-                if o.plus_one { v.iter_mut().for_each(|x| *x += 1.0); }
+                if let Some(h) = o.permute {
+                    v = permute_rows(&v, o.shape[0] as usize, cols, h);
+                }
+                if o.plus_one {
+                    v.iter_mut().for_each(|x| *x += 1.0);
+                }
                 Ok(v)
             };
             match &o.src {
-                Src::One(hf) => { let v = one(hf)?; encode_f32(d.dtype, &v, cols.max(1), &o.name, opts) }
+                Src::One(hf) => {
+                    let v = one(hf)?;
+                    encode_f32(d.dtype, &v, cols.max(1), &o.name, opts)
+                }
                 Src::Stack(names) => {
                     let mut bytes = Vec::new();
-                    for n in names { let v = one(n)?; bytes.extend(encode_f32(d.dtype, &v, cols, &o.name, opts)?); }
+                    for n in names {
+                        let v = one(n)?;
+                        bytes.extend(encode_f32(d.dtype, &v, cols, &o.name, opts)?);
+                    }
                     Ok(bytes)
                 }
             }
         })();
-        r.map_err(|e| { let msg = e.to_string(); failure = Some(e); crate::gguf_write::WriteError::Invalid(msg) })
+        r.map_err(|e| {
+            let msg = e.to_string();
+            failure = Some(e);
+            crate::gguf_write::WriteError::Invalid(msg)
+        })
     });
-    if let Some(e) = failure { let _ = std::fs::remove_file(out); return Err(e); }
-    let w = match result { Ok(w) => w, Err(e) => { let _ = std::fs::remove_file(out); return Err(e.into()); } };
-    w.into_inner().map_err(|e| ConvertError::Io(e.into_error()))?.sync_all().ok();
+    if let Some(e) = failure {
+        let _ = std::fs::remove_file(out);
+        return Err(e);
+    }
+    let w = match result {
+        Ok(w) => w,
+        Err(e) => {
+            let _ = std::fs::remove_file(out);
+            return Err(e.into());
+        }
+    };
+    w.into_inner()
+        .map_err(|e| ConvertError::Io(e.into_error()))?
+        .sync_all()
+        .ok();
     rep.tensors = outs.len();
     rep.output_bytes = std::fs::metadata(out)?.len();
     Ok(rep)
@@ -1212,23 +2199,46 @@ pub fn convert_hf_dir(dir: &std::path::Path, out: &std::path::Path, opts: &Conve
 /// type are copied byte for byte; others are decoded to f32 and re-encoded (quality only drops further than the
 /// input's, so start from F16/BF16/Q8_0 when you can). Metadata is carried over, with `general.file_type` and
 /// the quantisation version updated.
-pub fn quantize(input: &std::path::Path, output: &std::path::Path, opts: &ConvertOptions) -> Result<ConvertReport, ConvertError> {
+pub fn quantize(
+    input: &std::path::Path,
+    output: &std::path::Path,
+    opts: &ConvertOptions,
+) -> Result<ConvertReport, ConvertError> {
     use std::io::{Read, Seek, SeekFrom};
-    if input == output { return fmt_err("input and output are the same file"); }
-    let g = crate::gguf::Gguf::parse(std::io::BufReader::new(std::fs::File::open(input)?)).map_err(|e| ConvertError::Format(format!("{}: {e}", input.display())))?;
-    let mut rep = ConvertReport { arch: g.architecture().unwrap_or("").to_string(), ..Default::default() };
+    if input == output {
+        return fmt_err("input and output are the same file");
+    }
+    let g = {
+        let fh = std::fs::File::open(input)?;
+        let n = fh.metadata()?.len();
+        crate::gguf::Gguf::parse_with_len(std::io::BufReader::new(fh), n)
+    }
+    .map_err(|e| ConvertError::Format(format!("{}: {e}", input.display())))?;
+    let mut rep = ConvertReport {
+        arch: g.architecture().unwrap_or("").to_string(),
+        ..Default::default()
+    };
     let mut keys: Vec<&String> = g.meta.keys().collect();
     keys.sort();
     let mut meta: Vec<(String, MetaValue)> = vec![];
     for k in keys {
-        if k == "general.file_type" || k == "general.quantization_version" { continue; }
+        if k == "general.file_type" || k == "general.quantization_version" {
+            continue;
+        }
         let v = &g.meta[k];
         if let crate::gguf::Value::Array(a) = v {
-            if a.len() >= (1 << 20) { return fmt_err(format!("{k}: array reached the reader's 2^20 limit and may be truncated")); }
+            if a.len() >= (1 << 20) {
+                return fmt_err(format!(
+                    "{k}: array reached the reader's 2^20 limit and may be truncated"
+                ));
+            }
         }
         meta.push((k.clone(), MetaValue::from_read(v)));
     }
-    meta.push(("general.file_type".into(), MetaValue::U32(opts.recipe.file_type)));
+    meta.push((
+        "general.file_type".into(),
+        MetaValue::U32(opts.recipe.file_type),
+    ));
     meta.push(("general.quantization_version".into(), MetaValue::U32(2)));
     let n_layers = g.get_u64("block_count").unwrap_or(0) as usize;
     let len = std::fs::metadata(input)?.len();
@@ -1236,11 +2246,27 @@ pub fn quantize(input: &std::path::Path, output: &std::path::Path, opts: &Conver
     let mut srcs = vec![];
     for t in &g.tensors {
         let shape: Vec<u64> = t.dims.iter().rev().copied().collect();
-        let want = if t.dtype.decodable() { opts.recipe.plan(&t.name, &shape, n_layers) } else { t.dtype };
-        let bytes = t.bytes().ok_or_else(|| ConvertError::Format(format!("{}: bad size", t.name)))?;
-        let end = g.data_start.checked_add(t.offset).and_then(|s| s.checked_add(bytes));
-        if end.is_none_or(|e| e > len) { return fmt_err(format!("{}: data lies past the end of the file", t.name)); }
-        if want != t.dtype && !t.dtype.decodable() { return Err(ConvertError::Unsupported(format!("{}: cannot decode {:?}", t.name, t.dtype))); }
+        let want = if t.dtype.decodable() {
+            opts.recipe.plan(&t.name, &shape, n_layers)
+        } else {
+            t.dtype
+        };
+        let bytes = t
+            .bytes()
+            .ok_or_else(|| ConvertError::Format(format!("{}: bad size", t.name)))?;
+        let end = g
+            .data_start
+            .checked_add(t.offset)
+            .and_then(|s| s.checked_add(bytes));
+        if end.is_none_or(|e| e > len) {
+            return fmt_err(format!("{}: data lies past the end of the file", t.name));
+        }
+        if want != t.dtype && !t.dtype.decodable() {
+            return Err(ConvertError::Unsupported(format!(
+                "{}: cannot decode {:?}",
+                t.name, t.dtype
+            )));
+        }
         descs.push(crate::gguf_write::TensorDesc::new(&t.name, &shape, want));
         rep.types.push((t.name.clone(), want));
         srcs.push((shape, t.dtype, g.data_start + t.offset, bytes));
@@ -1255,18 +2281,37 @@ pub fn quantize(input: &std::path::Path, output: &std::path::Path, opts: &Conver
             let mut raw = vec![0u8; *bytes as usize];
             f.seek(SeekFrom::Start(*off))?;
             f.read_exact(&mut raw)?;
-            if *from == d.dtype { return Ok(raw); }
+            if *from == d.dtype {
+                return Ok(raw);
+            }
             let n = shape.iter().product::<u64>() as usize;
             let mut x = Vec::new();
-            crate::quant::dequantize(*from, &raw, n, &mut x).map_err(|e| ConvertError::Format(format!("{}: {e}", tensors[i].name)))?;
+            crate::quant::dequantize(*from, &raw, n, &mut x)
+                .map_err(|e| ConvertError::Format(format!("{}: {e}", tensors[i].name)))?;
             let cols = *shape.last().unwrap_or(&1) as usize;
             encode_f32(d.dtype, &x, cols.max(1), &d.name, opts)
         })();
-        r.map_err(|e| { let msg = e.to_string(); failure = Some(e); crate::gguf_write::WriteError::Invalid(msg) })
+        r.map_err(|e| {
+            let msg = e.to_string();
+            failure = Some(e);
+            crate::gguf_write::WriteError::Invalid(msg)
+        })
     });
-    if let Some(e) = failure { let _ = std::fs::remove_file(output); return Err(e); }
-    let w = match result { Ok(w) => w, Err(e) => { let _ = std::fs::remove_file(output); return Err(e.into()); } };
-    w.into_inner().map_err(|e| ConvertError::Io(e.into_error()))?.sync_all().ok();
+    if let Some(e) = failure {
+        let _ = std::fs::remove_file(output);
+        return Err(e);
+    }
+    let w = match result {
+        Ok(w) => w,
+        Err(e) => {
+            let _ = std::fs::remove_file(output);
+            return Err(e.into());
+        }
+    };
+    w.into_inner()
+        .map_err(|e| ConvertError::Io(e.into_error()))?
+        .sync_all()
+        .ok();
     rep.tensors = g.tensors.len();
     rep.output_bytes = std::fs::metadata(output)?.len();
     Ok(rep)
@@ -1278,12 +2323,16 @@ mod tests {
     use crate::quant::dequantize;
 
     fn rng(seed: &mut u64) -> f32 {
-        *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((*seed >> 33) as f32 / (1u64 << 31) as f32) * 2.0 - 1.0
     }
     fn gauss(n: usize, seed: u64) -> Vec<f32> {
         let mut s = seed;
-        (0..n).map(|_| (0..4).map(|_| rng(&mut s)).sum::<f32>() * 0.5).collect()
+        (0..n)
+            .map(|_| (0..4).map(|_| rng(&mut s)).sum::<f32>() * 0.5)
+            .collect()
     }
     fn rmse(a: &[f32], b: &[f32]) -> f32 {
         (a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>() / a.len() as f32).sqrt()
@@ -1295,15 +2344,39 @@ mod tests {
         o
     }
     const ALL: [(DType, f32); 11] = [
-        (DType::Q8_0, 0.01), (DType::Q4_0, 0.2), (DType::Q4_1, 0.2), (DType::Q5_0, 0.1), (DType::Q5_1, 0.1),
-        (DType::Q2K, 0.9), (DType::Q3K, 0.45), (DType::Q4K, 0.2), (DType::Q5K, 0.1), (DType::Q6K, 0.05), (DType::Q8K, 0.01),
+        (DType::Q8_0, 0.01),
+        (DType::Q4_0, 0.2),
+        (DType::Q4_1, 0.2),
+        (DType::Q5_0, 0.1),
+        (DType::Q5_1, 0.1),
+        (DType::Q2K, 0.9),
+        (DType::Q3K, 0.45),
+        (DType::Q4K, 0.2),
+        (DType::Q5K, 0.1),
+        (DType::Q6K, 0.05),
+        (DType::Q8K, 0.01),
     ];
 
     #[test]
     fn f16_bf16_conversions() {
-        for &v in &[0.0f32, -0.0, 1.0, -2.5, 65504.0, 6.1e-5, 5.9e-8, 1e-9, 70000.0, f32::INFINITY, 0.1, 3.3333] {
+        for &v in &[
+            0.0f32,
+            -0.0,
+            1.0,
+            -2.5,
+            65504.0,
+            6.1e-5,
+            5.9e-8,
+            1e-9,
+            70000.0,
+            f32::INFINITY,
+            0.1,
+            3.3333,
+        ] {
             let h = r16(v);
-            if v.abs() < 65520.0 && v.abs() > 1e-4 { assert!(((h - v) / v).abs() < 1e-3, "{v} {h}"); }
+            if v.abs() < 65520.0 && v.abs() > 1e-4 {
+                assert!(((h - v) / v).abs() < 1e-3, "{v} {h}");
+            }
         }
         assert_eq!(f32_to_f16(70000.0), 0x7c00);
         assert_eq!(f32_to_f16(1.0), 0x3c00);
@@ -1311,7 +2384,12 @@ mod tests {
         assert_eq!(f32_to_bf16(1.0), 0x3f80);
         assert!(f32_to_bf16(f32::NAN) & 0x7f80 == 0x7f80);
         // exhaustive: f16 → f32 → f16 is the identity for finite values
-        for h in 0u16..=0xffff { let f = f16_to_f32(h); if f.is_finite() { assert_eq!(f32_to_f16(f), h, "{h:#x}"); } }
+        for h in 0u16..=0xffff {
+            let f = f16_to_f32(h);
+            if f.is_finite() {
+                assert_eq!(f32_to_f16(f), h, "{h:#x}");
+            }
+        }
     }
 
     #[test]
@@ -1323,7 +2401,11 @@ mod tests {
             let y = roundtrip(t, &x);
             let e = rmse(&x, &y);
             println!("{:<6} {:>10.5} {:>10.4}", format!("{t:?}"), e, e / sd);
-            assert!(e / sd < bound, "{t:?}: relative error {} over {bound}", e / sd);
+            assert!(
+                e / sd < bound,
+                "{t:?}: relative error {} over {bound}",
+                e / sd
+            );
         }
         for t in [DType::F32, DType::F16, DType::BF16] {
             let y = roundtrip(t, &x);
@@ -1335,27 +2417,57 @@ mod tests {
     #[test]
     fn zeros_and_constants() {
         for (t, _) in ALL {
-            assert!(roundtrip(t, &vec![0.0; 256]).iter().all(|v| *v == 0.0), "{t:?} zeros");
+            assert!(
+                roundtrip(t, &vec![0.0; 256]).iter().all(|v| *v == 0.0),
+                "{t:?} zeros"
+            );
             let y = roundtrip(t, &vec![0.5; 256]);
-            assert!(y.iter().all(|v| (v - 0.5).abs() < 0.1), "{t:?} constant: {:?}", &y[..4]);
+            assert!(
+                y.iter().all(|v| (v - 0.5).abs() < 0.1),
+                "{t:?} constant: {:?}",
+                &y[..4]
+            );
         }
     }
 
     /// Naive baselines written independently: fixed scale from the extremum.
     fn naive_q4_0(x: &[f32]) -> Vec<f32> {
-        x.chunks(32).flat_map(|c| {
-            let m = c.iter().copied().fold(0f32, |a, v| if v.abs() > a.abs() { v } else { a });
-            let d = r16(m / -8.0);
-            c.iter().map(move |v| if d == 0.0 { 0.0 } else { ((v / d + 8.5).floor().clamp(0.0, 15.0) - 8.0) * d }).collect::<Vec<_>>()
-        }).collect()
+        x.chunks(32)
+            .flat_map(|c| {
+                let m = c
+                    .iter()
+                    .copied()
+                    .fold(0f32, |a, v| if v.abs() > a.abs() { v } else { a });
+                let d = r16(m / -8.0);
+                c.iter()
+                    .map(move |v| {
+                        if d == 0.0 {
+                            0.0
+                        } else {
+                            ((v / d + 8.5).floor().clamp(0.0, 15.0) - 8.0) * d
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
     fn naive_affine(x: &[f32], blk: usize, nmax: f32) -> Vec<f32> {
-        x.chunks(blk).flat_map(|c| {
-            let mn = c.iter().copied().fold(f32::INFINITY, f32::min).min(0.0);
-            let mx = c.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            let d = (mx - mn) / nmax;
-            c.iter().map(move |v| if d == 0.0 { 0.0 } else { (((v - mn) / d).round().clamp(0.0, nmax)) * d + mn }).collect::<Vec<_>>()
-        }).collect()
+        x.chunks(blk)
+            .flat_map(|c| {
+                let mn = c.iter().copied().fold(f32::INFINITY, f32::min).min(0.0);
+                let mx = c.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let d = (mx - mn) / nmax;
+                c.iter()
+                    .map(move |v| {
+                        if d == 0.0 {
+                            0.0
+                        } else {
+                            (((v - mn) / d).round().clamp(0.0, nmax)) * d + mn
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     #[test]
@@ -1375,16 +2487,27 @@ mod tests {
     fn imatrix_lowers_weighted_error() {
         let cols = 256;
         let x = gauss(cols * 16, 5);
-        let imp: Vec<f32> = (0..cols).map(|c| if c % 8 == 0 { 100.0 } else { 0.01 }).collect();
+        let imp: Vec<f32> = (0..cols)
+            .map(|c| if c % 8 == 0 { 100.0 } else { 0.01 })
+            .collect();
         for t in [DType::Q4_0, DType::Q4K, DType::Q2K, DType::Q6K] {
             let plain = quantize_matrix(t, &x, cols, None, 1).unwrap();
             let weighted = quantize_matrix(t, &x, cols, Some(&imp), 1).unwrap();
             let werr = |q: &[u8]| {
                 let mut o = Vec::new();
                 dequantize(t, q, x.len(), &mut o).unwrap();
-                x.iter().zip(&o).enumerate().map(|(i, (a, b))| imp[i % cols] * (a - b) * (a - b)).sum::<f32>()
+                x.iter()
+                    .zip(&o)
+                    .enumerate()
+                    .map(|(i, (a, b))| imp[i % cols] * (a - b) * (a - b))
+                    .sum::<f32>()
             };
-            assert!(werr(&weighted) < werr(&plain), "{t:?}: {} !< {}", werr(&weighted), werr(&plain));
+            assert!(
+                werr(&weighted) < werr(&plain),
+                "{t:?}: {} !< {}",
+                werr(&weighted),
+                werr(&plain)
+            );
         }
     }
 
@@ -1392,7 +2515,9 @@ mod tests {
     fn threads_are_reproducible() {
         let x = gauss(256 * 37, 3);
         let a = quantize_matrix(DType::Q4K, &x, 256, None, 1).unwrap();
-        for th in [2, 3, 8, 64] { assert_eq!(a, quantize_matrix(DType::Q4K, &x, 256, None, th).unwrap()); }
+        for th in [2, 3, 8, 64] {
+            assert_eq!(a, quantize_matrix(DType::Q4K, &x, 256, None, th).unwrap());
+        }
     }
 
     #[test]
@@ -1404,9 +2529,15 @@ mod tests {
         assert!(quantize_row(DType::Q4_0, &x, Some(&[1.0; 5])).is_err());
         assert!(quantize_row(DType::Other(999), &x, None).is_err());
         x[3] = f32::NAN;
-        assert_eq!(quantize_row(DType::Q4K, &x, None), Err(QuantizeError::NonFinite));
+        assert_eq!(
+            quantize_row(DType::Q4K, &x, None),
+            Err(QuantizeError::NonFinite)
+        );
         x[3] = f32::INFINITY;
-        assert_eq!(quantize_row(DType::Q8_0, &x, None), Err(QuantizeError::NonFinite));
+        assert_eq!(
+            quantize_row(DType::Q8_0, &x, None),
+            Err(QuantizeError::NonFinite)
+        );
         let mut out = vec![0u8; 3];
         assert!(quantize_row_into(DType::Q8_0, &x[..32], None, &mut out).is_err());
     }
@@ -1434,16 +2565,26 @@ mod tests {
         assert_eq!(r.plan("blk.5.attn_q.weight", &sh, n), DType::Q4K);
         assert_eq!(r.plan("blk.5.ffn_up.weight", &sh, n), DType::Q4K);
         // use_more_bits: first eighth, last eighth, every third in between
-        let more: Vec<usize> = (0..n).filter(|&i| r.plan(&format!("blk.{i}.attn_v.weight"), &sh, n) == DType::Q6K).collect();
-        let want: Vec<usize> = (0..n).filter(|&i| !(4..28).contains(&i) || (i - 4) % 3 == 2).collect();
+        let more: Vec<usize> = (0..n)
+            .filter(|&i| r.plan(&format!("blk.{i}.attn_v.weight"), &sh, n) == DType::Q6K)
+            .collect();
+        let want: Vec<usize> = (0..n)
+            .filter(|&i| !(4..28).contains(&i) || (i - 4) % 3 == 2)
+            .collect();
         assert_eq!(more, want);
         assert_eq!(r.plan("blk.0.ffn_down.weight", &sh, n), DType::Q6K);
         assert_eq!(r.plan("blk.10.ffn_down.weight", &sh, n), DType::Q4K);
-        assert_eq!(r.plan("blk.6.ffn_down_exps.weight", &[8, 4096, 4096], n), DType::Q6K);
+        assert_eq!(
+            r.plan("blk.6.ffn_down_exps.weight", &[8, 4096, 4096], n),
+            DType::Q6K
+        );
         // norms, biases and routers stay f32
         assert_eq!(r.plan("blk.1.attn_norm.weight", &[4096], n), DType::F32);
         assert_eq!(r.plan("blk.1.attn_q.bias", &[4096], n), DType::F32);
-        assert_eq!(r.plan("blk.1.ffn_gate_inp.weight", &[8, 4096], n), DType::F32);
+        assert_eq!(
+            r.plan("blk.1.ffn_gate_inp.weight", &[8, 4096], n),
+            DType::F32
+        );
         // rows that are not a block multiple fall back
         assert_eq!(r.plan("blk.5.attn_q.weight", &[64, 100], n), DType::F16);
     }
@@ -1452,15 +2593,43 @@ mod tests {
     fn fallbacks_and_overrides() {
         let r = Recipe::named("q6_k").unwrap();
         assert_eq!(r.plan("blk.0.attn_q.weight", &[8, 288], 4), DType::Q8_0); // 288 = 9×32, not 256-aligned
-        assert_eq!(Recipe::named("Q2_K").unwrap().plan("blk.0.attn_q.weight", &[8, 96], 4), DType::Q4_0);
-        assert_eq!(Recipe::named("Q4_K_M").unwrap().plan("blk.0.attn_q.weight", &[8, 50], 4), DType::F16);
-        let r = Recipe::named("Q4_K_M").unwrap().with_override("*attn_k.weight", DType::Q8_0).with_override("blk.0.*", DType::F16);
+        assert_eq!(
+            Recipe::named("Q2_K")
+                .unwrap()
+                .plan("blk.0.attn_q.weight", &[8, 96], 4),
+            DType::Q4_0
+        );
+        assert_eq!(
+            Recipe::named("Q4_K_M")
+                .unwrap()
+                .plan("blk.0.attn_q.weight", &[8, 50], 4),
+            DType::F16
+        );
+        let r = Recipe::named("Q4_K_M")
+            .unwrap()
+            .with_override("*attn_k.weight", DType::Q8_0)
+            .with_override("blk.0.*", DType::F16);
         assert_eq!(r.plan("blk.3.attn_k.weight", &[256, 256], 8), DType::Q8_0);
-        assert_eq!(r.plan("blk.0.attn_k.weight", &[256, 256], 8), DType::Q8_0, "first override wins");
+        assert_eq!(
+            r.plan("blk.0.attn_k.weight", &[256, 256], 8),
+            DType::Q8_0,
+            "first override wins"
+        );
         assert_eq!(r.plan("blk.0.ffn_up.weight", &[256, 256], 8), DType::F16);
-        for n in Recipe::NAMES { assert!(Recipe::named(n).is_some(), "{n}"); }
+        for n in Recipe::NAMES {
+            assert!(Recipe::named(n).is_some(), "{n}");
+        }
         assert!(Recipe::named("Q9_Z").is_none());
-        for t in [DType::Q2K, DType::Q3K, DType::Q4K, DType::Q5K, DType::Q6K, DType::Q8_0, DType::F16, DType::BF16] {
+        for t in [
+            DType::Q2K,
+            DType::Q3K,
+            DType::Q4K,
+            DType::Q5K,
+            DType::Q6K,
+            DType::Q8_0,
+            DType::F16,
+            DType::BF16,
+        ] {
             assert_eq!(parse_dtype(&dtype_name(t)), Some(t));
         }
     }
@@ -1474,14 +2643,28 @@ mod tests {
         let p = permute_rows(&w, rows, cols, heads);
         assert_ne!(p, w);
         assert_eq!(crate::loader::unpermute_rows(&p, rows, cols, heads), w);
-        assert_eq!(permute_rows(&crate::loader::unpermute_rows(&w, rows, cols, heads), rows, cols, heads), w);
+        assert_eq!(
+            permute_rows(
+                &crate::loader::unpermute_rows(&w, rows, cols, heads),
+                rows,
+                cols,
+                heads
+            ),
+            w
+        );
         // not a head multiple: returned unchanged instead of panicking
-        assert_eq!(permute_rows(&w[..7 * cols], 7, cols, 4), w[..7 * cols].to_vec());
+        assert_eq!(
+            permute_rows(&w[..7 * cols], 7, cols, 4),
+            w[..7 * cols].to_vec()
+        );
     }
 
     #[test]
     fn imatrix_json_dat_and_accumulator() {
-        let m = Imatrix::from_json(r#"{"tensors":{"a.weight":[1.0,2.0,3.0,4.0],"b.weight":[0.5,0.5]}}"#).unwrap();
+        let m = Imatrix::from_json(
+            r#"{"tensors":{"a.weight":[1.0,2.0,3.0,4.0],"b.weight":[0.5,0.5]}}"#,
+        )
+        .unwrap();
         assert_eq!(Imatrix::from_json(&m.to_json()).unwrap(), m);
         assert_eq!(Imatrix::from_dat(&m.to_dat()).unwrap(), m);
         // two expert rows are averaged
@@ -1490,20 +2673,46 @@ mod tests {
         assert!(m.for_cols("a.weight", 3).is_none() && m.for_cols("zzz", 2).is_none());
         // counts divide the sums in the .dat form
         let mut d = 1i32.to_le_bytes().to_vec();
-        d.extend(3i32.to_le_bytes()); d.extend(b"x.w"); d.extend(4i32.to_le_bytes()); d.extend(2i32.to_le_bytes());
-        d.extend(8.0f32.to_le_bytes()); d.extend(4.0f32.to_le_bytes());
-        assert_eq!(Imatrix::from_dat(&d).unwrap().weights["x.w"], vec![2.0, 1.0]);
-        let im = compute_imatrix(&[vec![1, 2], vec![3]], |s, acc| acc.add("t", 2, &[s[0] as f32, 0.0, 0.0, s[0] as f32])).unwrap();
+        d.extend(3i32.to_le_bytes());
+        d.extend(b"x.w");
+        d.extend(4i32.to_le_bytes());
+        d.extend(2i32.to_le_bytes());
+        d.extend(8.0f32.to_le_bytes());
+        d.extend(4.0f32.to_le_bytes());
+        assert_eq!(
+            Imatrix::from_dat(&d).unwrap().weights["x.w"],
+            vec![2.0, 1.0]
+        );
+        let im = compute_imatrix(&[vec![1, 2], vec![3]], |s, acc| {
+            acc.add("t", 2, &[s[0] as f32, 0.0, 0.0, s[0] as f32])
+        })
+        .unwrap();
         // rows: (1,0),(0,1),(3,0),(0,3) twice per sample pair → mean of squares per column
-        assert!((im.weights["t"][0] - (1.0 + 9.0) / 4.0).abs() < 1e-6 && (im.weights["t"][1] - (1.0 + 9.0) / 4.0).abs() < 1e-6, "{:?}", im.weights["t"]);
+        assert!(
+            (im.weights["t"][0] - (1.0 + 9.0) / 4.0).abs() < 1e-6
+                && (im.weights["t"][1] - (1.0 + 9.0) / 4.0).abs() < 1e-6,
+            "{:?}",
+            im.weights["t"]
+        );
     }
 
     #[test]
     fn imatrix_hostile_inputs() {
-        for bad in ["", "[]", "{\"a\":1}", "{\"a\":[-1.0]}", "{\"a\":[\"x\"]}", "{\"a\":[1e999]}"] { assert!(Imatrix::from_json(bad).is_err(), "{bad}"); }
+        for bad in [
+            "",
+            "[]",
+            "{\"a\":1}",
+            "{\"a\":[-1.0]}",
+            "{\"a\":[\"x\"]}",
+            "{\"a\":[1e999]}",
+        ] {
+            assert!(Imatrix::from_json(bad).is_err(), "{bad}");
+        }
         let m = Imatrix::from_json(r#"{"a":[1.0,2.0]}"#).unwrap();
         let d = m.to_dat();
-        for cut in 0..d.len() { assert!(Imatrix::from_dat(&d[..cut]).is_err(), "cut {cut}"); }
+        for cut in 0..d.len() {
+            assert!(Imatrix::from_dat(&d[..cut]).is_err(), "cut {cut}");
+        }
         assert!(Imatrix::from_dat(&i32::MAX.to_le_bytes()).is_err());
         assert!(Imatrix::from_dat(&(-1i32).to_le_bytes()).is_err());
         let mut acc = ImatrixAccumulator::default();
@@ -1514,13 +2723,17 @@ mod tests {
 
     // ------------------------------------------------------------------ conversion end to end
 
-    use crate::loader::{load_dense, GgufFile, Naming, SafeTensors};
+    use crate::loader::{GgufFile, Naming, SafeTensors, load_dense};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn tmpdir() -> PathBuf {
         static N: AtomicU32 = AtomicU32::new(0);
-        let d = std::env::temp_dir().join(format!("engine-quantize-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+        let d = std::env::temp_dir().join(format!(
+            "engine-quantize-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
@@ -1540,12 +2753,20 @@ mod tests {
         std::fs::write(path, f).unwrap();
     }
     fn mat(shape: &[usize], seed: &mut u64, scale: f32) -> (Vec<usize>, Vec<f32>) {
-        (shape.to_vec(), (0..shape.iter().product::<usize>()).map(|_| rng(seed) * scale).collect())
+        (
+            shape.to_vec(),
+            (0..shape.iter().product::<usize>())
+                .map(|_| rng(seed) * scale)
+                .collect(),
+        )
     }
 
     const H: usize = 256;
     const V: usize = 32;
-    struct Tiny { dir: PathBuf, tensors: Vec<(String, Vec<usize>, Vec<f32>)> }
+    struct Tiny {
+        dir: PathBuf,
+        tensors: Vec<(String, Vec<usize>, Vec<f32>)>,
+    }
 
     /// A llama-style model small enough to convert in milliseconds, wide enough for K-quant blocks.
     fn tiny_llama(model_type: &str, experts: usize) -> Tiny {
@@ -1554,30 +2775,76 @@ mod tests {
         let mut cfg = serde_json::json!({"model_type": model_type, "hidden_size": H, "num_hidden_layers": layers, "num_attention_heads": heads,
             "num_key_value_heads": kv, "intermediate_size": ffn, "vocab_size": V, "rope_theta": 10000.0, "rms_norm_eps": 1e-5,
             "max_position_embeddings": 128, "tie_word_embeddings": false});
-        if experts > 0 { cfg["num_local_experts"] = experts.into(); cfg["num_experts_per_tok"] = 2.into(); }
+        if experts > 0 {
+            cfg["num_local_experts"] = experts.into();
+            cfg["num_experts_per_tok"] = 2.into();
+        }
         std::fs::write(dir.join("config.json"), cfg.to_string()).unwrap();
         let mut s = 42u64;
         let mut t: Vec<(String, Vec<usize>, Vec<f32>)> = vec![];
         let mut add = |n: String, m: (Vec<usize>, Vec<f32>)| t.push((n, m.0, m.1));
-        add("model.embed_tokens.weight".into(), mat(&[V, H], &mut s, 0.5));
-        add("model.norm.weight".into(), (vec![H], (0..H).map(|i| 1.0 + 0.01 * (i % 7) as f32).collect()));
+        add(
+            "model.embed_tokens.weight".into(),
+            mat(&[V, H], &mut s, 0.5),
+        );
+        add(
+            "model.norm.weight".into(),
+            (
+                vec![H],
+                (0..H).map(|i| 1.0 + 0.01 * (i % 7) as f32).collect(),
+            ),
+        );
         add("lm_head.weight".into(), mat(&[V, H], &mut s, 0.5));
         for l in 0..layers {
             let p = format!("model.layers.{l}");
-            for n in ["input_layernorm", "post_attention_layernorm"] { add(format!("{p}.{n}.weight"), (vec![H], vec![1.0; H])); }
-            add(format!("{p}.self_attn.q_proj.weight"), mat(&[heads * hd, H], &mut s, 0.1));
-            add(format!("{p}.self_attn.k_proj.weight"), mat(&[kv * hd, H], &mut s, 0.1));
-            add(format!("{p}.self_attn.v_proj.weight"), mat(&[kv * hd, H], &mut s, 0.1));
-            add(format!("{p}.self_attn.o_proj.weight"), mat(&[H, heads * hd], &mut s, 0.1));
+            for n in ["input_layernorm", "post_attention_layernorm"] {
+                add(format!("{p}.{n}.weight"), (vec![H], vec![1.0; H]));
+            }
+            add(
+                format!("{p}.self_attn.q_proj.weight"),
+                mat(&[heads * hd, H], &mut s, 0.1),
+            );
+            add(
+                format!("{p}.self_attn.k_proj.weight"),
+                mat(&[kv * hd, H], &mut s, 0.1),
+            );
+            add(
+                format!("{p}.self_attn.v_proj.weight"),
+                mat(&[kv * hd, H], &mut s, 0.1),
+            );
+            add(
+                format!("{p}.self_attn.o_proj.weight"),
+                mat(&[H, heads * hd], &mut s, 0.1),
+            );
             if experts == 0 {
-                add(format!("{p}.mlp.gate_proj.weight"), mat(&[ffn, H], &mut s, 0.1));
-                add(format!("{p}.mlp.up_proj.weight"), mat(&[ffn, H], &mut s, 0.1));
-                add(format!("{p}.mlp.down_proj.weight"), mat(&[H, ffn], &mut s, 0.1));
+                add(
+                    format!("{p}.mlp.gate_proj.weight"),
+                    mat(&[ffn, H], &mut s, 0.1),
+                );
+                add(
+                    format!("{p}.mlp.up_proj.weight"),
+                    mat(&[ffn, H], &mut s, 0.1),
+                );
+                add(
+                    format!("{p}.mlp.down_proj.weight"),
+                    mat(&[H, ffn], &mut s, 0.1),
+                );
             } else {
-                add(format!("{p}.block_sparse_moe.gate.weight"), mat(&[experts, H], &mut s, 0.3));
+                add(
+                    format!("{p}.block_sparse_moe.gate.weight"),
+                    mat(&[experts, H], &mut s, 0.3),
+                );
                 for e in 0..experts {
-                    for w in ["w1", "w3"] { add(format!("{p}.block_sparse_moe.experts.{e}.{w}.weight"), mat(&[ffn, H], &mut s, 0.1)); }
-                    add(format!("{p}.block_sparse_moe.experts.{e}.w2.weight"), mat(&[H, ffn], &mut s, 0.1));
+                    for w in ["w1", "w3"] {
+                        add(
+                            format!("{p}.block_sparse_moe.experts.{e}.{w}.weight"),
+                            mat(&[ffn, H], &mut s, 0.1),
+                        );
+                    }
+                    add(
+                        format!("{p}.block_sparse_moe.experts.{e}.w2.weight"),
+                        mat(&[H, ffn], &mut s, 0.1),
+                    );
                 }
             }
         }
@@ -1585,12 +2852,26 @@ mod tests {
         Tiny { dir, tensors: t }
     }
 
-    fn logits(m: &crate::model::Model) -> Vec<f32> { let mut st = m.new_state(); m.forward(&mut st, 3).unwrap(); m.forward(&mut st, 11).unwrap() }
+    fn logits(m: &crate::model::Model) -> Vec<f32> {
+        let mut st = m.new_state();
+        m.forward(&mut st, 3).unwrap();
+        m.forward(&mut st, 11).unwrap()
+    }
     fn load_gguf(p: &Path, hf: &crate::arch::Spec) -> crate::model::Model {
         let f = GgufFile::open(p).unwrap();
         let mut sp = crate::arch::from_gguf(&f.gguf).unwrap();
         sp.vocab = hf.vocab; // there is no tokenizer in these tiny files
-        for (a, b) in [(sp.layers, hf.layers), (sp.hidden, hf.hidden), (sp.heads, hf.heads), (sp.kv_heads, hf.kv_heads), (sp.head_dim, hf.head_dim), (sp.ffn, hf.ffn), (sp.context, hf.context)] { assert_eq!(a, b); }
+        for (a, b) in [
+            (sp.layers, hf.layers),
+            (sp.hidden, hf.hidden),
+            (sp.heads, hf.heads),
+            (sp.kv_heads, hf.kv_heads),
+            (sp.head_dim, hf.head_dim),
+            (sp.ffn, hf.ffn),
+            (sp.context, hf.context),
+        ] {
+            assert_eq!(a, b);
+        }
         assert_eq!(sp.rope_theta, hf.rope_theta);
         assert!((sp.norm_eps - hf.norm_eps).abs() < 1e-9);
         load_dense(sp, &f, Naming::Gguf, true).unwrap()
@@ -1601,21 +2882,53 @@ mod tests {
         let t = tiny_llama("llama", 0);
         let cfg = std::fs::read_to_string(t.dir.join("config.json")).unwrap();
         let hf_spec = crate::arch::from_hf_config(&cfg).unwrap();
-        let reference = load_dense(hf_spec.clone(), &SafeTensors::open(&t.dir).unwrap(), Naming::Hf, false).unwrap();
+        let reference = load_dense(
+            hf_spec.clone(),
+            &SafeTensors::open(&t.dir).unwrap(),
+            Naming::Hf,
+            false,
+        )
+        .unwrap();
         let want = logits(&reference);
         let rms = (want.iter().map(|v| v * v).sum::<f32>() / want.len() as f32).sqrt();
         println!("{:<8} {:>9} {:>10}", "recipe", "bytes", "rel rmse");
-        for (name, bound) in [("F32", 0.0f32), ("F16", 0.01), ("BF16", 0.02), ("Q8_0", 0.03), ("Q6_K", 0.06), ("Q5_K_M", 0.1), ("Q4_K_M", 0.2), ("Q4_0", 0.25), ("Q3_K_M", 0.45), ("Q2_K", 0.9)] {
+        for (name, bound) in [
+            ("F32", 0.0f32),
+            ("F16", 0.01),
+            ("BF16", 0.02),
+            ("Q8_0", 0.03),
+            ("Q6_K", 0.06),
+            ("Q5_K_M", 0.1),
+            ("Q4_K_M", 0.2),
+            ("Q4_0", 0.25),
+            ("Q3_K_M", 0.45),
+            ("Q2_K", 0.9),
+        ] {
             let out = t.dir.join(format!("{name}.gguf"));
             let mut o = ConvertOptions::new(Recipe::named(name).unwrap());
             o.threads = 2;
             let rep = convert_hf_dir(&t.dir, &out, &o).unwrap();
             assert_eq!(rep.arch, "llama");
             let got = logits(&load_gguf(&out, &hf_spec));
-            let err = (want.iter().zip(&got).map(|(a, b)| (a - b) * (a - b)).sum::<f32>() / want.len() as f32).sqrt() / rms;
+            let err = (want
+                .iter()
+                .zip(&got)
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum::<f32>()
+                / want.len() as f32)
+                .sqrt()
+                / rms;
             println!("{:<8} {:>9} {:>10.4}", name, rep.output_bytes, err);
-            assert!(err <= bound, "{name}: relative logit error {err} over {bound}");
-            if name == "F32" { assert_eq!(want, got, "F32 conversion must be exact (permute/unpermute included)"); }
+            assert!(
+                err <= bound,
+                "{name}: relative logit error {err} over {bound}"
+            );
+            if name == "F32" {
+                assert_eq!(
+                    want, got,
+                    "F32 conversion must be exact (permute/unpermute included)"
+                );
+            }
         }
         std::fs::remove_dir_all(&t.dir).ok();
     }
@@ -1624,9 +2937,20 @@ mod tests {
     fn q4_k_m_file_has_the_planned_types() {
         let t = tiny_llama("llama", 0);
         let out = t.dir.join("m.gguf");
-        let rep = convert_hf_dir(&t.dir, &out, &ConvertOptions::new(Recipe::named("Q4_K_M").unwrap())).unwrap();
+        let rep = convert_hf_dir(
+            &t.dir,
+            &out,
+            &ConvertOptions::new(Recipe::named("Q4_K_M").unwrap()),
+        )
+        .unwrap();
         let g = GgufFile::open(&out).unwrap().gguf;
-        let ty = |n: &str| g.tensors.iter().find(|x| x.name == n).unwrap_or_else(|| panic!("{n}")).dtype;
+        let ty = |n: &str| {
+            g.tensors
+                .iter()
+                .find(|x| x.name == n)
+                .unwrap_or_else(|| panic!("{n}"))
+                .dtype
+        };
         assert_eq!(ty("output.weight"), DType::Q6K);
         assert_eq!(ty("token_embd.weight"), DType::Q6K);
         assert_eq!(ty("blk.0.attn_q.weight"), DType::Q4K);
@@ -1639,34 +2963,92 @@ mod tests {
         assert_eq!(g.meta["general.quantization_version"].as_u64(), Some(2));
         assert_eq!(rep.types.len(), g.tensors.len());
         // dims are fastest-first: k_proj is [kv*hd, H] row-major → [H, kv*hd]
-        assert_eq!(g.tensors.iter().find(|x| x.name == "blk.0.attn_k.weight").unwrap().dims, vec![H as u64, 128]);
+        assert_eq!(
+            g.tensors
+                .iter()
+                .find(|x| x.name == "blk.0.attn_k.weight")
+                .unwrap()
+                .dims,
+            vec![H as u64, 128]
+        );
         std::fs::remove_dir_all(&t.dir).ok();
     }
 
     #[test]
     fn requantize_gguf_and_copy_matching_tensors_verbatim() {
         let t = tiny_llama("llama", 0);
-        let hf_spec = crate::arch::from_hf_config(&std::fs::read_to_string(t.dir.join("config.json")).unwrap()).unwrap();
-        let (f16, q8, q4) = (t.dir.join("a.gguf"), t.dir.join("b.gguf"), t.dir.join("c.gguf"));
-        convert_hf_dir(&t.dir, &f16, &ConvertOptions::new(Recipe::named("F16").unwrap())).unwrap();
-        quantize(&f16, &q8, &ConvertOptions::new(Recipe::named("Q8_0").unwrap())).unwrap();
-        let rep = quantize(&q8, &q4, &ConvertOptions::new(Recipe::named("Q8_0").unwrap())).unwrap();
-        assert!(rep.types.iter().all(|(n, d)| if n.ends_with("norm.weight") { *d == DType::F32 } else { *d == DType::Q8_0 }));
+        let hf_spec = crate::arch::from_hf_config(
+            &std::fs::read_to_string(t.dir.join("config.json")).unwrap(),
+        )
+        .unwrap();
+        let (f16, q8, q4) = (
+            t.dir.join("a.gguf"),
+            t.dir.join("b.gguf"),
+            t.dir.join("c.gguf"),
+        );
+        convert_hf_dir(
+            &t.dir,
+            &f16,
+            &ConvertOptions::new(Recipe::named("F16").unwrap()),
+        )
+        .unwrap();
+        quantize(
+            &f16,
+            &q8,
+            &ConvertOptions::new(Recipe::named("Q8_0").unwrap()),
+        )
+        .unwrap();
+        let rep = quantize(
+            &q8,
+            &q4,
+            &ConvertOptions::new(Recipe::named("Q8_0").unwrap()),
+        )
+        .unwrap();
+        assert!(
+            rep.types
+                .iter()
+                .all(|(n, d)| if n.ends_with("norm.weight") {
+                    *d == DType::F32
+                } else {
+                    *d == DType::Q8_0
+                })
+        );
         // identical type → bytes are copied, not re-encoded
         let (a, b) = (std::fs::read(&q8).unwrap(), std::fs::read(&q4).unwrap());
         assert_eq!(a, b);
         let ref_logits = logits(&load_gguf(&f16, &hf_spec));
         let q_logits = logits(&load_gguf(&q8, &hf_spec));
         let rms = (ref_logits.iter().map(|v| v * v).sum::<f32>() / ref_logits.len() as f32).sqrt();
-        let err = (ref_logits.iter().zip(&q_logits).map(|(a, b)| (a - b) * (a - b)).sum::<f32>() / ref_logits.len() as f32).sqrt() / rms;
+        let err = (ref_logits
+            .iter()
+            .zip(&q_logits)
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum::<f32>()
+            / ref_logits.len() as f32)
+            .sqrt()
+            / rms;
         assert!(err < 0.03, "{err}");
         // metadata carried over, file type updated
         let g = GgufFile::open(&q8).unwrap().gguf;
         assert_eq!(g.meta["general.file_type"].as_u64(), Some(7));
         assert_eq!(g.architecture(), Some("llama"));
         // refuses to overwrite its own input
-        assert!(quantize(&q8, &q8, &ConvertOptions::new(Recipe::named("Q4_K_M").unwrap())).is_err());
-        assert!(quantize(&t.dir.join("nope.gguf"), &q4, &ConvertOptions::new(Recipe::named("Q4_K_M").unwrap())).is_err());
+        assert!(
+            quantize(
+                &q8,
+                &q8,
+                &ConvertOptions::new(Recipe::named("Q4_K_M").unwrap())
+            )
+            .is_err()
+        );
+        assert!(
+            quantize(
+                &t.dir.join("nope.gguf"),
+                &q4,
+                &ConvertOptions::new(Recipe::named("Q4_K_M").unwrap())
+            )
+            .is_err()
+        );
         std::fs::remove_dir_all(&t.dir).ok();
     }
 
@@ -1674,34 +3056,69 @@ mod tests {
     fn mixtral_experts_are_stacked_in_order() {
         let t = tiny_llama("mixtral", 4);
         let out = t.dir.join("moe.gguf");
-        let rep = convert_hf_dir(&t.dir, &out, &ConvertOptions::new(Recipe::named("F32").unwrap())).unwrap();
+        let rep = convert_hf_dir(
+            &t.dir,
+            &out,
+            &ConvertOptions::new(Recipe::named("F32").unwrap()),
+        )
+        .unwrap();
         assert_eq!(rep.arch, "llama");
         let f = GgufFile::open(&out).unwrap();
         use crate::loader::TensorSource;
         let find = |n: &str| t.tensors.iter().find(|x| x.0 == n).unwrap().2.clone();
         for (part, w) in [("gate", "w1"), ("down", "w2"), ("up", "w3")] {
             let stacked = f.read(&format!("blk.1.ffn_{part}_exps.weight")).unwrap();
-            let want: Vec<f32> = (0..4).flat_map(|e| find(&format!("model.layers.1.block_sparse_moe.experts.{e}.{w}.weight"))).collect();
+            let want: Vec<f32> = (0..4)
+                .flat_map(|e| {
+                    find(&format!(
+                        "model.layers.1.block_sparse_moe.experts.{e}.{w}.weight"
+                    ))
+                })
+                .collect();
             assert_eq!(stacked, want, "{part}");
         }
-        let d = &f.gguf.tensors.iter().find(|x| x.name == "blk.0.ffn_gate_exps.weight").unwrap().dims;
+        let d = &f
+            .gguf
+            .tensors
+            .iter()
+            .find(|x| x.name == "blk.0.ffn_gate_exps.weight")
+            .unwrap()
+            .dims;
         assert_eq!(d, &vec![H as u64, 256, 4]);
-        assert_eq!(f.read("blk.0.ffn_gate_inp.weight").unwrap(), find("model.layers.0.block_sparse_moe.gate.weight"));
+        assert_eq!(
+            f.read("blk.0.ffn_gate_inp.weight").unwrap(),
+            find("model.layers.0.block_sparse_moe.gate.weight")
+        );
         assert_eq!(f.gguf.get_u64("expert_count"), Some(4));
         assert_eq!(f.gguf.get_u64("expert_used_count"), Some(2));
         // quantised stacks are encoded expert by expert: each expert's bytes equal a standalone encode
         let q = t.dir.join("moeq.gguf");
-        convert_hf_dir(&t.dir, &q, &ConvertOptions::new(Recipe::named("Q4_K_M").unwrap())).unwrap();
+        convert_hf_dir(
+            &t.dir,
+            &q,
+            &ConvertOptions::new(Recipe::named("Q4_K_M").unwrap()),
+        )
+        .unwrap();
         let g = GgufFile::open(&q).unwrap().gguf;
-        let ti = g.tensors.iter().find(|x| x.name == "blk.0.ffn_gate_exps.weight").unwrap();
+        let ti = g
+            .tensors
+            .iter()
+            .find(|x| x.name == "blk.0.ffn_gate_exps.weight")
+            .unwrap();
         assert_eq!(ti.dtype, DType::Q4K);
         let bytes = std::fs::read(&q).unwrap();
         let per = DType::Q4K.bytes_for(256 * 256).unwrap() as usize;
         let start = (g.data_start + ti.offset) as usize;
         for e in 1..4 {
-            let x = find(&format!("model.layers.0.block_sparse_moe.experts.{e}.w1.weight"));
+            let x = find(&format!(
+                "model.layers.0.block_sparse_moe.experts.{e}.w1.weight"
+            ));
             let solo = quantize_matrix(DType::Q4K, &x, 256, None, 1).unwrap();
-            assert_eq!(&bytes[start + e * per..start + (e + 1) * per], &solo[..], "expert {e}");
+            assert_eq!(
+                &bytes[start + e * per..start + (e + 1) * per],
+                &solo[..],
+                "expert {e}"
+            );
         }
         std::fs::remove_dir_all(&t.dir).ok();
     }
@@ -1714,21 +3131,77 @@ mod tests {
             "attn_logit_softcapping": 50.0, "final_logit_softcapping": 30.0, "sliding_window": 16});
         std::fs::write(dir.join("config.json"), cfg.to_string()).unwrap();
         let mut s = 1;
-        let mut t = vec![("model.embed_tokens.weight".to_string(), vec![8, 64], mat(&[8, 64], &mut s, 0.5).1), ("model.norm.weight".into(), vec![64], vec![0.25; 64])];
-        for n in ["input_layernorm", "post_attention_layernorm", "pre_feedforward_layernorm", "post_feedforward_layernorm"] { t.push((format!("model.layers.0.{n}.weight"), vec![64], vec![0.5; 64])); }
-        for (n, sh) in [("self_attn.q_proj", [64, 64]), ("self_attn.k_proj", [32, 64]), ("self_attn.v_proj", [32, 64]), ("self_attn.o_proj", [64, 64]), ("mlp.gate_proj", [64, 64]), ("mlp.up_proj", [64, 64]), ("mlp.down_proj", [64, 64])] {
-            t.push((format!("model.layers.0.{n}.weight"), sh.to_vec(), mat(&sh, &mut s, 0.1).1));
+        let mut t = vec![
+            (
+                "model.embed_tokens.weight".to_string(),
+                vec![8, 64],
+                mat(&[8, 64], &mut s, 0.5).1,
+            ),
+            ("model.norm.weight".into(), vec![64], vec![0.25; 64]),
+        ];
+        for n in [
+            "input_layernorm",
+            "post_attention_layernorm",
+            "pre_feedforward_layernorm",
+            "post_feedforward_layernorm",
+        ] {
+            t.push((
+                format!("model.layers.0.{n}.weight"),
+                vec![64],
+                vec![0.5; 64],
+            ));
+        }
+        for (n, sh) in [
+            ("self_attn.q_proj", [64, 64]),
+            ("self_attn.k_proj", [32, 64]),
+            ("self_attn.v_proj", [32, 64]),
+            ("self_attn.o_proj", [64, 64]),
+            ("mlp.gate_proj", [64, 64]),
+            ("mlp.up_proj", [64, 64]),
+            ("mlp.down_proj", [64, 64]),
+        ] {
+            t.push((
+                format!("model.layers.0.{n}.weight"),
+                sh.to_vec(),
+                mat(&sh, &mut s, 0.1).1,
+            ));
         }
         write_st(&dir.join("model.safetensors"), &t);
         let out = dir.join("g.gguf");
-        let rep = convert_hf_dir(&dir, &out, &ConvertOptions::new(Recipe::named("F32").unwrap())).unwrap();
+        let rep = convert_hf_dir(
+            &dir,
+            &out,
+            &ConvertOptions::new(Recipe::named("F32").unwrap()),
+        )
+        .unwrap();
         assert_eq!(rep.arch, "gemma2");
         let f = GgufFile::open(&out).unwrap();
         use crate::loader::TensorSource;
-        assert!(f.read("output_norm.weight").unwrap().iter().all(|v| *v == 1.25));
-        for n in ["attn_norm", "post_attention_norm", "ffn_norm", "post_ffw_norm"] { assert!(f.read(&format!("blk.0.{n}.weight")).unwrap().iter().all(|v| *v == 1.5), "{n}"); }
+        assert!(
+            f.read("output_norm.weight")
+                .unwrap()
+                .iter()
+                .all(|v| *v == 1.25)
+        );
+        for n in [
+            "attn_norm",
+            "post_attention_norm",
+            "ffn_norm",
+            "post_ffw_norm",
+        ] {
+            assert!(
+                f.read(&format!("blk.0.{n}.weight"))
+                    .unwrap()
+                    .iter()
+                    .all(|v| *v == 1.5),
+                "{n}"
+            );
+        }
         assert!(!f.has("output.weight"));
-        assert_eq!(f.gguf.meta["gemma2.attn_logit_softcapping"].as_f64(), Some(50.0));
+        assert_eq!(
+            f.gguf.meta["gemma2.attn_logit_softcapping"].as_f64(),
+            Some(50.0)
+        );
         assert_eq!(f.gguf.get_u64("attention.sliding_window"), Some(16));
         assert_eq!(f.gguf.get_u64("attention.sliding_window_pattern"), Some(2));
         let sp = crate::arch::from_gguf(&f.gguf).unwrap();
@@ -1748,32 +3221,63 @@ mod tests {
         std::fs::write(t.dir.join("tokenizer_config.json"), serde_json::json!({"eos_token": "<|eot|>", "add_bos_token": false,
             "chat_template": [{"name": "other", "template": "X"}, {"name": "default", "template": "Y {{ m }}"}]}).to_string()).unwrap();
         let out = t.dir.join("t.gguf");
-        let rep = convert_hf_dir(&t.dir, &out, &ConvertOptions::new(Recipe::named("F16").unwrap())).unwrap();
+        let rep = convert_hf_dir(
+            &t.dir,
+            &out,
+            &ConvertOptions::new(Recipe::named("F16").unwrap()),
+        )
+        .unwrap();
         assert!(rep.warnings.iter().all(|w| !w.contains("tokenizer")));
         let g = GgufFile::open(&out).unwrap().gguf;
         let s = |k: &str| g.meta[k].as_str().unwrap().to_string();
         assert_eq!(s("tokenizer.ggml.model"), "gpt2");
         assert_eq!(s("tokenizer.ggml.pre"), "llama-bpe");
         assert_eq!(s("tokenizer.chat_template"), "Y {{ m }}");
-        let arr = |k: &str| if let crate::gguf::Value::Array(a) = &g.meta[k] { a.clone() } else { panic!("{k}") };
+        let arr = |k: &str| {
+            if let crate::gguf::Value::Array(a) = &g.meta[k] {
+                a.clone()
+            } else {
+                panic!("{k}")
+            }
+        };
         assert_eq!(arr("tokenizer.ggml.tokens").len(), 7);
         assert_eq!(arr("tokenizer.ggml.tokens")[5].as_str(), Some("[PAD5]"));
-        let types: Vec<u64> = arr("tokenizer.ggml.token_type").iter().map(|v| match v { crate::gguf::Value::I64(i) => *i as u64, v => v.as_u64().unwrap() }).collect();
+        let types: Vec<u64> = arr("tokenizer.ggml.token_type")
+            .iter()
+            .map(|v| match v {
+                crate::gguf::Value::I64(i) => *i as u64,
+                v => v.as_u64().unwrap(),
+            })
+            .collect();
         assert_eq!(types, [1, 1, 1, 1, 3, 5, 4]);
-        let merges: Vec<String> = arr("tokenizer.ggml.merges").iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let merges: Vec<String> = arr("tokenizer.ggml.merges")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert_eq!(merges, ["a b", "Ġ a"]);
         assert_eq!(g.meta["tokenizer.ggml.eos_token_id"].as_u64(), Some(4));
-        assert_eq!(g.meta["tokenizer.ggml.add_bos_token"], crate::gguf::Value::Bool(false));
+        assert_eq!(
+            g.meta["tokenizer.ggml.add_bos_token"],
+            crate::gguf::Value::Bool(false)
+        );
 
         // SentencePiece-style: no ByteLevel → "llama" with scores and byte tokens
         let tok = serde_json::json!({"model": {"type": "Unigram", "vocab": [["<unk>", 0.0], ["<s>", 0.0], ["</s>", 0.0], ["<0x0A>", 0.0], ["▁a", -1.5]], "unk_id": 0},
             "added_tokens": [{"id": 1, "content": "<s>", "special": true}, {"id": 2, "content": "</s>", "special": true}]});
         std::fs::write(t.dir.join("tokenizer.json"), tok.to_string()).unwrap();
         std::fs::write(t.dir.join("tokenizer_config.json"), serde_json::json!({"bos_token": {"content": "<s>"}, "eos_token": "</s>", "unk_token": "<unk>"}).to_string()).unwrap();
-        convert_hf_dir(&t.dir, &out, &ConvertOptions::new(Recipe::named("F16").unwrap())).unwrap();
+        convert_hf_dir(
+            &t.dir,
+            &out,
+            &ConvertOptions::new(Recipe::named("F16").unwrap()),
+        )
+        .unwrap();
         let g = GgufFile::open(&out).unwrap().gguf;
         assert_eq!(g.meta["tokenizer.ggml.model"].as_str(), Some("llama"));
-        assert!(!g.meta.contains_key("tokenizer.ggml.pre") && !g.meta.contains_key("tokenizer.ggml.merges"));
+        assert!(
+            !g.meta.contains_key("tokenizer.ggml.pre")
+                && !g.meta.contains_key("tokenizer.ggml.merges")
+        );
         let tk = crate::tokenizer::Tokenizer::from_gguf(&g).unwrap();
         assert_eq!((tk.bos, tk.eos), (Some(1), Some(2)));
         std::fs::remove_dir_all(&t.dir).ok();
@@ -1784,26 +3288,48 @@ mod tests {
         let base = tiny_llama("llama", 0);
         let o = ConvertOptions::new(Recipe::named("Q4_K_M").unwrap());
         let out = base.dir.join("x.gguf");
-        let try_cfg = |cfg: &str| { std::fs::write(base.dir.join("config.json"), cfg).unwrap(); convert_hf_dir(&base.dir, &out, &o) };
-        for bad in ["", "[]", "{}", "{\"model_type\":\"llama\"}", "{\"model_type\":\"mamba\",\"hidden_size\":8,\"num_hidden_layers\":1,\"num_attention_heads\":1}",
-            "{\"model_type\":\"llama\",\"hidden_size\":256,\"num_hidden_layers\":2,\"num_attention_heads\":3}"] {
+        let try_cfg = |cfg: &str| {
+            std::fs::write(base.dir.join("config.json"), cfg).unwrap();
+            convert_hf_dir(&base.dir, &out, &o)
+        };
+        for bad in [
+            "",
+            "[]",
+            "{}",
+            "{\"model_type\":\"llama\"}",
+            "{\"model_type\":\"mamba\",\"hidden_size\":8,\"num_hidden_layers\":1,\"num_attention_heads\":1}",
+            "{\"model_type\":\"llama\",\"hidden_size\":256,\"num_hidden_layers\":2,\"num_attention_heads\":3}",
+        ] {
             assert!(try_cfg(bad).is_err(), "{bad}");
-            assert!(!out.exists(), "a failed conversion must not leave a file behind");
+            assert!(
+                !out.exists(),
+                "a failed conversion must not leave a file behind"
+            );
         }
         // a tensor nobody knows
         let good = serde_json::json!({"model_type": "llama", "hidden_size": H, "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 2,
             "intermediate_size": 256, "vocab_size": V}).to_string();
         let mut t = base.tensors.clone();
-        t.push(("model.layers.0.mystery.weight".into(), vec![4], vec![0.0; 4]));
+        t.push((
+            "model.layers.0.mystery.weight".into(),
+            vec![4],
+            vec![0.0; 4],
+        ));
         write_st(&base.dir.join("model.safetensors"), &t);
         let e = try_cfg(&good).unwrap_err();
         assert!(e.to_string().contains("mystery"), "{e}");
         // NaN in a weight → error naming the tensor, no output
         let mut t = base.tensors.clone();
-        t.iter_mut().find(|x| x.0 == "model.layers.1.self_attn.v_proj.weight").unwrap().2[5] = f32::NAN;
+        t.iter_mut()
+            .find(|x| x.0 == "model.layers.1.self_attn.v_proj.weight")
+            .unwrap()
+            .2[5] = f32::NAN;
         write_st(&base.dir.join("model.safetensors"), &t);
         let e = try_cfg(&good).unwrap_err();
-        assert!(e.to_string().contains("v_proj") || e.to_string().contains("attn_v"), "{e}");
+        assert!(
+            e.to_string().contains("v_proj") || e.to_string().contains("attn_v"),
+            "{e}"
+        );
         assert!(!out.exists());
         // missing expert
         let moe = tiny_llama("mixtral", 4);
@@ -1813,13 +3339,19 @@ mod tests {
         let e = convert_hf_dir(&moe.dir, &moe.dir.join("y.gguf"), &o).unwrap_err();
         assert!(e.to_string().contains("expert 2"), "{e}");
         // a truncated / garbage safetensors, and a folder with nothing in it
-        std::fs::write(base.dir.join("model.safetensors"), b"\xff\xff\xff\xff\xff\xff\xff\x7fjunk").unwrap();
+        std::fs::write(
+            base.dir.join("model.safetensors"),
+            b"\xff\xff\xff\xff\xff\xff\xff\x7fjunk",
+        )
+        .unwrap();
         assert!(try_cfg(&good).is_err());
         let empty = tmpdir();
         assert!(convert_hf_dir(&empty, &empty.join("z.gguf"), &o).is_err());
         // not a GGUF
         std::fs::write(empty.join("n.gguf"), b"not a gguf at all").unwrap();
         assert!(quantize(&empty.join("n.gguf"), &empty.join("m.gguf"), &o).is_err());
-        for d in [&base.dir, &moe.dir, &empty] { std::fs::remove_dir_all(d).ok(); }
+        for d in [&base.dir, &moe.dir, &empty] {
+            std::fs::remove_dir_all(d).ok();
+        }
     }
 }

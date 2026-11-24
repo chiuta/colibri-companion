@@ -6,48 +6,105 @@
 //! reply is steered so that anything between `«»` is verbatim. The response gains `citations` (per choice)
 //! with the verification report. `POST /v1/quotes/verify` checks any text against any sources, without a model.
 use crate::genloop::Constraint;
-use companion_engine::quotelock::{Options, QuoteIndex, QuoteLock, QuoteStatus, QuoteVocab, Report};
+use companion_engine::quotelock::{
+    Options, QuoteIndex, QuoteLock, QuoteStatus, QuoteVocab, Report,
+};
 use companion_engine::tokenizer::Tokenizer;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 /// Largest number of sources accepted in one request.
 pub const MAX_SOURCES: usize = 64;
 
 /// Read `sources` from a request body: strings, or objects with a `text` (or `content`) field.
+/// Ceilings so one request cannot make the verifier burn unbounded CPU or memory.
+pub const MAX_SOURCE_BYTES: usize = 1 << 20;
+pub const MAX_ANSWER_BYTES: usize = 256 << 10;
+
 pub fn parse_sources(v: Option<&Value>) -> Result<Vec<String>, String> {
-    let Some(v) = v.filter(|v| !v.is_null()) else { return Ok(vec![]) };
+    let Some(v) = v.filter(|v| !v.is_null()) else {
+        return Ok(vec![]);
+    };
     let a = v.as_array().ok_or("`sources` must be an array")?;
-    if a.len() > MAX_SOURCES { return Err(format!("at most {MAX_SOURCES} sources are accepted")); }
-    a.iter().enumerate().map(|(i, s)| match s {
-        Value::String(t) if !t.trim().is_empty() => Ok(t.clone()),
-        Value::Object(o) => o.get("text").or_else(|| o.get("content")).and_then(Value::as_str).filter(|t| !t.trim().is_empty()).map(str::to_string)
-            .ok_or_else(|| format!("`sources[{i}]` needs a non-empty `text`")),
-        _ => Err(format!("`sources[{i}]` must be a non-empty string or an object with `text`")),
-    }).collect()
+    if a.len() > MAX_SOURCES {
+        return Err(format!("at most {MAX_SOURCES} sources are accepted"));
+    }
+    let total: usize = a
+        .iter()
+        .map(|s| match s {
+            Value::String(t) => t.len(),
+            Value::Object(o) => o
+                .get("text")
+                .or_else(|| o.get("content"))
+                .and_then(Value::as_str)
+                .map_or(0, str::len),
+            _ => 0,
+        })
+        .sum();
+    if total > MAX_SOURCE_BYTES {
+        return Err(format!(
+            "the sources hold {total} bytes; at most {MAX_SOURCE_BYTES} are accepted"
+        ));
+    }
+    a.iter()
+        .enumerate()
+        .map(|(i, s)| match s {
+            Value::String(t) if !t.trim().is_empty() => Ok(t.clone()),
+            Value::Object(o) => o
+                .get("text")
+                .or_else(|| o.get("content"))
+                .and_then(Value::as_str)
+                .filter(|t| !t.trim().is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| format!("`sources[{i}]` needs a non-empty `text`")),
+            _ => Err(format!(
+                "`sources[{i}]` must be a non-empty string or an object with `text`"
+            )),
+        })
+        .collect()
 }
 
 pub fn index(sources: &[String]) -> Result<Arc<QuoteIndex>, String> {
     let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
-    QuoteIndex::new(&refs, Options::default()).map(Arc::new).map_err(|e| format!("sources: {e}"))
+    QuoteIndex::new(&refs, Options::default())
+        .map(Arc::new)
+        .map_err(|e| format!("sources: {e}"))
 }
 
-pub fn vocab(tok: &Tokenizer) -> Arc<QuoteVocab> { Arc::new(QuoteVocab::from_tokenizer(tok)) }
+pub fn vocab(tok: &Tokenizer) -> Arc<QuoteVocab> {
+    Arc::new(QuoteVocab::from_tokenizer(tok))
+}
 
 /// The text that tells the model what the sources are and how to quote them.
 pub fn instructions(sources: &[String]) -> String {
-    let mut s = String::from("Answer using only the numbered sources below. When you quote, write the source tag and then the exact words between « and », for example [S2]«exact words». Everything between « and » must be copied unchanged from that source.\n");
-    for (i, t) in sources.iter().enumerate() { s.push_str(&format!("\n[S{}]\n{}\n", i + 1, t.trim())); }
+    let mut s = String::from(
+        "Answer using only the numbered sources below. When you quote, write the source tag and then the exact words between « and », for example [S2]«exact words». Everything between « and » must be copied unchanged from that source.\n",
+    );
+    for (i, t) in sources.iter().enumerate() {
+        s.push_str(&format!("\n[S{}]\n{}\n", i + 1, t.trim()));
+    }
     s
 }
 
-struct Lock { lock: QuoteLock }
+struct Lock {
+    lock: QuoteLock,
+}
 impl Constraint for Lock {
-    fn apply(&mut self, logits: &mut [f32]) { if !self.lock.is_dead() { self.lock.apply(logits); } }
-    fn accept(&mut self, token: usize) { let _ = self.lock.accept(token as u32); }
+    fn apply(&mut self, logits: &mut [f32]) {
+        if !self.lock.is_dead() {
+            self.lock.apply(logits);
+        }
+    }
+    fn accept(&mut self, token: usize) {
+        let _ = self.lock.accept(token as u32);
+    }
 }
 
-pub fn constraint(idx: Arc<QuoteIndex>, vocab: Arc<QuoteVocab>) -> Box<dyn Constraint> { Box::new(Lock { lock: QuoteLock::new(idx, vocab) }) }
+pub fn constraint(idx: Arc<QuoteIndex>, vocab: Arc<QuoteVocab>) -> Box<dyn Constraint> {
+    Box::new(Lock {
+        lock: QuoteLock::new(idx, vocab),
+    })
+}
 
 fn status_name(s: &QuoteStatus) -> (&'static str, Option<usize>) {
     match s {
@@ -68,22 +125,35 @@ pub fn report_json(r: &Report) -> Value {
         if let Some(c) = &q.citation { v["source"] = json!(c.source_id); v["start"] = json!(c.start); v["end"] = json!(c.end); }
         v
     }).collect();
-    let sentences: Vec<Value> = r.sentences.iter().map(|s| json!({"text": s.text, "support": s.support})).collect();
-    json!({"quotes": quotes, "sentences": sentences, "all_verbatim": r.all_verbatim(),
+    let sentences: Vec<Value> = r
+        .sentences
+        .iter()
+        .map(|s| json!({"text": s.text, "support": s.support}))
+        .collect();
+    json!({"quotes": quotes, "sentences": sentences, "all_verbatim": r.all_verbatim(), "limit_hit": r.limit_hit,
         "counts": {"verbatim": r.verbatim, "wrong_source": r.wrong_source, "truncated": r.truncated, "altered": r.altered, "merged": r.merged, "unsupported": r.unsupported}})
 }
 
 /// Check `output` against `sources` (no model needed).
 pub fn verify(output: &str, sources: &[String]) -> Result<Value, String> {
+    if output.len() > MAX_ANSWER_BYTES {
+        return Err(format!(
+            "`text` is {} bytes; at most {MAX_ANSWER_BYTES} are checked per request",
+            output.len()
+        ));
+    }
     let idx = index(sources)?;
-    Ok(report_json(&idx.verify(output)))
+    let rep = idx.verify_checked(output).map_err(|e| e.to_string())?;
+    Ok(report_json(&rep))
 }
 
 /// Add `citations` to a finished response: one report per choice for the OpenAI shapes, otherwise
 /// one at the top level for the first choice.
 pub fn attach(resp: &mut Value, idx: &QuoteIndex, texts: &[&str]) {
     if let Some(choices) = resp.get_mut("choices").and_then(Value::as_array_mut) {
-        for (c, t) in choices.iter_mut().zip(texts) { c["citations"] = report_json(&idx.verify(t)); }
+        for (c, t) in choices.iter_mut().zip(texts) {
+            c["citations"] = report_json(&idx.verify(t));
+        }
     } else if let Some(t) = texts.first() {
         resp["citations"] = report_json(&idx.verify(t));
     }
@@ -94,9 +164,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn verify_inputs_are_capped() {
+        let big = "x ".repeat(MAX_SOURCE_BYTES / 2 + 1);
+        assert!(
+            parse_sources(Some(&json!([big])))
+                .unwrap_err()
+                .contains("at most")
+        );
+        assert!(parse_sources(Some(&Value::Array(vec![json!("a"); 100_000]))).is_err());
+        let long = "word ".repeat(MAX_ANSWER_BYTES / 5 + 1);
+        assert!(
+            verify(&long, &["some source text".to_string()])
+                .unwrap_err()
+                .contains("at most")
+        );
+        assert!(verify("some source", &["some source text".to_string()]).is_ok());
+    }
+
+    #[test]
     fn sources_parse() {
         assert_eq!(parse_sources(None).unwrap(), Vec::<String>::new());
-        assert_eq!(parse_sources(Some(&json!(["a b", {"text": "c d"}, {"content": "e f"}]))).unwrap(), vec!["a b", "c d", "e f"]);
+        assert_eq!(
+            parse_sources(Some(&json!(["a b", {"text": "c d"}, {"content": "e f"}]))).unwrap(),
+            vec!["a b", "c d", "e f"]
+        );
         assert!(parse_sources(Some(&json!("x"))).is_err());
         assert!(parse_sources(Some(&json!([""]))).is_err());
         assert!(parse_sources(Some(&json!([3]))).is_err());
@@ -105,7 +196,10 @@ mod tests {
 
     #[test]
     fn verification_classifies_quotes() {
-        let sources = vec!["The quick brown fox jumps over the lazy dog near the river bank.".to_string(), "Completely different second source about astronomy and stars.".to_string()];
+        let sources = vec![
+            "The quick brown fox jumps over the lazy dog near the river bank.".to_string(),
+            "Completely different second source about astronomy and stars.".to_string(),
+        ];
         let v = verify("As said [S1]«quick brown fox jumps over the lazy dog» and [S1]«a made up sentence that is nowhere»", &sources).unwrap();
         assert_eq!(v["quotes"][0]["status"], "verbatim");
         assert_eq!(v["quotes"][0]["source"], 1);
@@ -127,7 +221,10 @@ mod tests {
         let idx = index(&["alpha beta gamma delta epsilon".to_string()]).unwrap();
         let mut oai = json!({"choices": [{"index": 0}]});
         attach(&mut oai, &idx, &["[S1]«alpha beta gamma delta»"]);
-        assert_eq!(oai["choices"][0]["citations"]["quotes"][0]["status"], "verbatim");
+        assert_eq!(
+            oai["choices"][0]["citations"]["quotes"][0]["status"],
+            "verbatim"
+        );
         let mut other = json!({"message": {}});
         attach(&mut other, &idx, &["no quotes"]);
         assert_eq!(other["citations"]["quotes"].as_array().unwrap().len(), 0);

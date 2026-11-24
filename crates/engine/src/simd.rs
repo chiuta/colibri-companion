@@ -24,8 +24,8 @@
 //! polynomial evaluated without FMA and without libm; the integer kernels are exact already.
 //! The `rmath` module gives the deterministic scalar functions (`exp`, `tanh`, `sin_cos`,
 //! `powf`, `ln`) that the model code uses in place of libm while the mode is on.
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 /// Table of kernels for one instruction-set level.
 #[derive(Clone, Copy)]
@@ -62,24 +62,38 @@ pub struct Kernels {
 static PRECISE: AtomicBool = AtomicBool::new(false);
 
 /// When on, `exp`-based kernels use libm instead of the polynomial (slower, correctly rounded-ish).
-pub fn set_precise(on: bool) { PRECISE.store(on, Ordering::Relaxed); }
-pub fn is_precise() -> bool { PRECISE.load(Ordering::Relaxed) }
+pub fn set_precise(on: bool) {
+    PRECISE.store(on, Ordering::Relaxed);
+}
+pub fn is_precise() -> bool {
+    PRECISE.load(Ordering::Relaxed)
+}
 
 /// 0 = not decided yet (read `ENGINE_REPRODUCIBLE` on first use), 1 = off, 2 = on.
 static REPRO: AtomicU8 = AtomicU8::new(0);
 
 /// Switch reproducible mode (bit-identical results on every machine / variant / thread count).
 /// Slower than the normal kernels; see `examples/bench_repro.rs`.
-pub fn set_reproducible(on: bool) { REPRO.store(if on { 2 } else { 1 }, Ordering::Relaxed); }
+pub fn set_reproducible(on: bool) {
+    REPRO.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+}
 /// Whether reproducible mode is on (initialised from `ENGINE_REPRODUCIBLE=1|true|on` if never set).
 pub fn is_reproducible() -> bool {
     match REPRO.load(Ordering::Relaxed) {
         2 => true,
         1 => false,
         _ => {
-            let on = matches!(std::env::var("ENGINE_REPRODUCIBLE").as_deref(), Ok("1") | Ok("true") | Ok("on") | Ok("yes"));
+            let on = matches!(
+                std::env::var("ENGINE_REPRODUCIBLE").as_deref(),
+                Ok("1") | Ok("true") | Ok("on") | Ok("yes")
+            );
             // Only the first decision sticks: a concurrent `set_reproducible` wins.
-            let _ = REPRO.compare_exchange(0, if on { 2 } else { 1 }, Ordering::Relaxed, Ordering::Relaxed);
+            let _ = REPRO.compare_exchange(
+                0,
+                if on { 2 } else { 1 },
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
             REPRO.load(Ordering::Relaxed) == 2
         }
     }
@@ -98,7 +112,10 @@ fn default_index() -> usize {
     *I.get_or_init(|| {
         let all = variants();
         if let Ok(want) = std::env::var("ENGINE_SIMD")
-            && let Some(i) = all.iter().position(|k| k.name == want) { return i; }
+            && let Some(i) = all.iter().position(|k| k.name == want)
+        {
+            return i;
+        }
         all.len() - 1
     })
 }
@@ -109,20 +126,35 @@ static FORCED: AtomicUsize = AtomicUsize::new(0);
 /// Force a variant by name at run time (for tests, benchmarks and bug reports; `ENGINE_SIMD` does
 /// the same at start-up). Returns false when this CPU does not have it. `"default"` undoes it.
 pub fn force_variant(name: &str) -> bool {
-    if name == "default" { FORCED.store(0, Ordering::Relaxed); return true; }
+    if name == "default" {
+        FORCED.store(0, Ordering::Relaxed);
+        return true;
+    }
     match variants().iter().position(|k| k.name == name) {
-        Some(i) => { FORCED.store(i + 1, Ordering::Relaxed); true }
+        Some(i) => {
+            FORCED.store(i + 1, Ordering::Relaxed);
+            true
+        }
         None => false,
     }
 }
 
 fn table() -> &'static Kernels {
-    let i = match FORCED.load(Ordering::Relaxed) { 0 => default_index(), n => n - 1 };
-    if is_reproducible() { &repro_variants()[i] } else { &variants()[i] }
+    let i = match FORCED.load(Ordering::Relaxed) {
+        0 => default_index(),
+        n => n - 1,
+    };
+    if is_reproducible() {
+        &repro_variants()[i]
+    } else {
+        &variants()[i]
+    }
 }
 
 /// Name of the variant in use, e.g. `"avx2+fma"`.
-pub fn active() -> &'static str { table().name }
+pub fn active() -> &'static str {
+    table().name
+}
 
 /// Every variant this CPU can run, scalar first, best last.
 pub fn available() -> Vec<Kernels> {
@@ -136,25 +168,55 @@ pub fn available() -> Vec<Kernels> {
 
 // ------------------------------------------------------------------ safe front door
 
-pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 { (table().dot_f32)(a, b) }
-pub fn sumsq(a: &[f32]) -> f32 { (table().sumsq)(a) }
-pub fn max(a: &[f32]) -> f32 { (table().max)(a) }
-pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) { (table().axpy)(a, x, y) }
-pub fn scale(x: &mut [f32], k: f32) { (table().scale)(x, k) }
+pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+    (table().dot_f32)(a, b)
+}
+pub fn sumsq(a: &[f32]) -> f32 {
+    (table().sumsq)(a)
+}
+pub fn max(a: &[f32]) -> f32 {
+    (table().max)(a)
+}
+pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) {
+    (table().axpy)(a, x, y)
+}
+pub fn scale(x: &mut [f32], k: f32) {
+    (table().scale)(x, k)
+}
 /// `out[i] = x[i]·k·w[i]` over the shortest of the three slices.
-pub fn mul3(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) { (table().mul3)(x, w, k, out) }
+pub fn mul3(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) {
+    (table().mul3)(x, w, k, out)
+}
 pub fn exp_sub_sum(x: &mut [f32], m: f32) -> f32 {
-    if is_precise() && !is_reproducible() { scalar::exp_sub_sum(x, m) } else { (table().exp_sub_sum)(x, m) }
+    if is_precise() && !is_reproducible() {
+        scalar::exp_sub_sum(x, m)
+    } else {
+        (table().exp_sub_sum)(x, m)
+    }
 }
 pub fn silu_mul(g: &mut [f32], u: &[f32]) {
-    if is_precise() && !is_reproducible() { scalar::silu_mul(g, u) } else { (table().silu_mul)(g, u) }
+    if is_precise() && !is_reproducible() {
+        scalar::silu_mul(g, u)
+    } else {
+        (table().silu_mul)(g, u)
+    }
 }
 /// Rotate `head` (pairs `i`, `i + half`, `half = cos.len()`) by the angles given as `cos`/`sin`.
-pub fn rope_rotate(head: &mut [f32], cos: &[f32], sin: &[f32]) { (table().rope)(head, cos, sin) }
-pub fn f16_to_f32(src: &[u16], dst: &mut [f32]) { (table().f16_to_f32)(src, dst) }
-pub fn bf16_to_f32(src: &[u16], dst: &mut [f32]) { (table().bf16_to_f32)(src, dst) }
-pub fn dot_i8_i8(a: &[i8], b: &[i8]) -> i32 { (table().dot_i8)(a, b) }
-pub fn dot_q4_0_block(qs: &[u8; 16], y: &[i8; 32]) -> i32 { (table().q4_0_block)(qs, y) }
+pub fn rope_rotate(head: &mut [f32], cos: &[f32], sin: &[f32]) {
+    (table().rope)(head, cos, sin)
+}
+pub fn f16_to_f32(src: &[u16], dst: &mut [f32]) {
+    (table().f16_to_f32)(src, dst)
+}
+pub fn bf16_to_f32(src: &[u16], dst: &mut [f32]) {
+    (table().bf16_to_f32)(src, dst)
+}
+pub fn dot_i8_i8(a: &[i8], b: &[i8]) -> i32 {
+    (table().dot_i8)(a, b)
+}
+pub fn dot_q4_0_block(qs: &[u8; 16], y: &[i8; 32]) -> i32 {
+    (table().q4_0_block)(qs, y)
+}
 /// Σ over blocks of `d_w·d_a·Σ (q−8)·y`; `n` is clamped to what both slices hold.
 pub fn q4_0_q8_0_row(w: &[u8], a: &[u8], n: usize) -> f32 {
     let n = n.min(w.len() / 18).min(a.len() / 34);
@@ -168,9 +230,15 @@ pub fn q8_0_q8_0_row(w: &[u8], a: &[u8], n: usize) -> f32 {
 fn q8_0_q8_0_with(dot: fn(&[i8], &[i8]) -> i32, w: &[u8], a: &[u8], n: usize) -> f32 {
     let mut acc = 0f32;
     for (wb, ab) in w.chunks_exact(34).zip(a.chunks_exact(34)).take(n) {
-        let (dw, da) = (scalar::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]])), scalar::f16_to_f32(u16::from_le_bytes([ab[0], ab[1]])));
+        let (dw, da) = (
+            scalar::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]])),
+            scalar::f16_to_f32(u16::from_le_bytes([ab[0], ab[1]])),
+        );
         let (mut x, mut y) = ([0i8; 32], [0i8; 32]);
-        for i in 0..32 { x[i] = wb[2 + i] as i8; y[i] = ab[2 + i] as i8; }
+        for i in 0..32 {
+            x[i] = wb[2 + i] as i8;
+            y[i] = ab[2 + i] as i8;
+        }
         acc += dw * da * dot(&x, &y) as f32;
     }
     acc
@@ -195,13 +263,21 @@ const C7: f32 = 1.0 / 5040.0;
 mod gen_loops {
     #[inline(always)]
     pub fn axpy<const FMA: bool>(a: f32, x: &[f32], y: &mut [f32]) {
-        for (y, x) in y.iter_mut().zip(x) { *y = if FMA { a.mul_add(*x, *y) } else { a * x + *y }; }
+        for (y, x) in y.iter_mut().zip(x) {
+            *y = if FMA { a.mul_add(*x, *y) } else { a * x + *y };
+        }
     }
     #[inline(always)]
-    pub fn scale(x: &mut [f32], k: f32) { for v in x { *v *= k; } }
+    pub fn scale(x: &mut [f32], k: f32) {
+        for v in x {
+            *v *= k;
+        }
+    }
     #[inline(always)]
     pub fn mul3(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) {
-        for ((o, x), w) in out.iter_mut().zip(x).zip(w) { *o = x * k * w; }
+        for ((o, x), w) in out.iter_mut().zip(x).zip(w) {
+            *o = x * k * w;
+        }
     }
     #[inline(always)]
     pub fn rope<const FMA: bool>(h: &mut [f32], c: &[f32], s: &[f32]) {
@@ -221,7 +297,9 @@ mod gen_loops {
     }
     #[inline(always)]
     pub fn bf16(src: &[u16], dst: &mut [f32]) {
-        for (d, s) in dst.iter_mut().zip(src) { *d = f32::from_bits((*s as u32) << 16); }
+        for (d, s) in dst.iter_mut().zip(src) {
+            *d = f32::from_bits((*s as u32) << 16);
+        }
     }
 }
 
@@ -232,54 +310,114 @@ pub(crate) mod scalar {
 
     pub fn kernels() -> Kernels {
         Kernels {
-            name: "scalar", dot_f32, sumsq, max, axpy: axpy_k, scale: scale_k, mul3: mul3_k,
-            exp_sub_sum, silu_mul, rope: rope_k, f16_to_f32: f16_slice, bf16_to_f32: bf16_k,
-            dot_i8, q4_0_block, q4_0_q8_0_row,
+            name: "scalar",
+            dot_f32,
+            sumsq,
+            max,
+            axpy: axpy_k,
+            scale: scale_k,
+            mul3: mul3_k,
+            exp_sub_sum,
+            silu_mul,
+            rope: rope_k,
+            f16_to_f32: f16_slice,
+            bf16_to_f32: bf16_k,
+            dot_i8,
+            q4_0_block,
+            q4_0_q8_0_row,
         }
     }
-    pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 { a.iter().zip(b).map(|(x, y)| x * y).sum() }
-    pub fn sumsq(a: &[f32]) -> f32 { a.iter().map(|x| x * x).sum() }
-    pub fn max(a: &[f32]) -> f32 { a.iter().copied().fold(f32::NEG_INFINITY, f32::max) }
-    fn axpy_k(a: f32, x: &[f32], y: &mut [f32]) { gen_loops::axpy::<false>(a, x, y) }
-    fn scale_k(x: &mut [f32], k: f32) { gen_loops::scale(x, k) }
-    fn mul3_k(x: &[f32], w: &[f32], k: f32, o: &mut [f32]) { gen_loops::mul3(x, w, k, o) }
-    fn rope_k(h: &mut [f32], c: &[f32], s: &[f32]) { gen_loops::rope::<false>(h, c, s) }
-    fn bf16_k(s: &[u16], d: &mut [f32]) { gen_loops::bf16(s, d) }
+    pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b).map(|(x, y)| x * y).sum()
+    }
+    pub fn sumsq(a: &[f32]) -> f32 {
+        a.iter().map(|x| x * x).sum()
+    }
+    pub fn max(a: &[f32]) -> f32 {
+        a.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+    }
+    fn axpy_k(a: f32, x: &[f32], y: &mut [f32]) {
+        gen_loops::axpy::<false>(a, x, y)
+    }
+    fn scale_k(x: &mut [f32], k: f32) {
+        gen_loops::scale(x, k)
+    }
+    fn mul3_k(x: &[f32], w: &[f32], k: f32, o: &mut [f32]) {
+        gen_loops::mul3(x, w, k, o)
+    }
+    fn rope_k(h: &mut [f32], c: &[f32], s: &[f32]) {
+        gen_loops::rope::<false>(h, c, s)
+    }
+    fn bf16_k(s: &[u16], d: &mut [f32]) {
+        gen_loops::bf16(s, d)
+    }
     pub fn exp_sub_sum(x: &mut [f32], m: f32) -> f32 {
         let mut s = 0.0;
-        for v in x.iter_mut() { *v = (*v - m).exp(); s += *v; }
+        for v in x.iter_mut() {
+            *v = (*v - m).exp();
+            s += *v;
+        }
         s
     }
     pub fn silu_mul(g: &mut [f32], u: &[f32]) {
-        for (g, u) in g.iter_mut().zip(u) { *g = *g / (1.0 + (-*g).exp()) * u; }
+        for (g, u) in g.iter_mut().zip(u) {
+            *g = *g / (1.0 + (-*g).exp()) * u;
+        }
     }
     /// The polynomial every vector variant implements, used for their scalar tails.
     pub fn exp_poly(x: f32) -> f32 {
-        if x.is_nan() { return x; }
-        if x < EXP_LO { return 0.0; }
+        if x.is_nan() {
+            return x;
+        }
+        if x < EXP_LO {
+            return 0.0;
+        }
         let xc = x.min(EXP_HI);
         let n = (xc * LOG2E).round_ties_even();
         let r = (-n).mul_add(LN2_LO, (-n).mul_add(LN2_HI, xc));
         let mut p = C7;
-        for c in [C6, C5, C4, C3, C2, 1.0, 1.0] { p = p.mul_add(r, c); }
+        for c in [C6, C5, C4, C3, C2, 1.0, 1.0] {
+            p = p.mul_add(r, c);
+        }
         p * f32::from_bits(((n as i32 + 127) as u32) << 23)
     }
-    pub fn silu_poly(g: f32, u: f32) -> f32 { g / (1.0 + exp_poly(-g)) * u }
+    pub fn silu_poly(g: f32, u: f32) -> f32 {
+        g / (1.0 + exp_poly(-g)) * u
+    }
     /// IEEE binary16 → f32, all values exact.
     pub fn f16_to_f32(h: u16) -> f32 {
-        let (s, e, m) = (((h >> 15) & 1) as u32, ((h >> 10) & 0x1f) as u32, (h & 0x3ff) as u32);
+        let (s, e, m) = (
+            ((h >> 15) & 1) as u32,
+            ((h >> 10) & 0x1f) as u32,
+            (h & 0x3ff) as u32,
+        );
         let bits = if e == 0 {
-            if m == 0 { s << 31 } else {
+            if m == 0 {
+                s << 31
+            } else {
                 let (mut e2, mut m2) = (127 - 15 + 1u32, m);
-                while m2 & 0x400 == 0 { m2 <<= 1; e2 -= 1; }
+                while m2 & 0x400 == 0 {
+                    m2 <<= 1;
+                    e2 -= 1;
+                }
                 (s << 31) | (e2 << 23) | ((m2 & 0x3ff) << 13)
             }
-        } else if e == 31 { (s << 31) | 0x7f80_0000 | (m << 13) } else { (s << 31) | ((e + 112) << 23) | (m << 13) };
+        } else if e == 31 {
+            (s << 31) | 0x7f80_0000 | (m << 13)
+        } else {
+            (s << 31) | ((e + 112) << 23) | (m << 13)
+        };
         f32::from_bits(bits)
     }
-    fn f16_slice(src: &[u16], dst: &mut [f32]) { for (d, s) in dst.iter_mut().zip(src) { *d = f16_to_f32(*s); } }
+    fn f16_slice(src: &[u16], dst: &mut [f32]) {
+        for (d, s) in dst.iter_mut().zip(src) {
+            *d = f16_to_f32(*s);
+        }
+    }
     pub fn dot_i8(a: &[i8], b: &[i8]) -> i32 {
-        a.iter().zip(b).fold(0i32, |s, (x, y)| s.wrapping_add(*x as i32 * *y as i32))
+        a.iter()
+            .zip(b)
+            .fold(0i32, |s, (x, y)| s.wrapping_add(*x as i32 * *y as i32))
     }
     pub fn q4_0_block(qs: &[u8; 16], y: &[i8; 32]) -> i32 {
         let mut s = 0i32;
@@ -296,7 +434,9 @@ pub(crate) mod scalar {
             let da = f16_to_f32(u16::from_le_bytes([ab[0], ab[1]]));
             let qs: &[u8; 16] = wb[2..18].try_into().unwrap();
             let mut y = [0i8; 32];
-            for (d, s) in y.iter_mut().zip(&ab[2..34]) { *d = *s as i8; }
+            for (d, s) in y.iter_mut().zip(&ab[2..34]) {
+                *d = *s as i8;
+            }
             acc += dw * da * q4_0_block(qs, &y) as f32;
         }
         acc
@@ -314,16 +454,26 @@ pub fn reproducible(base: &Kernels) -> Kernels {
         use repro_avx2 as v;
         return Kernels {
             name: base.name,
-            dot_f32: v::dot_f32, sumsq: v::sumsq, axpy: v::axpy, mul3: v::mul3,
-            exp_sub_sum: v::exp_sub_sum, silu_mul: v::silu_mul, rope: v::rope,
+            dot_f32: v::dot_f32,
+            sumsq: v::sumsq,
+            axpy: v::axpy,
+            mul3: v::mul3,
+            exp_sub_sum: v::exp_sub_sum,
+            silu_mul: v::silu_mul,
+            rope: v::rope,
             q4_0_q8_0_row: repro::q4_0_q8_0_row,
             ..*base
         };
     }
     Kernels {
         name: base.name,
-        dot_f32: repro::dot_f32, sumsq: repro::sumsq, axpy: repro::axpy, mul3: repro::mul3,
-        exp_sub_sum: repro::exp_sub_sum, silu_mul: repro::silu_mul, rope: repro::rope,
+        dot_f32: repro::dot_f32,
+        sumsq: repro::sumsq,
+        axpy: repro::axpy,
+        mul3: repro::mul3,
+        exp_sub_sum: repro::exp_sub_sum,
+        silu_mul: repro::silu_mul,
+        rope: repro::rope,
         q4_0_q8_0_row: repro::q4_0_q8_0_row,
         ..*base
     }
@@ -332,7 +482,16 @@ pub fn reproducible(base: &Kernels) -> Kernels {
 /// Fixed pairwise tree over 16 lanes: 16→8→4→2→1.
 #[inline(always)]
 pub(crate) fn tree16(l: [f32; 16]) -> f32 {
-    let a = [l[0] + l[8], l[1] + l[9], l[2] + l[10], l[3] + l[11], l[4] + l[12], l[5] + l[13], l[6] + l[14], l[7] + l[15]];
+    let a = [
+        l[0] + l[8],
+        l[1] + l[9],
+        l[2] + l[10],
+        l[3] + l[11],
+        l[4] + l[12],
+        l[5] + l[13],
+        l[6] + l[14],
+        l[7] + l[15],
+    ];
     let b = [a[0] + a[4], a[1] + a[5], a[2] + a[6], a[3] + a[7]];
     let c = [b[0] + b[2], b[1] + b[3]];
     c[0] + c[1]
@@ -352,20 +511,31 @@ mod repro {
         let (ca, cb) = (a.chunks_exact(16), b.chunks_exact(16));
         let (ra, rb) = (ca.remainder(), cb.remainder());
         for (x, y) in ca.zip(cb) {
-            for j in 0..16 { l[j] += x[j] * y[j]; }
+            for j in 0..16 {
+                l[j] += x[j] * y[j];
+            }
         }
-        for j in 0..ra.len() { l[j] += ra[j] * rb[j]; }
+        for j in 0..ra.len() {
+            l[j] += ra[j] * rb[j];
+        }
         tree16(l)
     }
     #[inline(always)]
-    pub fn sumsq_impl(a: &[f32]) -> f32 { dot_f32_impl(a, a) }
+    pub fn sumsq_impl(a: &[f32]) -> f32 {
+        dot_f32_impl(a, a)
+    }
     #[inline(always)]
     pub fn axpy_impl(a: f32, x: &[f32], y: &mut [f32]) {
-        for (y, x) in y.iter_mut().zip(x) { let p = a * *x; *y += p; }
+        for (y, x) in y.iter_mut().zip(x) {
+            let p = a * *x;
+            *y += p;
+        }
     }
     #[inline(always)]
     pub fn mul3_impl(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) {
-        for ((o, x), w) in out.iter_mut().zip(x).zip(w) { *o = x * k * w; }
+        for ((o, x), w) in out.iter_mut().zip(x).zip(w) {
+            *o = x * k * w;
+        }
     }
     #[inline(always)]
     pub fn rope_impl(h: &mut [f32], c: &[f32], s: &[f32]) {
@@ -389,7 +559,9 @@ mod repro {
         let n = (xc * LOG2E + MAGIC) - MAGIC;
         let r = xc - n * LN2_HI - n * LN2_LO;
         let mut p = C7;
-        for c in [C6, C5, C4, C3, C2, 1.0, 1.0] { p = p * r + c; }
+        for c in [C6, C5, C4, C3, C2, 1.0, 1.0] {
+            p = p * r + c;
+        }
         let v = p * f32::from_bits(((n as i32 + 127) as u32) << 23);
         let v = if x < EXP_LO { 0.0 } else { v };
         if x.is_nan() { x } else { v }
@@ -400,9 +572,13 @@ mod repro {
         let mut it = x.chunks_exact_mut(16);
         for c in &mut it {
             let mut e = [0f32; 16];
-            for j in 0..16 { e[j] = exp_det(c[j] - m); }
+            for j in 0..16 {
+                e[j] = exp_det(c[j] - m);
+            }
             c.copy_from_slice(&e);
-            for j in 0..16 { l[j] += e[j]; }
+            for j in 0..16 {
+                l[j] += e[j];
+            }
         }
         for (j, v) in it.into_remainder().iter_mut().enumerate() {
             *v = exp_det(*v - m);
@@ -412,16 +588,32 @@ mod repro {
     }
     #[inline(always)]
     pub fn silu_mul_impl(g: &mut [f32], u: &[f32]) {
-        for (g, u) in g.iter_mut().zip(u) { *g = *g / (1.0 + exp_det(-*g)) * u; }
+        for (g, u) in g.iter_mut().zip(u) {
+            *g = *g / (1.0 + exp_det(-*g)) * u;
+        }
     }
 
-    pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 { dot_f32_impl(a, b) }
-    pub fn sumsq(a: &[f32]) -> f32 { sumsq_impl(a) }
-    pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) { axpy_impl(a, x, y) }
-    pub fn mul3(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) { mul3_impl(x, w, k, out) }
-    pub fn rope(h: &mut [f32], c: &[f32], s: &[f32]) { rope_impl(h, c, s) }
-    pub fn exp_sub_sum(x: &mut [f32], m: f32) -> f32 { exp_sub_sum_impl(x, m) }
-    pub fn silu_mul(g: &mut [f32], u: &[f32]) { silu_mul_impl(g, u) }
+    pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+        dot_f32_impl(a, b)
+    }
+    pub fn sumsq(a: &[f32]) -> f32 {
+        sumsq_impl(a)
+    }
+    pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) {
+        axpy_impl(a, x, y)
+    }
+    pub fn mul3(x: &[f32], w: &[f32], k: f32, out: &mut [f32]) {
+        mul3_impl(x, w, k, out)
+    }
+    pub fn rope(h: &mut [f32], c: &[f32], s: &[f32]) {
+        rope_impl(h, c, s)
+    }
+    pub fn exp_sub_sum(x: &mut [f32], m: f32) -> f32 {
+        exp_sub_sum_impl(x, m)
+    }
+    pub fn silu_mul(g: &mut [f32], u: &[f32]) {
+        silu_mul_impl(g, u)
+    }
 
     /// Sequential f32 accumulation of exact per-block integer dots (the integer block dot is exact
     /// in every variant, so the portable one gives the same value as any of them).
@@ -432,7 +624,9 @@ mod repro {
             let da = scalar::f16_to_f32(u16::from_le_bytes([ab[0], ab[1]]));
             let qs: &[u8; 16] = wb[2..18].try_into().unwrap();
             let mut y = [0i8; 32];
-            for (d, s) in y.iter_mut().zip(&ab[2..34]) { *d = *s as i8; }
+            for (d, s) in y.iter_mut().zip(&ab[2..34]) {
+                *d = *s as i8;
+            }
             let t = dw * da;
             acc += t * scalar::q4_0_block(qs, &y) as f32;
         }
@@ -472,49 +666,85 @@ pub mod detmath {
     const LN2: f64 = std::f64::consts::LN_2;
     const INV_LN2: f64 = std::f64::consts::LOG2_E;
 
-    fn pow2(k: i64) -> f64 { f64::from_bits(((k + 1023) as u64) << 52) }
+    fn pow2(k: i64) -> f64 {
+        f64::from_bits(((k + 1023) as u64) << 52)
+    }
 
     pub fn exp(x: f64) -> f64 {
-        if x.is_nan() { return x; }
-        if x > 709.78 { return f64::INFINITY; }
-        if x < -745.2 { return 0.0; }
+        if x.is_nan() {
+            return x;
+        }
+        if x > 709.78 {
+            return f64::INFINITY;
+        }
+        if x < -745.2 {
+            return 0.0;
+        }
         let k = (x * INV_LN2 + 0.5).floor();
         let r = x - k * LN2_HI - k * LN2_LO;
         // Horner on Σ r^i / i!, i = 0..=13.
         let mut c = [0f64; 14];
         let mut fact = 1.0;
-        for (i, ci) in c.iter_mut().enumerate() { if i > 0 { fact *= i as f64; } *ci = 1.0 / fact; }
+        for (i, ci) in c.iter_mut().enumerate() {
+            if i > 0 {
+                fact *= i as f64;
+            }
+            *ci = 1.0 / fact;
+        }
         let mut acc = c[13];
-        for i in (0..13).rev() { acc = acc * r + c[i]; }
+        for i in (0..13).rev() {
+            acc = acc * r + c[i];
+        }
         let ki = k as i64;
         let (k1, k2) = (ki / 2, ki - ki / 2);
         acc * pow2(k1) * pow2(k2)
     }
 
     pub fn ln(x: f64) -> f64 {
-        if x.is_nan() || x < 0.0 { return f64::NAN; }
-        if x == 0.0 { return f64::NEG_INFINITY; }
-        if x.is_infinite() { return x; }
+        if x.is_nan() || x < 0.0 {
+            return f64::NAN;
+        }
+        if x == 0.0 {
+            return f64::NEG_INFINITY;
+        }
+        if x.is_infinite() {
+            return x;
+        }
         let (mut x, mut e) = (x, 0i64);
-        if x < f64::MIN_POSITIVE { x *= 18_014_398_509_481_984.0; e -= 54; }
+        if x < f64::MIN_POSITIVE {
+            x *= 18_014_398_509_481_984.0;
+            e -= 54;
+        }
         let bits = x.to_bits();
         e += ((bits >> 52) & 0x7ff) as i64 - 1023;
         let mut m = f64::from_bits((bits & 0x000f_ffff_ffff_ffff) | (1023u64 << 52));
-        if m > std::f64::consts::SQRT_2 { m *= 0.5; e += 1; }
+        if m > std::f64::consts::SQRT_2 {
+            m *= 0.5;
+            e += 1;
+        }
         let s = (m - 1.0) / (m + 1.0);
         let s2 = s * s;
         let mut acc = 0.0;
         let mut k = 41.0;
-        while k >= 1.0 { acc = acc * s2 + 1.0 / k; k -= 2.0; }
+        while k >= 1.0 {
+            acc = acc * s2 + 1.0 / k;
+            k -= 2.0;
+        }
         e as f64 * LN2 + 2.0 * s * acc
     }
 
     pub fn powf(b: f64, y: f64) -> f64 {
-        if y == 0.0 { return 1.0; }
-        if b == 0.0 { return if y > 0.0 { 0.0 } else { f64::INFINITY }; }
+        if y == 0.0 {
+            return 1.0;
+        }
+        if b == 0.0 {
+            return if y > 0.0 { 0.0 } else { f64::INFINITY };
+        }
         if b < 0.0 {
             // Integer exponents only (negative base otherwise NaN, as in libm).
-            if y != y.floor() || y.abs() > 9.0e15 { return f64::NAN; }
+            if y != y.floor() || y.abs() > 9.0e15 {
+                return f64::NAN;
+            }
             let v = exp(y * ln(-b));
             return if (y as i64) % 2 == 0 { v } else { -v };
         }
@@ -523,7 +753,9 @@ pub mod detmath {
 
     /// `(sin x, cos x)`; accurate to about 1e-16 for |x| < 1e6, deterministic for any finite x.
     pub fn sin_cos(x: f64) -> (f64, f64) {
-        if !x.is_finite() { return (f64::NAN, f64::NAN); }
+        if !x.is_finite() {
+            return (f64::NAN, f64::NAN);
+        }
         const P1: f64 = 1.570_796_326_734_125_6;
         const P2: f64 = 6.077_100_506_303_966e-11;
         const P3: f64 = 2.022_266_248_795_950_6e-21;
@@ -536,11 +768,20 @@ pub mod detmath {
         let mut fc = [0f64; 14];
         let mut fact = 1.0;
         for n in 0..28 {
-            if n > 0 { fact *= n as f64; }
+            if n > 0 {
+                fact *= n as f64;
+            }
             let sign = if (n / 2) % 2 == 0 { 1.0 } else { -1.0 };
-            if n % 2 == 1 { fs[n / 2] = sign / fact; } else { fc[n / 2] = sign / fact; }
+            if n % 2 == 1 {
+                fs[n / 2] = sign / fact;
+            } else {
+                fc[n / 2] = sign / fact;
+            }
         }
-        for i in (0..14).rev() { s = s * r2 + fs[i]; c = c * r2 + fc[i]; }
+        for i in (0..14).rev() {
+            s = s * r2 + fs[i];
+            c = c * r2 + fc[i];
+        }
         let (sr, cr) = (s * r, c);
         match (k as i64).rem_euclid(4) {
             0 => (sr, cr),
@@ -551,10 +792,16 @@ pub mod detmath {
     }
 
     pub fn tanh(x: f64) -> f64 {
-        if x.is_nan() { return x; }
+        if x.is_nan() {
+            return x;
+        }
         let a = x.abs();
-        if a > 22.0 { return if x > 0.0 { 1.0 } else { -1.0 }; }
-        if a < 1e-4 { return x - x * x * x / 3.0; }
+        if a > 22.0 {
+            return if x > 0.0 { 1.0 } else { -1.0 };
+        }
+        if a < 1e-4 {
+            return x - x * x * x / 3.0;
+        }
         let e = exp(2.0 * x);
         (e - 1.0) / (e + 1.0)
     }
@@ -563,12 +810,48 @@ pub mod detmath {
 /// Math used by the model code: libm normally, [`detmath`] when reproducible mode is on.
 pub mod rmath {
     use super::{detmath, is_reproducible};
-    pub fn exp(x: f32) -> f32 { if is_reproducible() { detmath::exp(x as f64) as f32 } else { x.exp() } }
-    pub fn tanh(x: f32) -> f32 { if is_reproducible() { detmath::tanh(x as f64) as f32 } else { x.tanh() } }
-    pub fn exp64(x: f64) -> f64 { if is_reproducible() { detmath::exp(x) } else { x.exp() } }
-    pub fn ln64(x: f64) -> f64 { if is_reproducible() { detmath::ln(x) } else { x.ln() } }
-    pub fn powf64(b: f64, y: f64) -> f64 { if is_reproducible() { detmath::powf(b, y) } else { b.powf(y) } }
-    pub fn sin_cos64(x: f64) -> (f64, f64) { if is_reproducible() { detmath::sin_cos(x) } else { x.sin_cos() } }
+    pub fn exp(x: f32) -> f32 {
+        if is_reproducible() {
+            detmath::exp(x as f64) as f32
+        } else {
+            x.exp()
+        }
+    }
+    pub fn tanh(x: f32) -> f32 {
+        if is_reproducible() {
+            detmath::tanh(x as f64) as f32
+        } else {
+            x.tanh()
+        }
+    }
+    pub fn exp64(x: f64) -> f64 {
+        if is_reproducible() {
+            detmath::exp(x)
+        } else {
+            x.exp()
+        }
+    }
+    pub fn ln64(x: f64) -> f64 {
+        if is_reproducible() {
+            detmath::ln(x)
+        } else {
+            x.ln()
+        }
+    }
+    pub fn powf64(b: f64, y: f64) -> f64 {
+        if is_reproducible() {
+            detmath::powf(b, y)
+        } else {
+            b.powf(y)
+        }
+    }
+    pub fn sin_cos64(x: f64) -> (f64, f64) {
+        if is_reproducible() {
+            detmath::sin_cos(x)
+        } else {
+            x.sin_cos()
+        }
+    }
 }
 
 // ------------------------------------------------------------------- shim generators
@@ -584,7 +867,9 @@ macro_rules! shim_dot {
 }
 macro_rules! shim_unary {
     ($shim:ident, $imp:ident) => {
-        fn $shim(a: &[f32]) -> f32 { unsafe { $imp(a) } }
+        fn $shim(a: &[f32]) -> f32 {
+            unsafe { $imp(a) }
+        }
     };
 }
 macro_rules! shim_axpy {
@@ -596,7 +881,11 @@ macro_rules! shim_axpy {
     };
 }
 macro_rules! shim_scale {
-    ($shim:ident, $imp:ident) => { fn $shim(x: &mut [f32], k: f32) { unsafe { $imp(x, k) } } };
+    ($shim:ident, $imp:ident) => {
+        fn $shim(x: &mut [f32], k: f32) {
+            unsafe { $imp(x, k) }
+        }
+    };
 }
 macro_rules! shim_mul3 {
     ($shim:ident, $imp:ident) => {
@@ -607,7 +896,11 @@ macro_rules! shim_mul3 {
     };
 }
 macro_rules! shim_exp {
-    ($shim:ident, $imp:ident) => { fn $shim(x: &mut [f32], m: f32) -> f32 { unsafe { $imp(x, m) } } };
+    ($shim:ident, $imp:ident) => {
+        fn $shim(x: &mut [f32], m: f32) -> f32 {
+            unsafe { $imp(x, m) }
+        }
+    };
 }
 macro_rules! shim_silu {
     ($shim:ident, $imp:ident) => {
@@ -619,7 +912,9 @@ macro_rules! shim_silu {
 }
 macro_rules! shim_rope {
     ($shim:ident, $imp:ident) => {
-        fn $shim(h: &mut [f32], c: &[f32], s: &[f32]) { unsafe { $imp(h, c, s) } }
+        fn $shim(h: &mut [f32], c: &[f32], s: &[f32]) {
+            unsafe { $imp(h, c, s) }
+        }
     };
 }
 macro_rules! shim_conv {
@@ -640,7 +935,9 @@ macro_rules! shim_i8 {
 }
 macro_rules! shim_q4blk {
     ($shim:ident, $imp:ident) => {
-        fn $shim(q: &[u8; 16], y: &[i8; 32]) -> i32 { unsafe { $imp(q.as_ptr(), y.as_ptr()) } }
+        fn $shim(q: &[u8; 16], y: &[i8; 32]) -> i32 {
+            unsafe { $imp(q.as_ptr(), y.as_ptr()) }
+        }
     };
 }
 macro_rules! shim_q4row {
@@ -666,34 +963,74 @@ mod x86 {
     const RND: i32 = _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC;
 
     fn has_avx2() -> bool {
-        is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") && is_x86_feature_detected!("f16c")
+        is_x86_feature_detected!("avx2")
+            && is_x86_feature_detected!("fma")
+            && is_x86_feature_detected!("f16c")
     }
     fn has_512() -> bool {
-        has_avx2() && is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") && is_x86_feature_detected!("avx512vl")
+        has_avx2()
+            && is_x86_feature_detected!("avx512f")
+            && is_x86_feature_detected!("avx512bw")
+            && is_x86_feature_detected!("avx512vl")
     }
 
     pub fn variants() -> Vec<Kernels> {
         let mut v = vec![];
-        if !has_avx2() { return v; }
+        if !has_avx2() {
+            return v;
+        }
         let avx2 = Kernels {
-            name: "avx2+fma", dot_f32: s_dot_avx2, sumsq: s_sumsq_avx2, max: s_max_avx2, axpy: s_axpy_avx2,
-            scale: s_scale_avx2, mul3: s_mul3_avx2, exp_sub_sum: s_exp_avx2, silu_mul: s_silu_avx2,
-            rope: s_rope_avx2, f16_to_f32: s_f16_avx2, bf16_to_f32: s_bf16_avx2, dot_i8: s_i8_avx2,
-            q4_0_block: s_q4b_avx2, q4_0_q8_0_row: s_q4r_avx2,
+            name: "avx2+fma",
+            dot_f32: s_dot_avx2,
+            sumsq: s_sumsq_avx2,
+            max: s_max_avx2,
+            axpy: s_axpy_avx2,
+            scale: s_scale_avx2,
+            mul3: s_mul3_avx2,
+            exp_sub_sum: s_exp_avx2,
+            silu_mul: s_silu_avx2,
+            rope: s_rope_avx2,
+            f16_to_f32: s_f16_avx2,
+            bf16_to_f32: s_bf16_avx2,
+            dot_i8: s_i8_avx2,
+            q4_0_block: s_q4b_avx2,
+            q4_0_q8_0_row: s_q4r_avx2,
         };
         v.push(avx2);
         if is_x86_feature_detected!("avxvnni") {
-            v.push(Kernels { name: "avx2+fma+avxvnni", dot_i8: s_i8_avxvnni, q4_0_block: s_q4b_avxvnni, q4_0_q8_0_row: s_q4r_avxvnni, ..avx2 });
+            v.push(Kernels {
+                name: "avx2+fma+avxvnni",
+                dot_i8: s_i8_avxvnni,
+                q4_0_block: s_q4b_avxvnni,
+                q4_0_q8_0_row: s_q4r_avxvnni,
+                ..avx2
+            });
         }
         if has_512() {
             let avx512 = Kernels {
-                name: "avx512", dot_f32: s_dot_512, sumsq: s_sumsq_512, max: s_max_512, axpy: s_axpy_512,
-                scale: s_scale_512, mul3: s_mul3_512, exp_sub_sum: s_exp_512, silu_mul: s_silu_512,
-                rope: s_rope_512, f16_to_f32: s_f16_512, bf16_to_f32: s_bf16_512, ..avx2
+                name: "avx512",
+                dot_f32: s_dot_512,
+                sumsq: s_sumsq_512,
+                max: s_max_512,
+                axpy: s_axpy_512,
+                scale: s_scale_512,
+                mul3: s_mul3_512,
+                exp_sub_sum: s_exp_512,
+                silu_mul: s_silu_512,
+                rope: s_rope_512,
+                f16_to_f32: s_f16_512,
+                bf16_to_f32: s_bf16_512,
+                ..avx2
             };
             v.push(avx512);
             if is_x86_feature_detected!("avx512vnni") {
-                v.push(Kernels { name: "avx512+vnni", dot_i8: s_i8_vnni512, q4_0_block: s_q4b_vnni512, q4_0_q8_0_row: s_q4r_vnni512, ..avx512 });
+                v.push(Kernels {
+                    name: "avx512+vnni",
+                    dot_i8: s_i8_vnni512,
+                    q4_0_block: s_q4b_vnni512,
+                    q4_0_q8_0_row: s_q4r_vnni512,
+                    ..avx512
+                });
             }
         }
         v
@@ -703,383 +1040,575 @@ mod x86 {
 
     #[inline]
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn hsum256(v: __m256) -> f32 { unsafe {
-        let s = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps::<1>(v));
-        let s = _mm_add_ps(s, _mm_movehl_ps(s, s));
-        let s = _mm_add_ss(s, _mm_shuffle_ps::<1>(s, s));
-        _mm_cvtss_f32(s)
-    } }
+    unsafe fn hsum256(v: __m256) -> f32 {
+        unsafe {
+            let s = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps::<1>(v));
+            let s = _mm_add_ps(s, _mm_movehl_ps(s, s));
+            let s = _mm_add_ss(s, _mm_shuffle_ps::<1>(s, s));
+            _mm_cvtss_f32(s)
+        }
+    }
 
     #[inline]
     #[target_feature(enable = "avx2")]
-    unsafe fn hsum_epi32(v: __m256i) -> i32 { unsafe {
-        let s = _mm_add_epi32(_mm256_castsi256_si128(v), _mm256_extracti128_si256::<1>(v));
-        let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b01_00_11_10>(s));
-        let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b10_11_00_01>(s));
-        _mm_cvtsi128_si32(s)
-    } }
-
-    #[target_feature(enable = "avx2,fma")]
-    unsafe fn dot_avx2(a: &[f32], b: &[f32]) -> f32 { unsafe {
-        let n = a.len();
-        let (pa, pb) = (a.as_ptr(), b.as_ptr());
-        let (mut a0, mut a1, mut a2, mut a3) = (_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps());
-        let mut i = 0;
-        while i + 32 <= n {
-            a0 = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i)), _mm256_loadu_ps(pb.add(i)), a0);
-            a1 = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i + 8)), _mm256_loadu_ps(pb.add(i + 8)), a1);
-            a2 = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i + 16)), _mm256_loadu_ps(pb.add(i + 16)), a2);
-            a3 = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i + 24)), _mm256_loadu_ps(pb.add(i + 24)), a3);
-            i += 32;
+    unsafe fn hsum_epi32(v: __m256i) -> i32 {
+        unsafe {
+            let s = _mm_add_epi32(_mm256_castsi256_si128(v), _mm256_extracti128_si256::<1>(v));
+            let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b01_00_11_10>(s));
+            let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b10_11_00_01>(s));
+            _mm_cvtsi128_si32(s)
         }
-        while i + 8 <= n {
-            a0 = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i)), _mm256_loadu_ps(pb.add(i)), a0);
-            i += 8;
+    }
+
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn dot_avx2(a: &[f32], b: &[f32]) -> f32 {
+        unsafe {
+            let n = a.len();
+            let (pa, pb) = (a.as_ptr(), b.as_ptr());
+            let (mut a0, mut a1, mut a2, mut a3) = (
+                _mm256_setzero_ps(),
+                _mm256_setzero_ps(),
+                _mm256_setzero_ps(),
+                _mm256_setzero_ps(),
+            );
+            let mut i = 0;
+            while i + 32 <= n {
+                a0 = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i)), _mm256_loadu_ps(pb.add(i)), a0);
+                a1 = _mm256_fmadd_ps(
+                    _mm256_loadu_ps(pa.add(i + 8)),
+                    _mm256_loadu_ps(pb.add(i + 8)),
+                    a1,
+                );
+                a2 = _mm256_fmadd_ps(
+                    _mm256_loadu_ps(pa.add(i + 16)),
+                    _mm256_loadu_ps(pb.add(i + 16)),
+                    a2,
+                );
+                a3 = _mm256_fmadd_ps(
+                    _mm256_loadu_ps(pa.add(i + 24)),
+                    _mm256_loadu_ps(pb.add(i + 24)),
+                    a3,
+                );
+                i += 32;
+            }
+            while i + 8 <= n {
+                a0 = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i)), _mm256_loadu_ps(pb.add(i)), a0);
+                i += 8;
+            }
+            let mut s = hsum256(_mm256_add_ps(_mm256_add_ps(a0, a1), _mm256_add_ps(a2, a3)));
+            while i < n {
+                s += *pa.add(i) * *pb.add(i);
+                i += 1;
+            }
+            s
         }
-        let mut s = hsum256(_mm256_add_ps(_mm256_add_ps(a0, a1), _mm256_add_ps(a2, a3)));
-        while i < n { s += *pa.add(i) * *pb.add(i); i += 1; }
-        s
-    } }
+    }
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn sumsq_avx2(a: &[f32]) -> f32 { unsafe { dot_avx2(a, a) } }
+    unsafe fn sumsq_avx2(a: &[f32]) -> f32 {
+        unsafe { dot_avx2(a, a) }
+    }
 
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn max_avx2(a: &[f32]) -> f32 { unsafe {
-        let n = a.len();
-        let p = a.as_ptr();
-        let mut acc = _mm256_set1_ps(f32::NEG_INFINITY);
-        let mut i = 0;
-        while i + 8 <= n { acc = _mm256_max_ps(_mm256_loadu_ps(p.add(i)), acc); i += 8; } // NaN lane keeps `acc`
-        let mut t = [0f32; 8];
-        _mm256_storeu_ps(t.as_mut_ptr(), acc);
-        let mut m = t.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        while i < n { m = m.max(*p.add(i)); i += 1; }
-        m
-    } }
+    unsafe fn max_avx2(a: &[f32]) -> f32 {
+        unsafe {
+            let n = a.len();
+            let p = a.as_ptr();
+            let mut acc = _mm256_set1_ps(f32::NEG_INFINITY);
+            let mut i = 0;
+            while i + 8 <= n {
+                acc = _mm256_max_ps(_mm256_loadu_ps(p.add(i)), acc);
+                i += 8;
+            } // NaN lane keeps `acc`
+            let mut t = [0f32; 8];
+            _mm256_storeu_ps(t.as_mut_ptr(), acc);
+            let mut m = t.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            while i < n {
+                m = m.max(*p.add(i));
+                i += 1;
+            }
+            m
+        }
+    }
 
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn axpy_avx2(a: f32, x: &[f32], y: &mut [f32]) { gen_loops::axpy::<true>(a, x, y) }
+    unsafe fn axpy_avx2(a: f32, x: &[f32], y: &mut [f32]) {
+        gen_loops::axpy::<true>(a, x, y)
+    }
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn scale_avx2(x: &mut [f32], k: f32) { gen_loops::scale(x, k) }
+    unsafe fn scale_avx2(x: &mut [f32], k: f32) {
+        gen_loops::scale(x, k)
+    }
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn mul3_avx2(x: &[f32], w: &[f32], k: f32, o: &mut [f32]) { gen_loops::mul3(x, w, k, o) }
+    unsafe fn mul3_avx2(x: &[f32], w: &[f32], k: f32, o: &mut [f32]) {
+        gen_loops::mul3(x, w, k, o)
+    }
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn rope_avx2(h: &mut [f32], c: &[f32], s: &[f32]) { gen_loops::rope::<true>(h, c, s) }
+    unsafe fn rope_avx2(h: &mut [f32], c: &[f32], s: &[f32]) {
+        gen_loops::rope::<true>(h, c, s)
+    }
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn bf16_avx2(s: &[u16], d: &mut [f32]) { gen_loops::bf16(s, d) }
+    unsafe fn bf16_avx2(s: &[u16], d: &mut [f32]) {
+        gen_loops::bf16(s, d)
+    }
 
     #[inline]
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn exp256(x: __m256) -> __m256 { unsafe {
-        let lt = _mm256_cmp_ps::<_CMP_LT_OQ>(x, _mm256_set1_ps(EXP_LO));
-        // operand order makes a NaN lane come out as NaN instead of being clamped
-        let xc = _mm256_max_ps(_mm256_set1_ps(EXP_LO), _mm256_min_ps(_mm256_set1_ps(EXP_HI), x));
-        let n = _mm256_round_ps::<RND>(_mm256_mul_ps(xc, _mm256_set1_ps(LOG2E)));
-        let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(LN2_HI), xc);
-        let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(LN2_LO), r);
-        let mut p = _mm256_set1_ps(C7);
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C6));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C5));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C4));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C3));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C2));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(1.0));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(1.0));
-        let e = _mm256_slli_epi32::<23>(_mm256_add_epi32(_mm256_cvtps_epi32(n), _mm256_set1_epi32(127)));
-        _mm256_andnot_ps(lt, _mm256_mul_ps(p, _mm256_castsi256_ps(e)))
-    } }
+    unsafe fn exp256(x: __m256) -> __m256 {
+        unsafe {
+            let lt = _mm256_cmp_ps::<_CMP_LT_OQ>(x, _mm256_set1_ps(EXP_LO));
+            // operand order makes a NaN lane come out as NaN instead of being clamped
+            let xc = _mm256_max_ps(
+                _mm256_set1_ps(EXP_LO),
+                _mm256_min_ps(_mm256_set1_ps(EXP_HI), x),
+            );
+            let n = _mm256_round_ps::<RND>(_mm256_mul_ps(xc, _mm256_set1_ps(LOG2E)));
+            let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(LN2_HI), xc);
+            let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(LN2_LO), r);
+            let mut p = _mm256_set1_ps(C7);
+            p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C6));
+            p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C5));
+            p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C4));
+            p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C3));
+            p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(C2));
+            p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(1.0));
+            p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(1.0));
+            let e = _mm256_slli_epi32::<23>(_mm256_add_epi32(
+                _mm256_cvtps_epi32(n),
+                _mm256_set1_epi32(127),
+            ));
+            _mm256_andnot_ps(lt, _mm256_mul_ps(p, _mm256_castsi256_ps(e)))
+        }
+    }
 
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn exp_avx2(x: &mut [f32], m: f32) -> f32 { unsafe {
-        let n = x.len();
-        let p = x.as_mut_ptr();
-        let mv = _mm256_set1_ps(m);
-        let mut acc = _mm256_setzero_ps();
-        let mut i = 0;
-        while i + 8 <= n {
-            let e = exp256(_mm256_sub_ps(_mm256_loadu_ps(p.add(i)), mv));
-            _mm256_storeu_ps(p.add(i), e);
-            acc = _mm256_add_ps(acc, e);
-            i += 8;
+    unsafe fn exp_avx2(x: &mut [f32], m: f32) -> f32 {
+        unsafe {
+            let n = x.len();
+            let p = x.as_mut_ptr();
+            let mv = _mm256_set1_ps(m);
+            let mut acc = _mm256_setzero_ps();
+            let mut i = 0;
+            while i + 8 <= n {
+                let e = exp256(_mm256_sub_ps(_mm256_loadu_ps(p.add(i)), mv));
+                _mm256_storeu_ps(p.add(i), e);
+                acc = _mm256_add_ps(acc, e);
+                i += 8;
+            }
+            let mut s = hsum256(acc);
+            while i < n {
+                let e = scalar::exp_poly(*p.add(i) - m);
+                *p.add(i) = e;
+                s += e;
+                i += 1;
+            }
+            s
         }
-        let mut s = hsum256(acc);
-        while i < n { let e = scalar::exp_poly(*p.add(i) - m); *p.add(i) = e; s += e; i += 1; }
-        s
-    } }
+    }
 
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn silu_avx2(g: &mut [f32], u: &[f32]) { unsafe {
-        let n = g.len();
-        let (pg, pu) = (g.as_mut_ptr(), u.as_ptr());
-        let (zero, one) = (_mm256_setzero_ps(), _mm256_set1_ps(1.0));
-        let mut i = 0;
-        while i + 8 <= n {
-            let v = _mm256_loadu_ps(pg.add(i));
-            let d = _mm256_add_ps(one, exp256(_mm256_sub_ps(zero, v)));
-            _mm256_storeu_ps(pg.add(i), _mm256_mul_ps(_mm256_div_ps(v, d), _mm256_loadu_ps(pu.add(i))));
-            i += 8;
+    unsafe fn silu_avx2(g: &mut [f32], u: &[f32]) {
+        unsafe {
+            let n = g.len();
+            let (pg, pu) = (g.as_mut_ptr(), u.as_ptr());
+            let (zero, one) = (_mm256_setzero_ps(), _mm256_set1_ps(1.0));
+            let mut i = 0;
+            while i + 8 <= n {
+                let v = _mm256_loadu_ps(pg.add(i));
+                let d = _mm256_add_ps(one, exp256(_mm256_sub_ps(zero, v)));
+                _mm256_storeu_ps(
+                    pg.add(i),
+                    _mm256_mul_ps(_mm256_div_ps(v, d), _mm256_loadu_ps(pu.add(i))),
+                );
+                i += 8;
+            }
+            while i < n {
+                *pg.add(i) = scalar::silu_poly(*pg.add(i), *pu.add(i));
+                i += 1;
+            }
         }
-        while i < n { *pg.add(i) = scalar::silu_poly(*pg.add(i), *pu.add(i)); i += 1; }
-    } }
+    }
 
     #[target_feature(enable = "avx2,f16c")]
-    unsafe fn f16_avx2(s: &[u16], d: &mut [f32]) { unsafe {
-        let n = s.len();
-        let (ps, pd) = (s.as_ptr(), d.as_mut_ptr());
-        let mut i = 0;
-        while i + 8 <= n {
-            _mm256_storeu_ps(pd.add(i), _mm256_cvtph_ps(_mm_loadu_si128(ps.add(i) as *const __m128i)));
-            i += 8;
+    unsafe fn f16_avx2(s: &[u16], d: &mut [f32]) {
+        unsafe {
+            let n = s.len();
+            let (ps, pd) = (s.as_ptr(), d.as_mut_ptr());
+            let mut i = 0;
+            while i + 8 <= n {
+                _mm256_storeu_ps(
+                    pd.add(i),
+                    _mm256_cvtph_ps(_mm_loadu_si128(ps.add(i) as *const __m128i)),
+                );
+                i += 8;
+            }
+            while i < n {
+                *pd.add(i) = scalar::f16_to_f32(*ps.add(i));
+                i += 1;
+            }
         }
-        while i < n { *pd.add(i) = scalar::f16_to_f32(*ps.add(i)); i += 1; }
-    } }
+    }
 
     /// Exact for every input: widen to i16, multiply-add pairs into i32.
     #[target_feature(enable = "avx2")]
-    unsafe fn dot_i8_avx2(a: &[i8], b: &[i8]) -> i32 { unsafe {
-        let n = a.len();
-        let (pa, pb) = (a.as_ptr(), b.as_ptr());
-        let mut acc = _mm256_setzero_si256();
-        let mut i = 0;
-        while i + 16 <= n {
-            let x = _mm256_cvtepi8_epi16(_mm_loadu_si128(pa.add(i) as *const __m128i));
-            let y = _mm256_cvtepi8_epi16(_mm_loadu_si128(pb.add(i) as *const __m128i));
-            acc = _mm256_add_epi32(acc, _mm256_madd_epi16(x, y));
-            i += 16;
+    unsafe fn dot_i8_avx2(a: &[i8], b: &[i8]) -> i32 {
+        unsafe {
+            let n = a.len();
+            let (pa, pb) = (a.as_ptr(), b.as_ptr());
+            let mut acc = _mm256_setzero_si256();
+            let mut i = 0;
+            while i + 16 <= n {
+                let x = _mm256_cvtepi8_epi16(_mm_loadu_si128(pa.add(i) as *const __m128i));
+                let y = _mm256_cvtepi8_epi16(_mm_loadu_si128(pb.add(i) as *const __m128i));
+                acc = _mm256_add_epi32(acc, _mm256_madd_epi16(x, y));
+                i += 16;
+            }
+            let mut s = hsum_epi32(acc);
+            while i < n {
+                s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32);
+                i += 1;
+            }
+            s
         }
-        let mut s = hsum_epi32(acc);
-        while i < n { s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32); i += 1; }
-        s
-    } }
+    }
 
     /// Nibbles as u8 in element order (low half first) — shared by the Q4_0 kernels.
     #[inline]
     #[target_feature(enable = "avx2")]
-    unsafe fn nibbles(qs: *const u8) -> __m256i { unsafe {
-        let v = _mm_loadu_si128(qs as *const __m128i);
-        let m = _mm_set1_epi8(0x0f);
-        let lo = _mm_and_si128(v, m);
-        let hi = _mm_and_si128(_mm_srli_epi16::<4>(v), m);
-        _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(lo), hi)
-    } }
+    unsafe fn nibbles(qs: *const u8) -> __m256i {
+        unsafe {
+            let v = _mm_loadu_si128(qs as *const __m128i);
+            let m = _mm_set1_epi8(0x0f);
+            let lo = _mm_and_si128(v, m);
+            let hi = _mm_and_si128(_mm_srli_epi16::<4>(v), m);
+            _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(lo), hi)
+        }
+    }
 
     #[inline]
     #[target_feature(enable = "avx2")]
-    unsafe fn q4blk_avx2(qs: *const u8, y: *const i8) -> i32 { unsafe {
-        let yv = _mm256_loadu_si256(y as *const __m256i);
-        let one16 = _mm256_set1_epi16(1);
-        let p = _mm256_madd_epi16(_mm256_maddubs_epi16(nibbles(qs), yv), one16);
-        let s = _mm256_madd_epi16(_mm256_maddubs_epi16(_mm256_set1_epi8(1), yv), one16);
-        hsum_epi32(_mm256_sub_epi32(p, _mm256_slli_epi32::<3>(s)))
-    } }
+    unsafe fn q4blk_avx2(qs: *const u8, y: *const i8) -> i32 {
+        unsafe {
+            let yv = _mm256_loadu_si256(y as *const __m256i);
+            let one16 = _mm256_set1_epi16(1);
+            let p = _mm256_madd_epi16(_mm256_maddubs_epi16(nibbles(qs), yv), one16);
+            let s = _mm256_madd_epi16(_mm256_maddubs_epi16(_mm256_set1_epi8(1), yv), one16);
+            hsum_epi32(_mm256_sub_epi32(p, _mm256_slli_epi32::<3>(s)))
+        }
+    }
 
     #[inline]
     #[target_feature(enable = "f16c")]
-    unsafe fn half(p: *const u8) -> f32 { unsafe {
-        _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128(u16::from_le_bytes([*p, *p.add(1)]) as i32)))
-    } }
+    unsafe fn half(p: *const u8) -> f32 {
+        unsafe {
+            _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128(
+                u16::from_le_bytes([*p, *p.add(1)]) as i32,
+            )))
+        }
+    }
 
     macro_rules! q4_row {
         ($name:ident, $feat:literal, $blk:ident) => {
             #[target_feature(enable = $feat)]
-            unsafe fn $name(w: *const u8, a: *const u8, n: usize) -> f32 { unsafe {
-                let mut acc = 0f32;
-                for b in 0..n {
-                    let (wp, ap) = (w.add(b * 18), a.add(b * 34));
-                    let d = half(wp) * half(ap);
-                    acc = d.mul_add($blk(wp.add(2), ap.add(2) as *const i8) as f32, acc);
+            unsafe fn $name(w: *const u8, a: *const u8, n: usize) -> f32 {
+                unsafe {
+                    let mut acc = 0f32;
+                    for b in 0..n {
+                        let (wp, ap) = (w.add(b * 18), a.add(b * 34));
+                        let d = half(wp) * half(ap);
+                        acc = d.mul_add($blk(wp.add(2), ap.add(2) as *const i8) as f32, acc);
+                    }
+                    acc
                 }
-                acc
-            } }
+            }
         };
     }
     q4_row!(q4row_avx2, "avx2,fma,f16c", q4blk_avx2);
 
     // AVX-VNNI (ymm): u8×s8 dot-accumulate; signed×signed through the +128 bias trick.
     #[target_feature(enable = "avx2,avxvnni")]
-    unsafe fn dot_i8_avxvnni(a: &[i8], b: &[i8]) -> i32 { unsafe {
-        let n = a.len();
-        let (pa, pb) = (a.as_ptr(), b.as_ptr());
-        let (ones, bias) = (_mm256_set1_epi8(1), _mm256_set1_epi8(-128));
-        let (mut acc, mut sb) = (_mm256_setzero_si256(), _mm256_setzero_si256());
-        let mut i = 0;
-        while i + 32 <= n {
-            let x = _mm256_xor_si256(_mm256_loadu_si256(pa.add(i) as *const __m256i), bias);
-            let y = _mm256_loadu_si256(pb.add(i) as *const __m256i);
-            acc = _mm256_dpbusd_avx_epi32(acc, x, y);
-            sb = _mm256_dpbusd_avx_epi32(sb, ones, y);
-            i += 32;
+    unsafe fn dot_i8_avxvnni(a: &[i8], b: &[i8]) -> i32 {
+        unsafe {
+            let n = a.len();
+            let (pa, pb) = (a.as_ptr(), b.as_ptr());
+            let (ones, bias) = (_mm256_set1_epi8(1), _mm256_set1_epi8(-128));
+            let (mut acc, mut sb) = (_mm256_setzero_si256(), _mm256_setzero_si256());
+            let mut i = 0;
+            while i + 32 <= n {
+                let x = _mm256_xor_si256(_mm256_loadu_si256(pa.add(i) as *const __m256i), bias);
+                let y = _mm256_loadu_si256(pb.add(i) as *const __m256i);
+                acc = _mm256_dpbusd_avx_epi32(acc, x, y);
+                sb = _mm256_dpbusd_avx_epi32(sb, ones, y);
+                i += 32;
+            }
+            let mut s = hsum_epi32(acc).wrapping_sub(hsum_epi32(sb).wrapping_shl(7));
+            while i < n {
+                s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32);
+                i += 1;
+            }
+            s
         }
-        let mut s = hsum_epi32(acc).wrapping_sub(hsum_epi32(sb).wrapping_shl(7));
-        while i < n { s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32); i += 1; }
-        s
-    } }
+    }
 
     #[inline]
     #[target_feature(enable = "avx2,avxvnni")]
-    unsafe fn q4blk_avxvnni(qs: *const u8, y: *const i8) -> i32 { unsafe {
-        let yv = _mm256_loadu_si256(y as *const __m256i);
-        let z = _mm256_setzero_si256();
-        let p = _mm256_dpbusd_avx_epi32(z, nibbles(qs), yv);
-        let s = _mm256_dpbusd_avx_epi32(z, _mm256_set1_epi8(1), yv);
-        hsum_epi32(_mm256_sub_epi32(p, _mm256_slli_epi32::<3>(s)))
-    } }
+    unsafe fn q4blk_avxvnni(qs: *const u8, y: *const i8) -> i32 {
+        unsafe {
+            let yv = _mm256_loadu_si256(y as *const __m256i);
+            let z = _mm256_setzero_si256();
+            let p = _mm256_dpbusd_avx_epi32(z, nibbles(qs), yv);
+            let s = _mm256_dpbusd_avx_epi32(z, _mm256_set1_epi8(1), yv);
+            hsum_epi32(_mm256_sub_epi32(p, _mm256_slli_epi32::<3>(s)))
+        }
+    }
     q4_row!(q4row_avxvnni, "avx2,fma,f16c,avxvnni", q4blk_avxvnni);
 
     // ------------------------------------------------------------------ AVX-512
 
     #[inline]
     #[target_feature(enable = "avx512f")]
-    unsafe fn exp512(x: __m512) -> __m512 { unsafe {
-        let lt = _mm512_cmp_ps_mask::<_CMP_LT_OQ>(x, _mm512_set1_ps(EXP_LO));
-        let xc = _mm512_max_ps(_mm512_set1_ps(EXP_LO), _mm512_min_ps(_mm512_set1_ps(EXP_HI), x));
-        let n = _mm512_roundscale_ps::<RND>(_mm512_mul_ps(xc, _mm512_set1_ps(LOG2E)));
-        let r = _mm512_fnmadd_ps(n, _mm512_set1_ps(LN2_HI), xc);
-        let r = _mm512_fnmadd_ps(n, _mm512_set1_ps(LN2_LO), r);
-        let mut p = _mm512_set1_ps(C7);
-        p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C6));
-        p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C5));
-        p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C4));
-        p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C3));
-        p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C2));
-        p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(1.0));
-        p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(1.0));
-        let e = _mm512_slli_epi32::<23>(_mm512_add_epi32(_mm512_cvtps_epi32(n), _mm512_set1_epi32(127)));
-        _mm512_mask_blend_ps(lt, _mm512_mul_ps(p, _mm512_castsi512_ps(e)), _mm512_setzero_ps())
-    } }
-
-    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn dot_512(a: &[f32], b: &[f32]) -> f32 { unsafe {
-        let n = a.len();
-        let (pa, pb) = (a.as_ptr(), b.as_ptr());
-        let (mut a0, mut a1, mut a2, mut a3) = (_mm512_setzero_ps(), _mm512_setzero_ps(), _mm512_setzero_ps(), _mm512_setzero_ps());
-        let mut i = 0;
-        while i + 64 <= n {
-            a0 = _mm512_fmadd_ps(_mm512_loadu_ps(pa.add(i)), _mm512_loadu_ps(pb.add(i)), a0);
-            a1 = _mm512_fmadd_ps(_mm512_loadu_ps(pa.add(i + 16)), _mm512_loadu_ps(pb.add(i + 16)), a1);
-            a2 = _mm512_fmadd_ps(_mm512_loadu_ps(pa.add(i + 32)), _mm512_loadu_ps(pb.add(i + 32)), a2);
-            a3 = _mm512_fmadd_ps(_mm512_loadu_ps(pa.add(i + 48)), _mm512_loadu_ps(pb.add(i + 48)), a3);
-            i += 64;
+    unsafe fn exp512(x: __m512) -> __m512 {
+        unsafe {
+            let lt = _mm512_cmp_ps_mask::<_CMP_LT_OQ>(x, _mm512_set1_ps(EXP_LO));
+            let xc = _mm512_max_ps(
+                _mm512_set1_ps(EXP_LO),
+                _mm512_min_ps(_mm512_set1_ps(EXP_HI), x),
+            );
+            let n = _mm512_roundscale_ps::<RND>(_mm512_mul_ps(xc, _mm512_set1_ps(LOG2E)));
+            let r = _mm512_fnmadd_ps(n, _mm512_set1_ps(LN2_HI), xc);
+            let r = _mm512_fnmadd_ps(n, _mm512_set1_ps(LN2_LO), r);
+            let mut p = _mm512_set1_ps(C7);
+            p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C6));
+            p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C5));
+            p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C4));
+            p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C3));
+            p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(C2));
+            p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(1.0));
+            p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(1.0));
+            let e = _mm512_slli_epi32::<23>(_mm512_add_epi32(
+                _mm512_cvtps_epi32(n),
+                _mm512_set1_epi32(127),
+            ));
+            _mm512_mask_blend_ps(
+                lt,
+                _mm512_mul_ps(p, _mm512_castsi512_ps(e)),
+                _mm512_setzero_ps(),
+            )
         }
-        while i + 16 <= n {
-            a0 = _mm512_fmadd_ps(_mm512_loadu_ps(pa.add(i)), _mm512_loadu_ps(pb.add(i)), a0);
-            i += 16;
+    }
+
+    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
+    unsafe fn dot_512(a: &[f32], b: &[f32]) -> f32 {
+        unsafe {
+            let n = a.len();
+            let (pa, pb) = (a.as_ptr(), b.as_ptr());
+            let (mut a0, mut a1, mut a2, mut a3) = (
+                _mm512_setzero_ps(),
+                _mm512_setzero_ps(),
+                _mm512_setzero_ps(),
+                _mm512_setzero_ps(),
+            );
+            let mut i = 0;
+            while i + 64 <= n {
+                a0 = _mm512_fmadd_ps(_mm512_loadu_ps(pa.add(i)), _mm512_loadu_ps(pb.add(i)), a0);
+                a1 = _mm512_fmadd_ps(
+                    _mm512_loadu_ps(pa.add(i + 16)),
+                    _mm512_loadu_ps(pb.add(i + 16)),
+                    a1,
+                );
+                a2 = _mm512_fmadd_ps(
+                    _mm512_loadu_ps(pa.add(i + 32)),
+                    _mm512_loadu_ps(pb.add(i + 32)),
+                    a2,
+                );
+                a3 = _mm512_fmadd_ps(
+                    _mm512_loadu_ps(pa.add(i + 48)),
+                    _mm512_loadu_ps(pb.add(i + 48)),
+                    a3,
+                );
+                i += 64;
+            }
+            while i + 16 <= n {
+                a0 = _mm512_fmadd_ps(_mm512_loadu_ps(pa.add(i)), _mm512_loadu_ps(pb.add(i)), a0);
+                i += 16;
+            }
+            let mut s =
+                _mm512_reduce_add_ps(_mm512_add_ps(_mm512_add_ps(a0, a1), _mm512_add_ps(a2, a3)));
+            while i < n {
+                s += *pa.add(i) * *pb.add(i);
+                i += 1;
+            }
+            s
         }
-        let mut s = _mm512_reduce_add_ps(_mm512_add_ps(_mm512_add_ps(a0, a1), _mm512_add_ps(a2, a3)));
-        while i < n { s += *pa.add(i) * *pb.add(i); i += 1; }
-        s
-    } }
+    }
     #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn sumsq_512(a: &[f32]) -> f32 { unsafe { dot_512(a, a) } }
+    unsafe fn sumsq_512(a: &[f32]) -> f32 {
+        unsafe { dot_512(a, a) }
+    }
 
     #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn max_512(a: &[f32]) -> f32 { unsafe {
-        let n = a.len();
-        let p = a.as_ptr();
-        let mut acc = _mm512_set1_ps(f32::NEG_INFINITY);
-        let mut i = 0;
-        while i + 16 <= n { acc = _mm512_max_ps(_mm512_loadu_ps(p.add(i)), acc); i += 16; }
-        let mut t = [0f32; 16];
-        _mm512_storeu_ps(t.as_mut_ptr(), acc);
-        let mut m = t.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        while i < n { m = m.max(*p.add(i)); i += 1; }
-        m
-    } }
-
-    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn axpy_512(a: f32, x: &[f32], y: &mut [f32]) { gen_loops::axpy::<true>(a, x, y) }
-    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn scale_512(x: &mut [f32], k: f32) { gen_loops::scale(x, k) }
-    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn mul3_512(x: &[f32], w: &[f32], k: f32, o: &mut [f32]) { gen_loops::mul3(x, w, k, o) }
-    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn rope_512(h: &mut [f32], c: &[f32], s: &[f32]) { gen_loops::rope::<true>(h, c, s) }
-    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn bf16_512(s: &[u16], d: &mut [f32]) { gen_loops::bf16(s, d) }
-
-    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn exp_512(x: &mut [f32], m: f32) -> f32 { unsafe {
-        let n = x.len();
-        let p = x.as_mut_ptr();
-        let mv = _mm512_set1_ps(m);
-        let mut acc = _mm512_setzero_ps();
-        let mut i = 0;
-        while i + 16 <= n {
-            let e = exp512(_mm512_sub_ps(_mm512_loadu_ps(p.add(i)), mv));
-            _mm512_storeu_ps(p.add(i), e);
-            acc = _mm512_add_ps(acc, e);
-            i += 16;
+    unsafe fn max_512(a: &[f32]) -> f32 {
+        unsafe {
+            let n = a.len();
+            let p = a.as_ptr();
+            let mut acc = _mm512_set1_ps(f32::NEG_INFINITY);
+            let mut i = 0;
+            while i + 16 <= n {
+                acc = _mm512_max_ps(_mm512_loadu_ps(p.add(i)), acc);
+                i += 16;
+            }
+            let mut t = [0f32; 16];
+            _mm512_storeu_ps(t.as_mut_ptr(), acc);
+            let mut m = t.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            while i < n {
+                m = m.max(*p.add(i));
+                i += 1;
+            }
+            m
         }
-        let mut s = _mm512_reduce_add_ps(acc);
-        while i < n { let e = scalar::exp_poly(*p.add(i) - m); *p.add(i) = e; s += e; i += 1; }
-        s
-    } }
+    }
 
     #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
-    unsafe fn silu_512(g: &mut [f32], u: &[f32]) { unsafe {
-        let n = g.len();
-        let (pg, pu) = (g.as_mut_ptr(), u.as_ptr());
-        let (zero, one) = (_mm512_setzero_ps(), _mm512_set1_ps(1.0));
-        let mut i = 0;
-        while i + 16 <= n {
-            let v = _mm512_loadu_ps(pg.add(i));
-            let d = _mm512_add_ps(one, exp512(_mm512_sub_ps(zero, v)));
-            _mm512_storeu_ps(pg.add(i), _mm512_mul_ps(_mm512_div_ps(v, d), _mm512_loadu_ps(pu.add(i))));
-            i += 16;
+    unsafe fn axpy_512(a: f32, x: &[f32], y: &mut [f32]) {
+        gen_loops::axpy::<true>(a, x, y)
+    }
+    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
+    unsafe fn scale_512(x: &mut [f32], k: f32) {
+        gen_loops::scale(x, k)
+    }
+    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
+    unsafe fn mul3_512(x: &[f32], w: &[f32], k: f32, o: &mut [f32]) {
+        gen_loops::mul3(x, w, k, o)
+    }
+    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
+    unsafe fn rope_512(h: &mut [f32], c: &[f32], s: &[f32]) {
+        gen_loops::rope::<true>(h, c, s)
+    }
+    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
+    unsafe fn bf16_512(s: &[u16], d: &mut [f32]) {
+        gen_loops::bf16(s, d)
+    }
+
+    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
+    unsafe fn exp_512(x: &mut [f32], m: f32) -> f32 {
+        unsafe {
+            let n = x.len();
+            let p = x.as_mut_ptr();
+            let mv = _mm512_set1_ps(m);
+            let mut acc = _mm512_setzero_ps();
+            let mut i = 0;
+            while i + 16 <= n {
+                let e = exp512(_mm512_sub_ps(_mm512_loadu_ps(p.add(i)), mv));
+                _mm512_storeu_ps(p.add(i), e);
+                acc = _mm512_add_ps(acc, e);
+                i += 16;
+            }
+            let mut s = _mm512_reduce_add_ps(acc);
+            while i < n {
+                let e = scalar::exp_poly(*p.add(i) - m);
+                *p.add(i) = e;
+                s += e;
+                i += 1;
+            }
+            s
         }
-        while i < n { *pg.add(i) = scalar::silu_poly(*pg.add(i), *pu.add(i)); i += 1; }
-    } }
+    }
+
+    #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,fma")]
+    unsafe fn silu_512(g: &mut [f32], u: &[f32]) {
+        unsafe {
+            let n = g.len();
+            let (pg, pu) = (g.as_mut_ptr(), u.as_ptr());
+            let (zero, one) = (_mm512_setzero_ps(), _mm512_set1_ps(1.0));
+            let mut i = 0;
+            while i + 16 <= n {
+                let v = _mm512_loadu_ps(pg.add(i));
+                let d = _mm512_add_ps(one, exp512(_mm512_sub_ps(zero, v)));
+                _mm512_storeu_ps(
+                    pg.add(i),
+                    _mm512_mul_ps(_mm512_div_ps(v, d), _mm512_loadu_ps(pu.add(i))),
+                );
+                i += 16;
+            }
+            while i < n {
+                *pg.add(i) = scalar::silu_poly(*pg.add(i), *pu.add(i));
+                i += 1;
+            }
+        }
+    }
 
     #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,f16c")]
-    unsafe fn f16_512(s: &[u16], d: &mut [f32]) { unsafe {
-        let n = s.len();
-        let (ps, pd) = (s.as_ptr(), d.as_mut_ptr());
-        let mut i = 0;
-        while i + 16 <= n {
-            _mm512_storeu_ps(pd.add(i), _mm512_cvtph_ps(_mm256_loadu_si256(ps.add(i) as *const __m256i)));
-            i += 16;
+    unsafe fn f16_512(s: &[u16], d: &mut [f32]) {
+        unsafe {
+            let n = s.len();
+            let (ps, pd) = (s.as_ptr(), d.as_mut_ptr());
+            let mut i = 0;
+            while i + 16 <= n {
+                _mm512_storeu_ps(
+                    pd.add(i),
+                    _mm512_cvtph_ps(_mm256_loadu_si256(ps.add(i) as *const __m256i)),
+                );
+                i += 16;
+            }
+            while i < n {
+                *pd.add(i) = scalar::f16_to_f32(*ps.add(i));
+                i += 1;
+            }
         }
-        while i < n { *pd.add(i) = scalar::f16_to_f32(*ps.add(i)); i += 1; }
-    } }
+    }
 
     // AVX512-VNNI: 64 bytes per step, then one 32-byte step, then a scalar tail.
     #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512vnni,avx2")]
-    unsafe fn dot_i8_vnni512(a: &[i8], b: &[i8]) -> i32 { unsafe {
-        let n = a.len();
-        let (pa, pb) = (a.as_ptr(), b.as_ptr());
-        let (ones, bias) = (_mm512_set1_epi8(1), _mm512_set1_epi8(-128));
-        let (mut acc, mut sb) = (_mm512_setzero_si512(), _mm512_setzero_si512());
-        let mut i = 0;
-        while i + 64 <= n {
-            let x = _mm512_xor_si512(_mm512_loadu_si512(pa.add(i) as *const _), bias);
-            let y = _mm512_loadu_si512(pb.add(i) as *const _);
-            acc = _mm512_dpbusd_epi32(acc, x, y);
-            sb = _mm512_dpbusd_epi32(sb, ones, y);
-            i += 64;
+    unsafe fn dot_i8_vnni512(a: &[i8], b: &[i8]) -> i32 {
+        unsafe {
+            let n = a.len();
+            let (pa, pb) = (a.as_ptr(), b.as_ptr());
+            let (ones, bias) = (_mm512_set1_epi8(1), _mm512_set1_epi8(-128));
+            let (mut acc, mut sb) = (_mm512_setzero_si512(), _mm512_setzero_si512());
+            let mut i = 0;
+            while i + 64 <= n {
+                let x = _mm512_xor_si512(_mm512_loadu_si512(pa.add(i) as *const _), bias);
+                let y = _mm512_loadu_si512(pb.add(i) as *const _);
+                acc = _mm512_dpbusd_epi32(acc, x, y);
+                sb = _mm512_dpbusd_epi32(sb, ones, y);
+                i += 64;
+            }
+            let mut s = _mm512_reduce_add_epi32(acc)
+                .wrapping_sub(_mm512_reduce_add_epi32(sb).wrapping_shl(7));
+            if i + 32 <= n {
+                let x = _mm256_xor_si256(
+                    _mm256_loadu_si256(pa.add(i) as *const __m256i),
+                    _mm256_set1_epi8(-128),
+                );
+                let y = _mm256_loadu_si256(pb.add(i) as *const __m256i);
+                let p = _mm256_dpbusd_epi32(_mm256_setzero_si256(), x, y);
+                let q = _mm256_dpbusd_epi32(_mm256_setzero_si256(), _mm256_set1_epi8(1), y);
+                s = s.wrapping_add(hsum_epi32(p).wrapping_sub(hsum_epi32(q).wrapping_shl(7)));
+                i += 32;
+            }
+            while i < n {
+                s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32);
+                i += 1;
+            }
+            s
         }
-        let mut s = _mm512_reduce_add_epi32(acc).wrapping_sub(_mm512_reduce_add_epi32(sb).wrapping_shl(7));
-        if i + 32 <= n {
-            let x = _mm256_xor_si256(_mm256_loadu_si256(pa.add(i) as *const __m256i), _mm256_set1_epi8(-128));
-            let y = _mm256_loadu_si256(pb.add(i) as *const __m256i);
-            let p = _mm256_dpbusd_epi32(_mm256_setzero_si256(), x, y);
-            let q = _mm256_dpbusd_epi32(_mm256_setzero_si256(), _mm256_set1_epi8(1), y);
-            s = s.wrapping_add(hsum_epi32(p).wrapping_sub(hsum_epi32(q).wrapping_shl(7)));
-            i += 32;
-        }
-        while i < n { s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32); i += 1; }
-        s
-    } }
+    }
 
     #[inline]
     #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512vnni,avx2")]
-    unsafe fn q4blk_vnni512(qs: *const u8, y: *const i8) -> i32 { unsafe {
-        let yv = _mm256_loadu_si256(y as *const __m256i);
-        let z = _mm256_setzero_si256();
-        let p = _mm256_dpbusd_epi32(z, nibbles(qs), yv);
-        let s = _mm256_dpbusd_epi32(z, _mm256_set1_epi8(1), yv);
-        hsum_epi32(_mm256_sub_epi32(p, _mm256_slli_epi32::<3>(s)))
-    } }
-    q4_row!(q4row_vnni512, "avx512f,avx512bw,avx512vl,avx512vnni,avx2,fma,f16c", q4blk_vnni512);
+    unsafe fn q4blk_vnni512(qs: *const u8, y: *const i8) -> i32 {
+        unsafe {
+            let yv = _mm256_loadu_si256(y as *const __m256i);
+            let z = _mm256_setzero_si256();
+            let p = _mm256_dpbusd_epi32(z, nibbles(qs), yv);
+            let s = _mm256_dpbusd_epi32(z, _mm256_set1_epi8(1), yv);
+            hsum_epi32(_mm256_sub_epi32(p, _mm256_slli_epi32::<3>(s)))
+        }
+    }
+    q4_row!(
+        q4row_vnni512,
+        "avx512f,avx512bw,avx512vl,avx512vnni,avx2,fma,f16c",
+        q4blk_vnni512
+    );
 
     // ------------------------------------------------------------------ shims
 
@@ -1131,216 +1660,312 @@ mod arm {
     pub fn variants() -> Vec<Kernels> {
         // NEON is mandatory on aarch64.
         let neon = Kernels {
-            name: "neon", dot_f32: s_dot_neon, sumsq: s_sumsq_neon, max: s_max_neon, axpy: s_axpy_neon,
-            scale: s_scale_neon, mul3: s_mul3_neon, exp_sub_sum: s_exp_neon, silu_mul: s_silu_neon,
-            rope: s_rope_neon, f16_to_f32: s_f16_neon, bf16_to_f32: s_bf16_neon, dot_i8: s_i8_neon,
-            q4_0_block: s_q4b_neon, q4_0_q8_0_row: s_q4r_neon,
+            name: "neon",
+            dot_f32: s_dot_neon,
+            sumsq: s_sumsq_neon,
+            max: s_max_neon,
+            axpy: s_axpy_neon,
+            scale: s_scale_neon,
+            mul3: s_mul3_neon,
+            exp_sub_sum: s_exp_neon,
+            silu_mul: s_silu_neon,
+            rope: s_rope_neon,
+            f16_to_f32: s_f16_neon,
+            bf16_to_f32: s_bf16_neon,
+            dot_i8: s_i8_neon,
+            q4_0_block: s_q4b_neon,
+            q4_0_q8_0_row: s_q4r_neon,
         };
         let mut v = vec![neon];
         if std::arch::is_aarch64_feature_detected!("dotprod") {
-            v.push(Kernels { name: "neon+dotprod", dot_i8: s_i8_dot, q4_0_block: s_q4b_dot, q4_0_q8_0_row: s_q4r_dot, ..neon });
+            v.push(Kernels {
+                name: "neon+dotprod",
+                dot_i8: s_i8_dot,
+                q4_0_block: s_q4b_dot,
+                q4_0_q8_0_row: s_q4r_dot,
+                ..neon
+            });
         }
         v
     }
 
-    unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 { unsafe {
-        let n = a.len();
-        let (pa, pb) = (a.as_ptr(), b.as_ptr());
-        let (mut a0, mut a1, mut a2, mut a3) = (vdupq_n_f32(0.0), vdupq_n_f32(0.0), vdupq_n_f32(0.0), vdupq_n_f32(0.0));
-        let mut i = 0;
-        while i + 16 <= n {
-            a0 = vfmaq_f32(a0, vld1q_f32(pa.add(i)), vld1q_f32(pb.add(i)));
-            a1 = vfmaq_f32(a1, vld1q_f32(pa.add(i + 4)), vld1q_f32(pb.add(i + 4)));
-            a2 = vfmaq_f32(a2, vld1q_f32(pa.add(i + 8)), vld1q_f32(pb.add(i + 8)));
-            a3 = vfmaq_f32(a3, vld1q_f32(pa.add(i + 12)), vld1q_f32(pb.add(i + 12)));
-            i += 16;
+    unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
+        unsafe {
+            let n = a.len();
+            let (pa, pb) = (a.as_ptr(), b.as_ptr());
+            let (mut a0, mut a1, mut a2, mut a3) = (
+                vdupq_n_f32(0.0),
+                vdupq_n_f32(0.0),
+                vdupq_n_f32(0.0),
+                vdupq_n_f32(0.0),
+            );
+            let mut i = 0;
+            while i + 16 <= n {
+                a0 = vfmaq_f32(a0, vld1q_f32(pa.add(i)), vld1q_f32(pb.add(i)));
+                a1 = vfmaq_f32(a1, vld1q_f32(pa.add(i + 4)), vld1q_f32(pb.add(i + 4)));
+                a2 = vfmaq_f32(a2, vld1q_f32(pa.add(i + 8)), vld1q_f32(pb.add(i + 8)));
+                a3 = vfmaq_f32(a3, vld1q_f32(pa.add(i + 12)), vld1q_f32(pb.add(i + 12)));
+                i += 16;
+            }
+            while i + 4 <= n {
+                a0 = vfmaq_f32(a0, vld1q_f32(pa.add(i)), vld1q_f32(pb.add(i)));
+                i += 4;
+            }
+            let mut s = vaddvq_f32(vaddq_f32(vaddq_f32(a0, a1), vaddq_f32(a2, a3)));
+            while i < n {
+                s += *pa.add(i) * *pb.add(i);
+                i += 1;
+            }
+            s
         }
-        while i + 4 <= n { a0 = vfmaq_f32(a0, vld1q_f32(pa.add(i)), vld1q_f32(pb.add(i))); i += 4; }
-        let mut s = vaddvq_f32(vaddq_f32(vaddq_f32(a0, a1), vaddq_f32(a2, a3)));
-        while i < n { s += *pa.add(i) * *pb.add(i); i += 1; }
-        s
-    } }
-    unsafe fn sumsq_neon(a: &[f32]) -> f32 { unsafe { dot_neon(a, a) } }
+    }
+    unsafe fn sumsq_neon(a: &[f32]) -> f32 {
+        unsafe { dot_neon(a, a) }
+    }
 
-    unsafe fn max_neon(a: &[f32]) -> f32 { unsafe {
-        let n = a.len();
-        let p = a.as_ptr();
-        let mut acc = vdupq_n_f32(f32::NEG_INFINITY);
-        let mut i = 0;
-        while i + 4 <= n { acc = vmaxnmq_f32(acc, vld1q_f32(p.add(i))); i += 4; } // maxNum: NaN lanes ignored
-        let mut m = vmaxnmvq_f32(acc);
-        while i < n { m = m.max(*p.add(i)); i += 1; }
-        m
-    } }
+    unsafe fn max_neon(a: &[f32]) -> f32 {
+        unsafe {
+            let n = a.len();
+            let p = a.as_ptr();
+            let mut acc = vdupq_n_f32(f32::NEG_INFINITY);
+            let mut i = 0;
+            while i + 4 <= n {
+                acc = vmaxnmq_f32(acc, vld1q_f32(p.add(i)));
+                i += 4;
+            } // maxNum: NaN lanes ignored
+            let mut m = vmaxnmvq_f32(acc);
+            while i < n {
+                m = m.max(*p.add(i));
+                i += 1;
+            }
+            m
+        }
+    }
 
-    unsafe fn axpy_neon(a: f32, x: &[f32], y: &mut [f32]) { gen_loops::axpy::<true>(a, x, y) }
-    unsafe fn scale_neon(x: &mut [f32], k: f32) { gen_loops::scale(x, k) }
-    unsafe fn mul3_neon(x: &[f32], w: &[f32], k: f32, o: &mut [f32]) { gen_loops::mul3(x, w, k, o) }
-    unsafe fn rope_neon(h: &mut [f32], c: &[f32], s: &[f32]) { gen_loops::rope::<true>(h, c, s) }
-    unsafe fn bf16_neon(s: &[u16], d: &mut [f32]) { gen_loops::bf16(s, d) }
+    unsafe fn axpy_neon(a: f32, x: &[f32], y: &mut [f32]) {
+        gen_loops::axpy::<true>(a, x, y)
+    }
+    unsafe fn scale_neon(x: &mut [f32], k: f32) {
+        gen_loops::scale(x, k)
+    }
+    unsafe fn mul3_neon(x: &[f32], w: &[f32], k: f32, o: &mut [f32]) {
+        gen_loops::mul3(x, w, k, o)
+    }
+    unsafe fn rope_neon(h: &mut [f32], c: &[f32], s: &[f32]) {
+        gen_loops::rope::<true>(h, c, s)
+    }
+    unsafe fn bf16_neon(s: &[u16], d: &mut [f32]) {
+        gen_loops::bf16(s, d)
+    }
 
     #[inline]
-    unsafe fn exp_q(x: float32x4_t) -> float32x4_t { unsafe {
-        let lt = vcltq_f32(x, vdupq_n_f32(EXP_LO));
-        // vminq/vmaxq propagate NaN (unlike vminnm/vmaxnm)
-        let xc = vmaxq_f32(vdupq_n_f32(EXP_LO), vminq_f32(vdupq_n_f32(EXP_HI), x));
-        let n = vrndnq_f32(vmulq_f32(xc, vdupq_n_f32(LOG2E)));
-        let r = vfmsq_f32(xc, n, vdupq_n_f32(LN2_HI));
-        let r = vfmsq_f32(r, n, vdupq_n_f32(LN2_LO));
-        let mut p = vdupq_n_f32(C7);
-        p = vfmaq_f32(vdupq_n_f32(C6), p, r);
-        p = vfmaq_f32(vdupq_n_f32(C5), p, r);
-        p = vfmaq_f32(vdupq_n_f32(C4), p, r);
-        p = vfmaq_f32(vdupq_n_f32(C3), p, r);
-        p = vfmaq_f32(vdupq_n_f32(C2), p, r);
-        p = vfmaq_f32(vdupq_n_f32(1.0), p, r);
-        p = vfmaq_f32(vdupq_n_f32(1.0), p, r);
-        let e = vshlq_n_s32::<23>(vaddq_s32(vcvtq_s32_f32(n), vdupq_n_s32(127)));
-        let v = vmulq_f32(p, vreinterpretq_f32_s32(e));
-        vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v), lt))
-    } }
-
-    unsafe fn exp_neon(x: &mut [f32], m: f32) -> f32 { unsafe {
-        let n = x.len();
-        let p = x.as_mut_ptr();
-        let mv = vdupq_n_f32(m);
-        let mut acc = vdupq_n_f32(0.0);
-        let mut i = 0;
-        while i + 4 <= n {
-            let e = exp_q(vsubq_f32(vld1q_f32(p.add(i)), mv));
-            vst1q_f32(p.add(i), e);
-            acc = vaddq_f32(acc, e);
-            i += 4;
+    unsafe fn exp_q(x: float32x4_t) -> float32x4_t {
+        unsafe {
+            let lt = vcltq_f32(x, vdupq_n_f32(EXP_LO));
+            // vminq/vmaxq propagate NaN (unlike vminnm/vmaxnm)
+            let xc = vmaxq_f32(vdupq_n_f32(EXP_LO), vminq_f32(vdupq_n_f32(EXP_HI), x));
+            let n = vrndnq_f32(vmulq_f32(xc, vdupq_n_f32(LOG2E)));
+            let r = vfmsq_f32(xc, n, vdupq_n_f32(LN2_HI));
+            let r = vfmsq_f32(r, n, vdupq_n_f32(LN2_LO));
+            let mut p = vdupq_n_f32(C7);
+            p = vfmaq_f32(vdupq_n_f32(C6), p, r);
+            p = vfmaq_f32(vdupq_n_f32(C5), p, r);
+            p = vfmaq_f32(vdupq_n_f32(C4), p, r);
+            p = vfmaq_f32(vdupq_n_f32(C3), p, r);
+            p = vfmaq_f32(vdupq_n_f32(C2), p, r);
+            p = vfmaq_f32(vdupq_n_f32(1.0), p, r);
+            p = vfmaq_f32(vdupq_n_f32(1.0), p, r);
+            let e = vshlq_n_s32::<23>(vaddq_s32(vcvtq_s32_f32(n), vdupq_n_s32(127)));
+            let v = vmulq_f32(p, vreinterpretq_f32_s32(e));
+            vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v), lt))
         }
-        let mut s = vaddvq_f32(acc);
-        while i < n { let e = scalar::exp_poly(*p.add(i) - m); *p.add(i) = e; s += e; i += 1; }
-        s
-    } }
+    }
 
-    unsafe fn silu_neon(g: &mut [f32], u: &[f32]) { unsafe {
-        let n = g.len();
-        let (pg, pu) = (g.as_mut_ptr(), u.as_ptr());
-        let one = vdupq_n_f32(1.0);
-        let mut i = 0;
-        while i + 4 <= n {
-            let v = vld1q_f32(pg.add(i));
-            let d = vaddq_f32(one, exp_q(vnegq_f32(v)));
-            vst1q_f32(pg.add(i), vmulq_f32(vdivq_f32(v, d), vld1q_f32(pu.add(i))));
-            i += 4;
+    unsafe fn exp_neon(x: &mut [f32], m: f32) -> f32 {
+        unsafe {
+            let n = x.len();
+            let p = x.as_mut_ptr();
+            let mv = vdupq_n_f32(m);
+            let mut acc = vdupq_n_f32(0.0);
+            let mut i = 0;
+            while i + 4 <= n {
+                let e = exp_q(vsubq_f32(vld1q_f32(p.add(i)), mv));
+                vst1q_f32(p.add(i), e);
+                acc = vaddq_f32(acc, e);
+                i += 4;
+            }
+            let mut s = vaddvq_f32(acc);
+            while i < n {
+                let e = scalar::exp_poly(*p.add(i) - m);
+                *p.add(i) = e;
+                s += e;
+                i += 1;
+            }
+            s
         }
-        while i < n { *pg.add(i) = scalar::silu_poly(*pg.add(i), *pu.add(i)); i += 1; }
-    } }
+    }
+
+    unsafe fn silu_neon(g: &mut [f32], u: &[f32]) {
+        unsafe {
+            let n = g.len();
+            let (pg, pu) = (g.as_mut_ptr(), u.as_ptr());
+            let one = vdupq_n_f32(1.0);
+            let mut i = 0;
+            while i + 4 <= n {
+                let v = vld1q_f32(pg.add(i));
+                let d = vaddq_f32(one, exp_q(vnegq_f32(v)));
+                vst1q_f32(pg.add(i), vmulq_f32(vdivq_f32(v, d), vld1q_f32(pu.add(i))));
+                i += 4;
+            }
+            while i < n {
+                *pg.add(i) = scalar::silu_poly(*pg.add(i), *pu.add(i));
+                i += 1;
+            }
+        }
+    }
 
     /// `fcvtl` widens four binary16 lanes exactly; it is part of base ARMv8 (no fp16 extension needed).
-    unsafe fn f16_neon(s: &[u16], d: &mut [f32]) { unsafe {
-        let n = s.len();
-        let (ps, pd) = (s.as_ptr(), d.as_mut_ptr());
-        let mut i = 0;
-        while i + 4 <= n {
-            let h: uint16x4_t = vld1_u16(ps.add(i));
-            let r: float32x4_t;
-            std::arch::asm!("fcvtl {r:v}.4s, {h:v}.4h", r = lateout(vreg) r, h = in(vreg) h, options(pure, nomem, nostack));
-            vst1q_f32(pd.add(i), r);
-            i += 4;
+    unsafe fn f16_neon(s: &[u16], d: &mut [f32]) {
+        unsafe {
+            let n = s.len();
+            let (ps, pd) = (s.as_ptr(), d.as_mut_ptr());
+            let mut i = 0;
+            while i + 4 <= n {
+                let h: uint16x4_t = vld1_u16(ps.add(i));
+                let r: float32x4_t;
+                std::arch::asm!("fcvtl {r:v}.4s, {h:v}.4h", r = lateout(vreg) r, h = in(vreg) h, options(pure, nomem, nostack));
+                vst1q_f32(pd.add(i), r);
+                i += 4;
+            }
+            while i < n {
+                *pd.add(i) = scalar::f16_to_f32(*ps.add(i));
+                i += 1;
+            }
         }
-        while i < n { *pd.add(i) = scalar::f16_to_f32(*ps.add(i)); i += 1; }
-    } }
+    }
 
     /// Baseline NEON, exact: widening 8×8→16 multiplies, pairwise-accumulated into 32 bits.
-    unsafe fn dot_i8_neon(a: &[i8], b: &[i8]) -> i32 { unsafe {
-        let n = a.len();
-        let (pa, pb) = (a.as_ptr(), b.as_ptr());
-        let mut acc = vdupq_n_s32(0);
-        let mut i = 0;
-        while i + 16 <= n {
-            let (x, y) = (vld1q_s8(pa.add(i)), vld1q_s8(pb.add(i)));
-            acc = vpadalq_s16(acc, vmull_s8(vget_low_s8(x), vget_low_s8(y)));
-            acc = vpadalq_s16(acc, vmull_high_s8(x, y));
-            i += 16;
+    unsafe fn dot_i8_neon(a: &[i8], b: &[i8]) -> i32 {
+        unsafe {
+            let n = a.len();
+            let (pa, pb) = (a.as_ptr(), b.as_ptr());
+            let mut acc = vdupq_n_s32(0);
+            let mut i = 0;
+            while i + 16 <= n {
+                let (x, y) = (vld1q_s8(pa.add(i)), vld1q_s8(pb.add(i)));
+                acc = vpadalq_s16(acc, vmull_s8(vget_low_s8(x), vget_low_s8(y)));
+                acc = vpadalq_s16(acc, vmull_high_s8(x, y));
+                i += 16;
+            }
+            let mut s = vaddvq_s32(acc);
+            while i < n {
+                s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32);
+                i += 1;
+            }
+            s
         }
-        let mut s = vaddvq_s32(acc);
-        while i < n { s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32); i += 1; }
-        s
-    } }
+    }
 
     /// `sdot`: four signed 8-bit products summed into each 32-bit lane.
     #[inline]
     #[target_feature(enable = "dotprod")]
-    unsafe fn sdot(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t { unsafe {
-        let mut acc = acc;
-        std::arch::asm!(
-            ".arch_extension dotprod",
-            "sdot {acc:v}.4s, {a:v}.16b, {b:v}.16b",
-            acc = inout(vreg) acc, a = in(vreg) a, b = in(vreg) b,
-            options(pure, nomem, nostack)
-        );
-        acc
-    } }
+    unsafe fn sdot(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
+        unsafe {
+            let mut acc = acc;
+            std::arch::asm!(
+                ".arch_extension dotprod",
+                "sdot {acc:v}.4s, {a:v}.16b, {b:v}.16b",
+                acc = inout(vreg) acc, a = in(vreg) a, b = in(vreg) b,
+                options(pure, nomem, nostack)
+            );
+            acc
+        }
+    }
 
     #[target_feature(enable = "dotprod")]
-    unsafe fn dot_i8_dot(a: &[i8], b: &[i8]) -> i32 { unsafe {
-        let n = a.len();
-        let (pa, pb) = (a.as_ptr(), b.as_ptr());
-        let (mut a0, mut a1) = (vdupq_n_s32(0), vdupq_n_s32(0));
-        let mut i = 0;
-        while i + 32 <= n {
-            a0 = sdot(a0, vld1q_s8(pa.add(i)), vld1q_s8(pb.add(i)));
-            a1 = sdot(a1, vld1q_s8(pa.add(i + 16)), vld1q_s8(pb.add(i + 16)));
-            i += 32;
+    unsafe fn dot_i8_dot(a: &[i8], b: &[i8]) -> i32 {
+        unsafe {
+            let n = a.len();
+            let (pa, pb) = (a.as_ptr(), b.as_ptr());
+            let (mut a0, mut a1) = (vdupq_n_s32(0), vdupq_n_s32(0));
+            let mut i = 0;
+            while i + 32 <= n {
+                a0 = sdot(a0, vld1q_s8(pa.add(i)), vld1q_s8(pb.add(i)));
+                a1 = sdot(a1, vld1q_s8(pa.add(i + 16)), vld1q_s8(pb.add(i + 16)));
+                i += 32;
+            }
+            while i + 16 <= n {
+                a0 = sdot(a0, vld1q_s8(pa.add(i)), vld1q_s8(pb.add(i)));
+                i += 16;
+            }
+            let mut s = vaddvq_s32(vaddq_s32(a0, a1));
+            while i < n {
+                s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32);
+                i += 1;
+            }
+            s
         }
-        while i + 16 <= n { a0 = sdot(a0, vld1q_s8(pa.add(i)), vld1q_s8(pb.add(i))); i += 16; }
-        let mut s = vaddvq_s32(vaddq_s32(a0, a1));
-        while i < n { s = s.wrapping_add(*pa.add(i) as i32 * *pb.add(i) as i32); i += 1; }
-        s
-    } }
+    }
 
     /// (nibble − 8) as signed bytes in element order.
     #[inline]
-    unsafe fn q4_signed(qs: *const u8) -> (int8x16_t, int8x16_t) { unsafe {
-        let v = vld1q_u8(qs);
-        let eight = vdupq_n_s8(8);
-        let lo = vsubq_s8(vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0x0f))), eight);
-        let hi = vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8::<4>(v)), eight);
-        (lo, hi)
-    } }
+    unsafe fn q4_signed(qs: *const u8) -> (int8x16_t, int8x16_t) {
+        unsafe {
+            let v = vld1q_u8(qs);
+            let eight = vdupq_n_s8(8);
+            let lo = vsubq_s8(vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0x0f))), eight);
+            let hi = vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8::<4>(v)), eight);
+            (lo, hi)
+        }
+    }
 
-    unsafe fn q4blk_neon(qs: *const u8, y: *const i8) -> i32 { unsafe {
-        let (lo, hi) = q4_signed(qs);
-        let (y0, y1) = (vld1q_s8(y), vld1q_s8(y.add(16)));
-        let mut acc = vdupq_n_s32(0);
-        acc = vpadalq_s16(acc, vmull_s8(vget_low_s8(lo), vget_low_s8(y0)));
-        acc = vpadalq_s16(acc, vmull_high_s8(lo, y0));
-        acc = vpadalq_s16(acc, vmull_s8(vget_low_s8(hi), vget_low_s8(y1)));
-        acc = vpadalq_s16(acc, vmull_high_s8(hi, y1));
-        vaddvq_s32(acc)
-    } }
+    unsafe fn q4blk_neon(qs: *const u8, y: *const i8) -> i32 {
+        unsafe {
+            let (lo, hi) = q4_signed(qs);
+            let (y0, y1) = (vld1q_s8(y), vld1q_s8(y.add(16)));
+            let mut acc = vdupq_n_s32(0);
+            acc = vpadalq_s16(acc, vmull_s8(vget_low_s8(lo), vget_low_s8(y0)));
+            acc = vpadalq_s16(acc, vmull_high_s8(lo, y0));
+            acc = vpadalq_s16(acc, vmull_s8(vget_low_s8(hi), vget_low_s8(y1)));
+            acc = vpadalq_s16(acc, vmull_high_s8(hi, y1));
+            vaddvq_s32(acc)
+        }
+    }
 
     #[target_feature(enable = "dotprod")]
-    unsafe fn q4blk_dot(qs: *const u8, y: *const i8) -> i32 { unsafe {
-        let (lo, hi) = q4_signed(qs);
-        let z = vdupq_n_s32(0);
-        vaddvq_s32(sdot(sdot(z, lo, vld1q_s8(y)), hi, vld1q_s8(y.add(16))))
-    } }
+    unsafe fn q4blk_dot(qs: *const u8, y: *const i8) -> i32 {
+        unsafe {
+            let (lo, hi) = q4_signed(qs);
+            let z = vdupq_n_s32(0);
+            vaddvq_s32(sdot(sdot(z, lo, vld1q_s8(y)), hi, vld1q_s8(y.add(16))))
+        }
+    }
 
-    unsafe fn q4row_neon(w: *const u8, a: *const u8, n: usize) -> f32 { unsafe {
-        let mut acc = 0f32;
-        for b in 0..n {
-            let (wp, ap) = (w.add(b * 18), a.add(b * 34));
-            let d = scalar::f16_to_f32(u16::from_le_bytes([*wp, *wp.add(1)])) * scalar::f16_to_f32(u16::from_le_bytes([*ap, *ap.add(1)]));
-            acc = d.mul_add(q4blk_neon(wp.add(2), ap.add(2) as *const i8) as f32, acc);
+    unsafe fn q4row_neon(w: *const u8, a: *const u8, n: usize) -> f32 {
+        unsafe {
+            let mut acc = 0f32;
+            for b in 0..n {
+                let (wp, ap) = (w.add(b * 18), a.add(b * 34));
+                let d = scalar::f16_to_f32(u16::from_le_bytes([*wp, *wp.add(1)]))
+                    * scalar::f16_to_f32(u16::from_le_bytes([*ap, *ap.add(1)]));
+                acc = d.mul_add(q4blk_neon(wp.add(2), ap.add(2) as *const i8) as f32, acc);
+            }
+            acc
         }
-        acc
-    } }
+    }
     #[target_feature(enable = "dotprod")]
-    unsafe fn q4row_dot(w: *const u8, a: *const u8, n: usize) -> f32 { unsafe {
-        let mut acc = 0f32;
-        for b in 0..n {
-            let (wp, ap) = (w.add(b * 18), a.add(b * 34));
-            let d = scalar::f16_to_f32(u16::from_le_bytes([*wp, *wp.add(1)])) * scalar::f16_to_f32(u16::from_le_bytes([*ap, *ap.add(1)]));
-            acc = d.mul_add(q4blk_dot(wp.add(2), ap.add(2) as *const i8) as f32, acc);
+    unsafe fn q4row_dot(w: *const u8, a: *const u8, n: usize) -> f32 {
+        unsafe {
+            let mut acc = 0f32;
+            for b in 0..n {
+                let (wp, ap) = (w.add(b * 18), a.add(b * 34));
+                let d = scalar::f16_to_f32(u16::from_le_bytes([*wp, *wp.add(1)]))
+                    * scalar::f16_to_f32(u16::from_le_bytes([*ap, *ap.add(1)]));
+                acc = d.mul_add(q4blk_dot(wp.add(2), ap.add(2) as *const i8) as f32, acc);
+            }
+            acc
         }
-        acc
-    } }
+    }
 
     shim_dot!(s_dot_neon, dot_neon);
     shim_unary!(s_sumsq_neon, sumsq_neon);
@@ -1365,15 +1990,27 @@ mod arm {
 
 /// Test helper: f32 → little-endian binary16 bytes (round to nearest even, normal range only).
 #[cfg(test)]
-trait ToHalf { fn to_le_bytes_f16(self) -> [u8; 2]; }
+trait ToHalf {
+    fn to_le_bytes_f16(self) -> [u8; 2];
+}
 #[cfg(test)]
 impl ToHalf for f32 {
     fn to_le_bytes_f16(self) -> [u8; 2] {
         let b = self.to_bits();
-        let (s, e, m) = ((b >> 16) & 0x8000, ((b >> 23) & 0xff) as i32 - 127 + 15, b & 0x7f_ffff);
-        let h = if e <= 0 { s } else if e >= 31 { s | 0x7c00 } else {
+        let (s, e, m) = (
+            (b >> 16) & 0x8000,
+            ((b >> 23) & 0xff) as i32 - 127 + 15,
+            b & 0x7f_ffff,
+        );
+        let h = if e <= 0 {
+            s
+        } else if e >= 31 {
+            s | 0x7c00
+        } else {
             let mut h = s | ((e as u32) << 10) | (m >> 13);
-            if m & 0x1000 != 0 && (m & 0x2fff) != 0 { h += 1; }
+            if m & 0x1000 != 0 && (m & 0x2fff) != 0 {
+                h += 1;
+            }
             h
         };
         (h as u16).to_le_bytes()
@@ -1389,20 +2026,38 @@ mod tests {
 
     struct Rng(u64);
     impl Rng {
-        fn next(&mut self) -> u64 { self.0 ^= self.0 << 13; self.0 ^= self.0 >> 7; self.0 ^= self.0 << 17; self.0 }
-        fn unit(&mut self) -> f32 { (self.next() >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0 }
-        fn vec(&mut self, n: usize, scale: f32) -> Vec<f32> { (0..n).map(|_| self.unit() * scale).collect() }
-        fn i8s(&mut self, n: usize) -> Vec<i8> { (0..n).map(|_| (self.next() >> 56) as u8 as i8).collect() }
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn unit(&mut self) -> f32 {
+            (self.next() >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0
+        }
+        fn vec(&mut self, n: usize, scale: f32) -> Vec<f32> {
+            (0..n).map(|_| self.unit() * scale).collect()
+        }
+        fn i8s(&mut self, n: usize) -> Vec<i8> {
+            (0..n).map(|_| (self.next() >> 56) as u8 as i8).collect()
+        }
     }
 
     const LENS: [usize; 9] = [131, 160, 255, 256, 257, 511, 512, 1000, 4097];
-    fn lens() -> impl Iterator<Item = usize> { (0..=130).chain(LENS) }
+    fn lens() -> impl Iterator<Item = usize> {
+        (0..=130).chain(LENS)
+    }
 
     #[test]
     fn variants_are_listed_and_the_active_one_is_among_them() {
         let all = available();
         assert_eq!(all[0].name, "scalar");
-        assert!(all.iter().any(|k| k.name == active()), "{} not in {:?}", active(), all.iter().map(|k| k.name).collect::<Vec<_>>());
+        assert!(
+            all.iter().any(|k| k.name == active()),
+            "{} not in {:?}",
+            active(),
+            all.iter().map(|k| k.name).collect::<Vec<_>>()
+        );
         let mut names: Vec<_> = all.iter().map(|k| k.name).collect();
         names.dedup();
         assert_eq!(names.len(), all.len());
@@ -1412,12 +2067,23 @@ mod tests {
     #[test]
     fn every_detected_x86_feature_gives_a_variant() {
         let names: Vec<_> = available().iter().map(|k| k.name).collect();
-        let avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") && is_x86_feature_detected!("f16c");
+        let avx2 = is_x86_feature_detected!("avx2")
+            && is_x86_feature_detected!("fma")
+            && is_x86_feature_detected!("f16c");
         assert_eq!(names.contains(&"avx2+fma"), avx2);
-        assert_eq!(names.contains(&"avx2+fma+avxvnni"), avx2 && is_x86_feature_detected!("avxvnni"));
-        let a512 = avx2 && is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") && is_x86_feature_detected!("avx512vl");
+        assert_eq!(
+            names.contains(&"avx2+fma+avxvnni"),
+            avx2 && is_x86_feature_detected!("avxvnni")
+        );
+        let a512 = avx2
+            && is_x86_feature_detected!("avx512f")
+            && is_x86_feature_detected!("avx512bw")
+            && is_x86_feature_detected!("avx512vl");
         assert_eq!(names.contains(&"avx512"), a512);
-        assert_eq!(names.contains(&"avx512+vnni"), a512 && is_x86_feature_detected!("avx512vnni"));
+        assert_eq!(
+            names.contains(&"avx512+vnni"),
+            a512 && is_x86_feature_detected!("avx512vnni")
+        );
     }
 
     #[test]
@@ -1430,12 +2096,24 @@ mod tests {
                 for off in 0..3 {
                     let (a, b) = (&a[off..off + n], &b[off..off + n]);
                     let want: f64 = a.iter().zip(b).map(|(x, y)| *x as f64 * *y as f64).sum();
-                    let mag: f64 = a.iter().zip(b).map(|(x, y)| (*x as f64 * *y as f64).abs()).sum();
+                    let mag: f64 = a
+                        .iter()
+                        .zip(b)
+                        .map(|(x, y)| (*x as f64 * *y as f64).abs())
+                        .sum();
                     let got = (k.dot_f32)(a, b) as f64;
-                    assert!((got - want).abs() <= 2e-6 * mag + 1e-30, "{} dot n={n} off={off}: {got} vs {want}", k.name);
+                    assert!(
+                        (got - want).abs() <= 2e-6 * mag + 1e-30,
+                        "{} dot n={n} off={off}: {got} vs {want}",
+                        k.name
+                    );
                     let want: f64 = a.iter().map(|x| (*x as f64).powi(2)).sum();
                     let got = (k.sumsq)(a) as f64;
-                    assert!((got - want).abs() <= 2e-6 * want + 1e-30, "{} sumsq n={n}", k.name);
+                    assert!(
+                        (got - want).abs() <= 2e-6 * want + 1e-30,
+                        "{} sumsq n={n}",
+                        k.name
+                    );
                 }
             }
         }
@@ -1454,7 +2132,11 @@ mod tests {
                 }
                 let want = scalar::max(&v);
                 let got = (k.max)(&v);
-                assert!(got == want || (got.is_nan() && want.is_nan()), "{} max n={n}: {got} vs {want}", k.name);
+                assert!(
+                    got == want || (got.is_nan() && want.is_nan()),
+                    "{} max n={n}: {got} vs {want}",
+                    k.name
+                );
             }
             assert_eq!((k.max)(&[]), f32::NEG_INFINITY);
             assert_eq!((k.max)(&[f32::NAN; 40]), f32::NEG_INFINITY);
@@ -1471,13 +2153,24 @@ mod tests {
                 let y0 = r.vec(n, 3.0);
                 let mut y = y0.clone();
                 (k.axpy)(0.37, &x, &mut y);
-                for i in 0..n { assert!((y[i] - (y0[i] + 0.37 * x[i])).abs() <= 1e-6 * (y0[i].abs() + x[i].abs() + 1.0), "{} axpy", k.name); }
+                for i in 0..n {
+                    assert!(
+                        (y[i] - (y0[i] + 0.37 * x[i])).abs()
+                            <= 1e-6 * (y0[i].abs() + x[i].abs() + 1.0),
+                        "{} axpy",
+                        k.name
+                    );
+                }
                 let mut s = x.clone();
                 (k.scale)(&mut s, -1.25);
-                for i in 0..n { assert_eq!(s[i], x[i] * -1.25, "{} scale", k.name); }
+                for i in 0..n {
+                    assert_eq!(s[i], x[i] * -1.25, "{} scale", k.name);
+                }
                 let mut o = vec![9.0; n];
                 (k.mul3)(&x, &w, 0.5, &mut o);
-                for i in 0..n { assert_eq!(o[i], x[i] * 0.5 * w[i], "{} mul3", k.name); }
+                for i in 0..n {
+                    assert_eq!(o[i], x[i] * 0.5 * w[i], "{} mul3", k.name);
+                }
             }
             // unequal lengths: only the common prefix is touched
             let mut y = vec![1.0f32; 10];
@@ -1510,15 +2203,33 @@ mod tests {
             let mut r = Rng(9);
             for n in lens() {
                 let mut x = r.vec(n, 20.0);
-                if n > 6 { x[2] = f32::NEG_INFINITY; x[4] = -1000.0; }
+                if n > 6 {
+                    x[2] = f32::NEG_INFINITY;
+                    x[4] = -1000.0;
+                }
                 let m = scalar::max(&x);
                 let want: Vec<f64> = x.iter().map(|v| ((*v - m) as f64).exp()).collect();
                 let want_sum: f64 = want.iter().sum();
                 let mut got = x.clone();
                 let sum = (k.exp_sub_sum)(&mut got, m) as f64;
-                for i in 0..n { assert!((got[i] as f64 - want[i]).abs() <= 1e-6 * want[i] + 1e-37, "{} exp n={n} i={i}: {} vs {}", k.name, got[i], want[i]); }
-                assert!((sum - want_sum).abs() <= 2e-6 * want_sum + 1e-30, "{} sum n={n}", k.name);
-                if n > 6 { assert_eq!(got[2], 0.0); assert_eq!(got[4], 0.0); }
+                for i in 0..n {
+                    assert!(
+                        (got[i] as f64 - want[i]).abs() <= 1e-6 * want[i] + 1e-37,
+                        "{} exp n={n} i={i}: {} vs {}",
+                        k.name,
+                        got[i],
+                        want[i]
+                    );
+                }
+                assert!(
+                    (sum - want_sum).abs() <= 2e-6 * want_sum + 1e-30,
+                    "{} sum n={n}",
+                    k.name
+                );
+                if n > 6 {
+                    assert_eq!(got[2], 0.0);
+                    assert_eq!(got[4], 0.0);
+                }
             }
             let mut v = [f32::NAN, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
             (k.exp_sub_sum)(&mut v, 0.0);
@@ -1532,13 +2243,27 @@ mod tests {
             let mut r = Rng(31);
             for n in lens() {
                 let mut g = r.vec(n, 12.0);
-                if n > 8 { g[1] = -100.0; g[3] = 100.0; g[5] = 0.0; }
+                if n > 8 {
+                    g[1] = -100.0;
+                    g[3] = 100.0;
+                    g[5] = 0.0;
+                }
                 let u = r.vec(n, 2.0);
-                let want: Vec<f64> = g.iter().zip(&u).map(|(g, u)| *g as f64 / (1.0 + (-(*g as f64)).exp()) * *u as f64).collect();
+                let want: Vec<f64> = g
+                    .iter()
+                    .zip(&u)
+                    .map(|(g, u)| *g as f64 / (1.0 + (-(*g as f64)).exp()) * *u as f64)
+                    .collect();
                 let mut got = g.clone();
                 (k.silu_mul)(&mut got, &u);
                 for i in 0..n {
-                    assert!((got[i] as f64 - want[i]).abs() <= 3e-6 * want[i].abs() + 1e-30, "{} silu n={n} i={i}: {} vs {}", k.name, got[i], want[i]);
+                    assert!(
+                        (got[i] as f64 - want[i]).abs() <= 3e-6 * want[i].abs() + 1e-30,
+                        "{} silu n={n} i={i}: {} vs {}",
+                        k.name,
+                        got[i],
+                        want[i]
+                    );
                 }
             }
         }
@@ -1558,10 +2283,22 @@ mod tests {
                     for i in 0..half {
                         let (a, b) = (h0[i] as f64, h0[i + half] as f64);
                         let (cc, ss) = (c[i] as f64, s[i] as f64);
-                        assert!((h[i] as f64 - (a * cc - b * ss)).abs() < 1e-6 * (a.abs() + b.abs() + 1.0), "{} rope", k.name);
-                        assert!((h[i + half] as f64 - (a * ss + b * cc)).abs() < 1e-6 * (a.abs() + b.abs() + 1.0), "{} rope", k.name);
+                        assert!(
+                            (h[i] as f64 - (a * cc - b * ss)).abs()
+                                < 1e-6 * (a.abs() + b.abs() + 1.0),
+                            "{} rope",
+                            k.name
+                        );
+                        assert!(
+                            (h[i + half] as f64 - (a * ss + b * cc)).abs()
+                                < 1e-6 * (a.abs() + b.abs() + 1.0),
+                            "{} rope",
+                            k.name
+                        );
                     }
-                    if extra == 1 { assert_eq!(h[2 * half], h0[2 * half]); }
+                    if extra == 1 {
+                        assert_eq!(h[2 * half], h0[2 * half]);
+                    }
                 }
             }
             // tables longer than the head: only what fits is rotated, nothing panics
@@ -1581,10 +2318,16 @@ mod tests {
                 (k.f16_to_f32)(src, &mut got);
                 for (i, (&h, &g)) in src.iter().zip(&got).enumerate() {
                     let want = scalar::f16_to_f32(h);
-                    assert!(g.to_bits() == want.to_bits() || (g.is_nan() && want.is_nan()), "{} f16 {h:#06x} at {i}: {g} vs {want}", k.name);
+                    assert!(
+                        g.to_bits() == want.to_bits() || (g.is_nan() && want.is_nan()),
+                        "{} f16 {h:#06x} at {i}: {g} vs {want}",
+                        k.name
+                    );
                 }
                 (k.bf16_to_f32)(src, &mut got);
-                for (&h, &g) in src.iter().zip(&got) { assert_eq!(g.to_bits(), (h as u32) << 16, "{} bf16", k.name); }
+                for (&h, &g) in src.iter().zip(&got) {
+                    assert_eq!(g.to_bits(), (h as u32) << 16, "{} bf16", k.name);
+                }
             }
             // shorter destination: only that much is written
             let mut d = [7.0f32; 3];
@@ -1597,11 +2340,19 @@ mod tests {
     fn the_scalar_f16_decoder_agrees_with_the_quant_module() {
         for h in 0..=u16::MAX {
             let (a, b) = (scalar::f16_to_f32(h), crate::quant::f16_to_f32(h));
-            assert!(a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan()), "{h:#06x}");
+            assert!(
+                a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan()),
+                "{h:#06x}"
+            );
         }
     }
 
-    fn dot_ref(a: &[i8], b: &[i8]) -> i32 { a.iter().zip(b).map(|(x, y)| *x as i64 * *y as i64).sum::<i64>() as i32 }
+    fn dot_ref(a: &[i8], b: &[i8]) -> i32 {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| *x as i64 * *y as i64)
+            .sum::<i64>() as i32
+    }
 
     #[test]
     fn integer_dot_is_exact_including_the_extremes() {
@@ -1611,11 +2362,27 @@ mod tests {
                 let a = r.i8s(n + 2);
                 let b = r.i8s(n + 2);
                 for off in 0..2 {
-                    assert_eq!((k.dot_i8)(&a[off..off + n], &b[off..off + n]), dot_ref(&a[off..off + n], &b[off..off + n]), "{} i8 n={n}", k.name);
+                    assert_eq!(
+                        (k.dot_i8)(&a[off..off + n], &b[off..off + n]),
+                        dot_ref(&a[off..off + n], &b[off..off + n]),
+                        "{} i8 n={n}",
+                        k.name
+                    );
                 }
-                for (x, y) in [(-128i8, -128i8), (-128, 127), (127, 127), (0, -128), (127, -128)] {
+                for (x, y) in [
+                    (-128i8, -128i8),
+                    (-128, 127),
+                    (127, 127),
+                    (0, -128),
+                    (127, -128),
+                ] {
                     let (a, b) = (vec![x; n], vec![y; n]);
-                    assert_eq!((k.dot_i8)(&a, &b), dot_ref(&a, &b), "{} i8 {x}*{y} n={n}", k.name);
+                    assert_eq!(
+                        (k.dot_i8)(&a, &b),
+                        dot_ref(&a, &b),
+                        "{} i8 {x}*{y} n={n}",
+                        k.name
+                    );
                 }
             }
             assert_eq!((k.dot_i8)(&[1, 2, 3], &[4, 5]), 14); // common prefix
@@ -1628,30 +2395,61 @@ mod tests {
             let mut r = Rng(88);
             for _ in 0..300 {
                 let mut qs = [0u8; 16];
-                for q in &mut qs { *q = (r.next() >> 56) as u8; }
+                for q in &mut qs {
+                    *q = (r.next() >> 56) as u8;
+                }
                 let mut y = [0i8; 32];
-                for v in &mut y { *v = (r.next() >> 56) as u8 as i8; }
-                assert_eq!((k.q4_0_block)(&qs, &y), scalar::q4_0_block(&qs, &y), "{} q4 block", k.name);
+                for v in &mut y {
+                    *v = (r.next() >> 56) as u8 as i8;
+                }
+                assert_eq!(
+                    (k.q4_0_block)(&qs, &y),
+                    scalar::q4_0_block(&qs, &y),
+                    "{} q4 block",
+                    k.name
+                );
             }
-            for (qs, y) in [([0x00u8; 16], [-128i8; 32]), ([0xffu8; 16], [-128i8; 32]), ([0xffu8; 16], [127i8; 32]), ([0x0fu8; 16], [127i8; 32])] {
-                assert_eq!((k.q4_0_block)(&qs, &y), scalar::q4_0_block(&qs, &y), "{} q4 extremes", k.name);
+            for (qs, y) in [
+                ([0x00u8; 16], [-128i8; 32]),
+                ([0xffu8; 16], [-128i8; 32]),
+                ([0xffu8; 16], [127i8; 32]),
+                ([0x0fu8; 16], [127i8; 32]),
+            ] {
+                assert_eq!(
+                    (k.q4_0_block)(&qs, &y),
+                    scalar::q4_0_block(&qs, &y),
+                    "{} q4 extremes",
+                    k.name
+                );
             }
             for nb in [0usize, 1, 2, 3, 7, 33] {
                 let (mut w, mut a) = (vec![], vec![]);
                 for _ in 0..nb {
                     w.extend((0.02 + r.unit().abs() * 0.1).to_le_bytes_f16());
-                    for _ in 0..16 { w.push((r.next() >> 56) as u8); }
+                    for _ in 0..16 {
+                        w.push((r.next() >> 56) as u8);
+                    }
                     a.extend((0.01 + r.unit().abs() * 0.1).to_le_bytes_f16());
-                    for _ in 0..32 { a.push((r.next() >> 56) as u8); }
+                    for _ in 0..32 {
+                        a.push((r.next() >> 56) as u8);
+                    }
                 }
                 let want = scalar::q4_0_q8_0_row(&w, &a, nb) as f64;
                 let got = (k.q4_0_q8_0_row)(&w, &a, nb) as f64;
-                let mag: f64 = (0..nb).map(|b| {
-                    let dw = scalar::f16_to_f32(u16::from_le_bytes([w[b * 18], w[b * 18 + 1]])) as f64;
-                    let da = scalar::f16_to_f32(u16::from_le_bytes([a[b * 34], a[b * 34 + 1]])) as f64;
-                    dw * da * 32.0 * 128.0 * 8.0
-                }).sum();
-                assert!((got - want).abs() <= 1e-5 * mag + 1e-9, "{} q4 row nb={nb}: {got} vs {want}", k.name);
+                let mag: f64 = (0..nb)
+                    .map(|b| {
+                        let dw = scalar::f16_to_f32(u16::from_le_bytes([w[b * 18], w[b * 18 + 1]]))
+                            as f64;
+                        let da = scalar::f16_to_f32(u16::from_le_bytes([a[b * 34], a[b * 34 + 1]]))
+                            as f64;
+                        dw * da * 32.0 * 128.0 * 8.0
+                    })
+                    .sum();
+                assert!(
+                    (got - want).abs() <= 1e-5 * mag + 1e-9,
+                    "{} q4 row nb={nb}: {got} vs {want}",
+                    k.name
+                );
             }
         }
     }
@@ -1699,7 +2497,9 @@ mod tests {
 
     // ---------------------------------------------------------------- reproducible mode
 
-    fn bits(v: &[f32]) -> Vec<u32> { v.iter().map(|x| x.to_bits()).collect() }
+    fn bits(v: &[f32]) -> Vec<u32> {
+        v.iter().map(|x| x.to_bits()).collect()
+    }
 
     #[test]
     fn reproducible_float_kernels_are_bit_identical_across_variants() {
@@ -1712,9 +2512,24 @@ mod tests {
                 let b = r.vec(n + 2, 3.0);
                 for off in 0..2 {
                     let (a, b) = (&a[off..off + n], &b[off..off + n]);
-                    assert_eq!((rk.dot_f32)(a, b).to_bits(), (oracle.dot_f32)(a, b).to_bits(), "{} dot n={n}", k.name);
-                    assert_eq!((rk.sumsq)(a).to_bits(), (oracle.sumsq)(a).to_bits(), "{} sumsq n={n}", k.name);
-                    assert_eq!((rk.max)(a).to_bits(), (oracle.max)(a).to_bits(), "{} max n={n}", k.name);
+                    assert_eq!(
+                        (rk.dot_f32)(a, b).to_bits(),
+                        (oracle.dot_f32)(a, b).to_bits(),
+                        "{} dot n={n}",
+                        k.name
+                    );
+                    assert_eq!(
+                        (rk.sumsq)(a).to_bits(),
+                        (oracle.sumsq)(a).to_bits(),
+                        "{} sumsq n={n}",
+                        k.name
+                    );
+                    assert_eq!(
+                        (rk.max)(a).to_bits(),
+                        (oracle.max)(a).to_bits(),
+                        "{} max n={n}",
+                        k.name
+                    );
                     let (mut y1, mut y2) = (b.to_vec(), b.to_vec());
                     (rk.axpy)(0.37, a, &mut y1);
                     (oracle.axpy)(0.37, a, &mut y2);
@@ -1731,7 +2546,10 @@ mod tests {
                     let wide: Vec<f32> = a.iter().map(|v| v * 30.0).collect();
                     let m = (rk.max)(&wide);
                     let (mut e1, mut e2) = (wide.clone(), wide.clone());
-                    let (t1, t2) = ((rk.exp_sub_sum)(&mut e1, m), (oracle.exp_sub_sum)(&mut e2, m));
+                    let (t1, t2) = (
+                        (rk.exp_sub_sum)(&mut e1, m),
+                        (oracle.exp_sub_sum)(&mut e2, m),
+                    );
                     assert_eq!(bits(&e1), bits(&e2), "{} exp n={n}", k.name);
                     assert_eq!(t1.to_bits(), t2.to_bits(), "{} exp sum n={n}", k.name);
                     let (mut g1, mut g2) = (wide.clone(), wide.clone());
@@ -1752,13 +2570,27 @@ mod tests {
                 let (mut f1, mut f2) = (vec![0f32; n], vec![0f32; n]);
                 (rk.f16_to_f32)(&src, &mut f1);
                 (oracle.f16_to_f32)(&src, &mut f2);
-                assert_eq!(bits(&f1).iter().zip(bits(&f2)).filter(|(a, b)| **a != *b && !f32::from_bits(**a).is_nan()).count(), 0, "{} f16 n={n}", k.name);
+                assert_eq!(
+                    bits(&f1)
+                        .iter()
+                        .zip(bits(&f2))
+                        .filter(|(a, b)| **a != *b && !f32::from_bits(**a).is_nan())
+                        .count(),
+                    0,
+                    "{} f16 n={n}",
+                    k.name
+                );
                 (rk.bf16_to_f32)(&src, &mut f1);
                 (oracle.bf16_to_f32)(&src, &mut f2);
                 assert_eq!(bits(&f1), bits(&f2), "{} bf16 n={n}", k.name);
                 // integer dots are exact.
                 let (x, y) = (r.i8s(n), r.i8s(n));
-                assert_eq!((rk.dot_i8)(&x, &y), (oracle.dot_i8)(&x, &y), "{} dot_i8 n={n}", k.name);
+                assert_eq!(
+                    (rk.dot_i8)(&x, &y),
+                    (oracle.dot_i8)(&x, &y),
+                    "{} dot_i8 n={n}",
+                    k.name
+                );
             }
         }
     }
@@ -1770,14 +2602,25 @@ mod tests {
         for blocks in 0..=40usize {
             let (mut w, mut a) = (vec![0u8; blocks * 18], vec![0u8; blocks * 34]);
             for b in 0..blocks {
-                w[b * 18..b * 18 + 2].copy_from_slice(&(0x2c00u16 + (r.next() % 0x400) as u16).to_le_bytes());
-                for v in &mut w[b * 18 + 2..b * 18 + 18] { *v = r.next() as u8; }
-                a[b * 34..b * 34 + 2].copy_from_slice(&(0x2800u16 + (r.next() % 0x400) as u16).to_le_bytes());
-                for v in &mut a[b * 34 + 2..b * 34 + 34] { *v = r.next() as u8; }
+                w[b * 18..b * 18 + 2]
+                    .copy_from_slice(&(0x2c00u16 + (r.next() % 0x400) as u16).to_le_bytes());
+                for v in &mut w[b * 18 + 2..b * 18 + 18] {
+                    *v = r.next() as u8;
+                }
+                a[b * 34..b * 34 + 2]
+                    .copy_from_slice(&(0x2800u16 + (r.next() % 0x400) as u16).to_le_bytes());
+                for v in &mut a[b * 34 + 2..b * 34 + 34] {
+                    *v = r.next() as u8;
+                }
             }
             for k in available() {
                 let rk = reproducible(&k);
-                assert_eq!((rk.q4_0_q8_0_row)(&w, &a, blocks).to_bits(), (oracle.q4_0_q8_0_row)(&w, &a, blocks).to_bits(), "{} blocks={blocks}", k.name);
+                assert_eq!(
+                    (rk.q4_0_q8_0_row)(&w, &a, blocks).to_bits(),
+                    (oracle.q4_0_q8_0_row)(&w, &a, blocks).to_bits(),
+                    "{} blocks={blocks}",
+                    k.name
+                );
             }
         }
     }
@@ -1790,13 +2633,18 @@ mod tests {
             let (a, b) = (r.vec(n, 2.0), r.vec(n, 2.0));
             let want: f64 = a.iter().zip(&b).map(|(x, y)| *x as f64 * *y as f64).sum();
             let got = (rk.dot_f32)(&a, &b) as f64;
-            assert!((got - want).abs() <= 1e-4 * (1.0 + want.abs()) + 1e-5 * n as f64, "n={n} {got} vs {want}");
+            assert!(
+                (got - want).abs() <= 1e-4 * (1.0 + want.abs()) + 1e-5 * n as f64,
+                "n={n} {got} vs {want}"
+            );
         }
         let mut x = r.vec(200, 10.0);
         let m = (rk.max)(&x);
         let want: Vec<f64> = x.iter().map(|v| (*v as f64 - m as f64).exp()).collect();
         let sum = (rk.exp_sub_sum)(&mut x, m);
-        for (g, w) in x.iter().zip(&want) { assert!((*g as f64 - w).abs() <= 1e-6 * w + 1e-30, "{g} vs {w}"); }
+        for (g, w) in x.iter().zip(&want) {
+            assert!((*g as f64 - w).abs() <= 1e-6 * w + 1e-30, "{g} vs {w}");
+        }
         assert!((sum as f64 - want.iter().sum::<f64>()).abs() < 1e-4);
     }
 
@@ -1805,19 +2653,38 @@ mod tests {
         for i in -2000..2000 {
             let x = i as f64 * 0.37;
             let (e, w) = (detmath::exp(x), x.exp());
-            assert!(e == w || (e - w).abs() <= 4e-16 * w.abs() + 1e-300, "exp({x}): {e} vs {w}");
+            assert!(
+                e == w || (e - w).abs() <= 4e-16 * w.abs() + 1e-300,
+                "exp({x}): {e} vs {w}"
+            );
             let (s, c) = detmath::sin_cos(x);
-            assert!((s - x.sin()).abs() < 2e-15 && (c - x.cos()).abs() < 2e-15, "sincos({x})");
+            assert!(
+                (s - x.sin()).abs() < 2e-15 && (c - x.cos()).abs() < 2e-15,
+                "sincos({x})"
+            );
             let t = detmath::tanh(x / 40.0);
             assert!((t - (x / 40.0).tanh()).abs() < 1e-14, "tanh({})", x / 40.0);
             let p = x.abs() + 1e-3;
-            assert!((detmath::ln(p) - p.ln()).abs() <= 1e-15 * (1.0 + p.ln().abs()), "ln({p})");
+            assert!(
+                (detmath::ln(p) - p.ln()).abs() <= 1e-15 * (1.0 + p.ln().abs()),
+                "ln({p})"
+            );
         }
-        for (b, y) in [(10_000.0f64, -0.125), (1_000_000.0, -0.984_375), (2.0, 10.0), (0.5, 3.0), (7.0, -2.0)] {
+        for (b, y) in [
+            (10_000.0f64, -0.125),
+            (1_000_000.0, -0.984_375),
+            (2.0, 10.0),
+            (0.5, 3.0),
+            (7.0, -2.0),
+        ] {
             let (g, w) = (detmath::powf(b, y), b.powf(y));
             assert!((g - w).abs() <= 1e-14 * w, "pow({b},{y}): {g} vs {w}");
         }
-        assert!(detmath::exp(f64::NAN).is_nan() && detmath::exp(1000.0).is_infinite() && detmath::exp(-1000.0) == 0.0);
+        assert!(
+            detmath::exp(f64::NAN).is_nan()
+                && detmath::exp(1000.0).is_infinite()
+                && detmath::exp(-1000.0) == 0.0
+        );
         assert_eq!(detmath::ln(0.0), f64::NEG_INFINITY);
         assert!(detmath::ln(-1.0).is_nan() && detmath::sin_cos(f64::INFINITY).0.is_nan());
         assert_eq!(detmath::tanh(50.0), 1.0);

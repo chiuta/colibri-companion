@@ -32,10 +32,79 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 const SPACE: char = '\u{2581}';
+/// Longest run of bytes handed to BPE in one go. A longer unbroken piece (base64, minified code, a
+/// 4 MiB line without spaces) is cut into windows at character boundaries, so memory per call stays
+/// bounded; only inputs with pieces beyond this length can tokenise differently from an unbounded merge.
+const MAX_BPE_PIECE: usize = 16 * 1024;
+/// The same bound for sentencepiece, whose "piece" is the whole segment; windows end after a space
+/// when one is near the limit.
+const MAX_SP_SEGMENT: usize = 64 * 1024;
+
+#[derive(Default, Debug)]
+struct TrieNode {
+    kids: Vec<(u8, u32)>, // sorted by byte
+    /// lowest index into `added` of a token ending here
+    end: Option<u32>,
+}
+fn build_trie(added: &[(String, u32)]) -> Vec<TrieNode> {
+    let mut t = vec![TrieNode::default()];
+    for (k, (s, _)) in added.iter().enumerate() {
+        let mut n = 0usize;
+        for &b in s.as_bytes() {
+            n = match t[n].kids.binary_search_by_key(&b, |&(c, _)| c) {
+                Ok(p) => t[n].kids[p].1 as usize,
+                Err(p) => {
+                    let id = t.len() as u32;
+                    t.push(TrieNode::default());
+                    t[n].kids.insert(p, (b, id));
+                    id as usize
+                }
+            };
+        }
+        if t[n].end.is_none() {
+            t[n].end = Some(k as u32);
+        }
+    }
+    t
+}
+/// `s` cut into windows of at most `max` bytes at char boundaries; with `at_space`, a window ends
+/// just after the last space in its final quarter when there is one.
+fn windows(s: &str, max: usize, at_space: bool) -> Vec<&str> {
+    if s.len() <= max {
+        return vec![s];
+    }
+    let (mut out, mut i) = (vec![], 0);
+    while i < s.len() {
+        let mut e = (i + max).min(s.len());
+        if e < s.len() {
+            while !s.is_char_boundary(e) {
+                e -= 1;
+            }
+            if at_space {
+                let mut lo = i + max * 3 / 4;
+                while !s.is_char_boundary(lo) {
+                    lo += 1;
+                }
+                if lo < e
+                    && let Some(p) = s[lo..e].rfind(' ')
+                {
+                    e = lo + p + 1;
+                }
+            }
+        }
+        out.push(&s[i..e]);
+        i = e;
+    }
+    out
+}
 const MAX_ID_HARD: u64 = 1 << 22;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum TokError { Json(String), Unsupported(String), Invalid(String) }
+pub enum TokError {
+    Json(String),
+    Unsupported(String),
+    Invalid(String),
+}
 impl std::fmt::Display for TokError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -46,7 +115,9 @@ impl std::fmt::Display for TokError {
     }
 }
 impl std::error::Error for TokError {}
-fn invalid<T>(s: impl Into<String>) -> Result<T, TokError> { Err(TokError::Invalid(s.into())) }
+fn invalid<T>(s: impl Into<String>) -> Result<T, TokError> {
+    Err(TokError::Invalid(s.into()))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -74,13 +145,37 @@ pub struct PreCfg {
     pub triple_digits: bool,
 }
 impl PreCfg {
-    pub const GPT2: PreCfg = PreCfg { new_style: false, ci_contractions: false, digit_max: usize::MAX, each_digit: false, punct_first: false, triple_digits: false };
-    pub const LLAMA3: PreCfg = PreCfg { new_style: true, ci_contractions: true, digit_max: 3, ..PreCfg::GPT2 };
-    pub const QWEN2: PreCfg = PreCfg { new_style: true, ci_contractions: true, digit_max: 1, ..PreCfg::GPT2 };
+    pub const GPT2: PreCfg = PreCfg {
+        new_style: false,
+        ci_contractions: false,
+        digit_max: usize::MAX,
+        each_digit: false,
+        punct_first: false,
+        triple_digits: false,
+    };
+    pub const LLAMA3: PreCfg = PreCfg {
+        new_style: true,
+        ci_contractions: true,
+        digit_max: 3,
+        ..PreCfg::GPT2
+    };
+    pub const QWEN2: PreCfg = PreCfg {
+        new_style: true,
+        ci_contractions: true,
+        digit_max: 1,
+        ..PreCfg::GPT2
+    };
     /// StarCoder / Refact / Command-R: single digits, then the GPT-2 pattern.
-    pub const STARCODER: PreCfg = PreCfg { each_digit: true, ..PreCfg::GPT2 };
+    pub const STARCODER: PreCfg = PreCfg {
+        each_digit: true,
+        ..PreCfg::GPT2
+    };
     /// Falcon (and llama.cpp's "default"): punctuation runs, GPT-2 pattern, three-digit groups.
-    pub const FALCON: PreCfg = PreCfg { punct_first: true, triple_digits: true, ..PreCfg::GPT2 };
+    pub const FALCON: PreCfg = PreCfg {
+        punct_first: true,
+        triple_digits: true,
+        ..PreCfg::GPT2
+    };
 }
 
 #[derive(Debug)]
@@ -93,7 +188,8 @@ pub struct Tokenizer {
     merges: HashMap<(u32, u32), (u32, u32)>,
     /// (content, id), longest first
     added: Vec<(String, u32)>,
-    added_first: HashMap<u8, Vec<usize>>,
+    /// Byte trie over `added`: one pass per position, whatever the number of added tokens.
+    added_trie: Vec<TrieNode>,
     /// 0 = ordinary, 1 = added, 2 = added and special; indexed by id
     added_flag: Vec<u8>,
     byte_ids: [Option<u32>; 256],
@@ -117,8 +213,14 @@ fn byte_tables() -> ([char; 256], HashMap<char, u8>) {
     let mut rev = HashMap::with_capacity(256);
     let mut extra = 0u32;
     for (b, slot) in t.iter_mut().enumerate() {
-        let printable = (33..=126).contains(&b) || (161..=172).contains(&b) || (174..=255).contains(&b);
-        let c = if printable { b as u32 } else { extra += 1; 255 + extra };
+        let printable =
+            (33..=126).contains(&b) || (161..=172).contains(&b) || (174..=255).contains(&b);
+        let c = if printable {
+            b as u32
+        } else {
+            extra += 1;
+            255 + extra
+        };
         *slot = char::from_u32(c).unwrap_or('\u{fffd}');
         rev.insert(*slot, b as u8);
     }
@@ -127,7 +229,9 @@ fn byte_tables() -> ([char; 256], HashMap<char, u8>) {
 
 fn parse_byte_token(t: &str) -> Option<u8> {
     let b = t.as_bytes();
-    if b.len() != 6 || &b[..3] != b"<0x" || b[5] != b'>' { return None; }
+    if b.len() != 6 || &b[..3] != b"<0x" || b[5] != b'>' {
+        return None;
+    }
     let hex = |c: u8| (c as char).to_digit(16);
     Some((hex(b[3])? * 16 + hex(b[4])?) as u8)
 }
@@ -135,32 +239,53 @@ fn parse_byte_token(t: &str) -> Option<u8> {
 fn make_vocab(tokens: &[String]) -> HashMap<String, u32> {
     let mut v = HashMap::with_capacity(tokens.len());
     for (i, t) in tokens.iter().enumerate() {
-        if !t.is_empty() { v.entry(t.clone()).or_insert(i as u32); }
+        if !t.is_empty() {
+            v.entry(t.clone()).or_insert(i as u32);
+        }
     }
     v
 }
 
-fn resolve_merges(vocab: &HashMap<String, u32>, pairs: impl Iterator<Item = (String, String)>) -> Vec<(u32, u32, u32)> {
-    pairs.filter_map(|(a, b)| {
-        let (l, r) = (*vocab.get(&a)?, *vocab.get(&b)?);
-        let m = *vocab.get(&format!("{a}{b}"))?;
-        Some((l, r, m))
-    }).collect()
+fn resolve_merges(
+    vocab: &HashMap<String, u32>,
+    pairs: impl Iterator<Item = (String, String)>,
+) -> Vec<(u32, u32, u32)> {
+    pairs
+        .filter_map(|(a, b)| {
+            let (l, r) = (*vocab.get(&a)?, *vocab.get(&b)?);
+            let m = *vocab.get(&format!("{a}{b}"))?;
+            Some((l, r, m))
+        })
+        .collect()
 }
 
 fn merge_pair(v: &Value) -> Option<(String, String)> {
     match v {
-        Value::String(s) => s.split_once(' ').map(|(a, b)| (a.to_string(), b.to_string())),
-        Value::Array(a) if a.len() == 2 => Some((a[0].as_str()?.to_string(), a[1].as_str()?.to_string())),
+        Value::String(s) => s
+            .split_once(' ')
+            .map(|(a, b)| (a.to_string(), b.to_string())),
+        Value::Array(a) if a.len() == 2 => {
+            Some((a[0].as_str()?.to_string(), a[1].as_str()?.to_string()))
+        }
         _ => None,
     }
 }
 
 struct Parts {
-    kind: Kind, pre: PreCfg, tokens: Vec<String>, vocab: HashMap<String, u32>,
-    merge_ids: Vec<(u32, u32, u32)>, added: Vec<(u32, bool)>,
-    unk: Option<u32>, bos: Option<u32>, eos: Option<u32>, add_prefix: bool, ignore_merges: bool,
-    prog: Vec<Stage>, norms: Vec<Norm>, warns: Vec<String>,
+    kind: Kind,
+    pre: PreCfg,
+    tokens: Vec<String>,
+    vocab: HashMap<String, u32>,
+    merge_ids: Vec<(u32, u32, u32)>,
+    added: Vec<(u32, bool)>,
+    unk: Option<u32>,
+    bos: Option<u32>,
+    eos: Option<u32>,
+    add_prefix: bool,
+    ignore_merges: bool,
+    prog: Vec<Stage>,
+    norms: Vec<Norm>,
+    warns: Vec<String>,
 }
 
 fn assemble(p: Parts) -> Tokenizer {
@@ -171,26 +296,50 @@ fn assemble(p: Parts) -> Tokenizer {
     }
     let mut byte_ids = [None; 256];
     match p.kind {
-        Kind::ByteLevel => for (b, c) in b2c.iter().enumerate() { byte_ids[b] = p.vocab.get(&c.to_string()).copied(); },
-        Kind::SentencePiece => for (id, t) in p.tokens.iter().enumerate() {
-            if let Some(b) = parse_byte_token(t) { byte_ids[b as usize].get_or_insert(id as u32); }
-        },
+        Kind::ByteLevel => {
+            for (b, c) in b2c.iter().enumerate() {
+                byte_ids[b] = p.vocab.get(&c.to_string()).copied();
+            }
+        }
+        Kind::SentencePiece => {
+            for (id, t) in p.tokens.iter().enumerate() {
+                if let Some(b) = parse_byte_token(t) {
+                    byte_ids[b as usize].get_or_insert(id as u32);
+                }
+            }
+        }
     }
     let mut added_flag = vec![0u8; p.tokens.len()];
     let mut added: Vec<(String, u32)> = vec![];
     for (id, special) in p.added {
-        let Some(content) = p.tokens.get(id as usize).filter(|c| !c.is_empty()) else { continue };
+        let Some(content) = p.tokens.get(id as usize).filter(|c| !c.is_empty()) else {
+            continue;
+        };
         added_flag[id as usize] = 1 + special as u8;
         added.push((content.clone(), id));
     }
     added.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(a.1.cmp(&b.1)));
-    let mut added_first: HashMap<u8, Vec<usize>> = HashMap::new();
-    for (k, (s, _)) in added.iter().enumerate() { added_first.entry(s.as_bytes()[0]).or_default().push(k); }
+    let added_trie = build_trie(&added);
     Tokenizer {
-        kind: p.kind, pre: p.pre, tokens: p.tokens, vocab: p.vocab, merges, added, added_first, added_flag,
-        byte_ids, b2c, rev, ignore_merges: p.ignore_merges, add_prefix: p.add_prefix,
-        prog: p.prog, norms: p.norms, warns: p.warns,
-        unk: p.unk, bos: p.bos, eos: p.eos,
+        kind: p.kind,
+        pre: p.pre,
+        tokens: p.tokens,
+        vocab: p.vocab,
+        merges,
+        added,
+        added_trie,
+        added_flag,
+        byte_ids,
+        b2c,
+        rev,
+        ignore_merges: p.ignore_merges,
+        add_prefix: p.add_prefix,
+        prog: p.prog,
+        norms: p.norms,
+        warns: p.warns,
+        unk: p.unk,
+        bos: p.bos,
+        eos: p.eos,
     }
 }
 
@@ -229,10 +378,16 @@ mod uni {
     const SINGLES: &str = "340:300,341:301,343:313,374:2B9,37E:3B,387:B7,1F71:3AC,1F73:3AD,1F75:3AE,1F77:3AF,1F79:3CC,1F7B:3CD,1F7D:3CE,1FBB:386,1FBE:3B9,1FC9:388,1FCB:389,1FD3:390,1FDB:38A,1FE3:3B0,1FEB:38E,1FEE:385,1FEF:60,1FF9:38C,1FFB:38F,1FFD:B4,2000:2002,2001:2003,2126:3A9,212A:4B,212B:C5,2329:3008,232A:3009";
 
     fn parse_ranges(s: &str) -> Vec<(u32, u32)> {
-        s.split(',').filter(|p| !p.is_empty()).filter_map(|p| {
-            let (a, b) = p.split_once('-').unwrap_or((p, p));
-            Some((u32::from_str_radix(a, 16).ok()?, u32::from_str_radix(b, 16).ok()?))
-        }).collect()
+        s.split(',')
+            .filter(|p| !p.is_empty())
+            .filter_map(|p| {
+                let (a, b) = p.split_once('-').unwrap_or((p, p));
+                Some((
+                    u32::from_str_radix(a, 16).ok()?,
+                    u32::from_str_radix(b, 16).ok()?,
+                ))
+            })
+            .collect()
     }
     macro_rules! table {
         ($name:ident, $src:expr) => {
@@ -249,53 +404,142 @@ mod uni {
     table!(t_s, S);
 
     fn has(t: &[(u32, u32)], c: u32) -> bool {
-        t.binary_search_by(|&(a, b)| if b < c { std::cmp::Ordering::Less } else if a > c { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal }).is_ok()
+        t.binary_search_by(|&(a, b)| {
+            if b < c {
+                std::cmp::Ordering::Less
+            } else if a > c {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
     }
     /// `\p{L}`
-    pub fn is_letter(c: char) -> bool { if c.is_ascii() { c.is_ascii_alphabetic() } else { has(t_l(), c as u32) } }
+    pub fn is_letter(c: char) -> bool {
+        if c.is_ascii() {
+            c.is_ascii_alphabetic()
+        } else {
+            has(t_l(), c as u32)
+        }
+    }
     /// `\p{M}`
-    pub fn is_mark(c: char) -> bool { !c.is_ascii() && has(t_m(), c as u32) }
+    pub fn is_mark(c: char) -> bool {
+        !c.is_ascii() && has(t_m(), c as u32)
+    }
     /// `\p{N}`
-    pub fn is_number(c: char) -> bool { if c.is_ascii() { c.is_ascii_digit() } else { has(t_n(), c as u32) } }
+    pub fn is_number(c: char) -> bool {
+        if c.is_ascii() {
+            c.is_ascii_digit()
+        } else {
+            has(t_n(), c as u32)
+        }
+    }
     /// `\p{P}`
     pub fn is_punct(c: char) -> bool {
-        if c.is_ascii() { matches!(c, '!' | '"' | '#' | '%' | '&' | '\'' | '(' | ')' | '*' | ',' | '-' | '.' | '/' | ':' | ';' | '?' | '@' | '[' | '\\' | ']' | '_' | '{' | '}') }
-        else { has(t_p(), c as u32) }
+        if c.is_ascii() {
+            matches!(
+                c,
+                '!' | '"'
+                    | '#'
+                    | '%'
+                    | '&'
+                    | '\''
+                    | '('
+                    | ')'
+                    | '*'
+                    | ','
+                    | '-'
+                    | '.'
+                    | '/'
+                    | ':'
+                    | ';'
+                    | '?'
+                    | '@'
+                    | '['
+                    | '\\'
+                    | ']'
+                    | '_'
+                    | '{'
+                    | '}'
+            )
+        } else {
+            has(t_p(), c as u32)
+        }
     }
     /// `\p{S}`
     pub fn is_symbol(c: char) -> bool {
-        if c.is_ascii() { matches!(c, '$' | '+' | '<' | '=' | '>' | '^' | '`' | '|' | '~') } else { has(t_s(), c as u32) }
+        if c.is_ascii() {
+            matches!(c, '$' | '+' | '<' | '=' | '>' | '^' | '`' | '|' | '~')
+        } else {
+            has(t_s(), c as u32)
+        }
     }
 
-    struct Norm { ccc: Vec<(u32, u32, u8)>, decomp: HashMap<u32, (u32, u32)>, compose: HashMap<(u32, u32), u32>, single: HashMap<u32, u32> }
+    struct Norm {
+        ccc: Vec<(u32, u32, u8)>,
+        decomp: HashMap<u32, (u32, u32)>,
+        compose: HashMap<(u32, u32), u32>,
+        single: HashMap<u32, u32>,
+    }
     fn data() -> &'static Norm {
         static D: OnceLock<Norm> = OnceLock::new();
         D.get_or_init(|| {
             let hex = |s: &str| u32::from_str_radix(s, 16).ok();
-            let ccc = CCC.split(',').filter_map(|p| {
-                let (r, v) = p.split_once('=')?;
-                let (a, b) = r.split_once('-').unwrap_or((r, r));
-                Some((hex(a)?, hex(b)?, v.parse().ok()?))
-            }).collect();
+            let ccc = CCC
+                .split(',')
+                .filter_map(|p| {
+                    let (r, v) = p.split_once('=')?;
+                    let (a, b) = r.split_once('-').unwrap_or((r, r));
+                    Some((hex(a)?, hex(b)?, v.parse().ok()?))
+                })
+                .collect();
             let (mut decomp, mut compose) = (HashMap::new(), HashMap::new());
             for p in PAIRS.split(',') {
                 let (p, excl) = p.strip_suffix('!').map_or((p, false), |q| (q, true));
                 let mut it = p.split(':');
-                if let (Some(c), Some(a), Some(b)) = (it.next().and_then(hex), it.next().and_then(hex), it.next().and_then(hex)) {
+                if let (Some(c), Some(a), Some(b)) = (
+                    it.next().and_then(hex),
+                    it.next().and_then(hex),
+                    it.next().and_then(hex),
+                ) {
                     decomp.insert(c, (a, b));
-                    if !excl { compose.insert((a, b), c); }
+                    if !excl {
+                        compose.insert((a, b), c);
+                    }
                 }
             }
-            let single = SINGLES.split(',').filter_map(|p| { let (c, t) = p.split_once(':')?; Some((hex(c)?, hex(t)?)) }).collect();
-            Norm { ccc, decomp, compose, single }
+            let single = SINGLES
+                .split(',')
+                .filter_map(|p| {
+                    let (c, t) = p.split_once(':')?;
+                    Some((hex(c)?, hex(t)?))
+                })
+                .collect();
+            Norm {
+                ccc,
+                decomp,
+                compose,
+                single,
+            }
         })
     }
 
     fn ccc(c: u32) -> u8 {
-        if c < 0x300 { return 0; }
+        if c < 0x300 {
+            return 0;
+        }
         let t = &data().ccc;
-        t.binary_search_by(|&(a, b, _)| if b < c { std::cmp::Ordering::Less } else if a > c { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal })
-            .map_or(0, |i| t[i].2)
+        t.binary_search_by(|&(a, b, _)| {
+            if b < c {
+                std::cmp::Ordering::Less
+            } else if a > c {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .map_or(0, |i| t[i].2)
     }
 
     const S_BASE: u32 = 0xAC00;
@@ -305,18 +549,32 @@ mod uni {
 
     fn decompose(c: char, out: &mut Vec<char>) {
         let u = c as u32;
-        if u < 0xC0 { out.push(c); return; }
+        if u < 0xC0 {
+            out.push(c);
+            return;
+        }
         if (S_BASE..S_BASE + 11172).contains(&u) {
             let s = u - S_BASE;
             out.extend(char::from_u32(L_BASE + s / 588));
             out.extend(char::from_u32(V_BASE + (s % 588) / 28));
-            if !s.is_multiple_of(28) { out.extend(char::from_u32(T_BASE + s % 28)); }
+            if !s.is_multiple_of(28) {
+                out.extend(char::from_u32(T_BASE + s % 28));
+            }
             return;
         }
         let d = data();
-        if let Some(&t) = d.single.get(&u) && let Some(t) = char::from_u32(t) { return decompose(t, out); }
+        if let Some(&t) = d.single.get(&u)
+            && let Some(t) = char::from_u32(t)
+        {
+            return decompose(t, out);
+        }
         if let Some(&(a, b)) = d.decomp.get(&u)
-            && let (Some(a), Some(b)) = (char::from_u32(a), char::from_u32(b)) { decompose(a, out); decompose(b, out); return; }
+            && let (Some(a), Some(b)) = (char::from_u32(a), char::from_u32(b))
+        {
+            decompose(a, out);
+            decompose(b, out);
+            return;
+        }
         out.push(c);
     }
 
@@ -325,7 +583,10 @@ mod uni {
         if (L_BASE..L_BASE + 19).contains(&a) && (V_BASE..V_BASE + 21).contains(&b) {
             return char::from_u32(S_BASE + ((a - L_BASE) * 21 + (b - V_BASE)) * 28);
         }
-        if (S_BASE..S_BASE + 11172).contains(&a) && (a - S_BASE).is_multiple_of(28) && (T_BASE + 1..T_BASE + 28).contains(&b) {
+        if (S_BASE..S_BASE + 11172).contains(&a)
+            && (a - S_BASE).is_multiple_of(28)
+            && (T_BASE + 1..T_BASE + 28).contains(&b)
+        {
             return char::from_u32(a + (b - T_BASE));
         }
         data().compose.get(&(a, b)).and_then(|&c| char::from_u32(c))
@@ -334,15 +595,24 @@ mod uni {
     /// Canonical composition (NFC). ASCII and Latin-1/Latin Extended text is returned unchanged
     /// without allocating (all of U+0000–U+02FF is already in NFC).
     pub fn nfc(s: &str) -> Cow<'_, str> {
-        if s.chars().all(|c| (c as u32) < 0x300) { return Cow::Borrowed(s); }
+        if s.chars().all(|c| (c as u32) < 0x300) {
+            return Cow::Borrowed(s);
+        }
         let mut d: Vec<char> = Vec::with_capacity(s.len());
-        for c in s.chars() { decompose(c, &mut d); }
+        for c in s.chars() {
+            decompose(c, &mut d);
+        }
         // canonical ordering: stable sort of every run of non-starters by combining class
         let mut i = 0;
         while i < d.len() {
-            if ccc(d[i] as u32) == 0 { i += 1; continue; }
+            if ccc(d[i] as u32) == 0 {
+                i += 1;
+                continue;
+            }
             let mut j = i;
-            while j < d.len() && ccc(d[j] as u32) != 0 { j += 1; }
+            while j < d.len() && ccc(d[j] as u32) != 0 {
+                j += 1;
+            }
             d[i..j].sort_by_key(|&c| ccc(c as u32));
             i = j;
         }
@@ -353,9 +623,18 @@ mod uni {
             if let Some(si) = starter {
                 let adjacent = out.len() == si + 1;
                 if (adjacent || (last_cc > 0 && last_cc < cc))
-                    && let Some(m) = compose_pair(out[si], ch) { out[si] = m; continue; }
+                    && let Some(m) = compose_pair(out[si], ch)
+                {
+                    out[si] = m;
+                    continue;
+                }
             }
-            if cc == 0 { starter = Some(out.len()); last_cc = -1; } else { last_cc = cc; }
+            if cc == 0 {
+                starter = Some(out.len());
+                last_cc = -1;
+            } else {
+                last_cc = cc;
+            }
             out.push(ch);
         }
         Cow::Owned(out.into_iter().collect())
@@ -371,9 +650,15 @@ mod uni {
                 0x3000 | 0xA0 | 0x2002..=0x200A | 0x202F | 0x205F => m.push(' '),
                 0x2026 => m.push_str("..."),
                 0x2122 => m.push_str("TM"),
-                0xB2 => m.push('2'), 0xB3 => m.push('3'), 0xB9 => m.push('1'),
-                0xFB00 => m.push_str("ff"), 0xFB01 => m.push_str("fi"), 0xFB02 => m.push_str("fl"),
-                0xFB03 => m.push_str("ffi"), 0xFB04 => m.push_str("ffl"), 0xFB05 | 0xFB06 => m.push_str("st"),
+                0xB2 => m.push('2'),
+                0xB3 => m.push('3'),
+                0xB9 => m.push('1'),
+                0xFB00 => m.push_str("ff"),
+                0xFB01 => m.push_str("fi"),
+                0xFB02 => m.push_str("fl"),
+                0xFB03 => m.push_str("ffi"),
+                0xFB04 => m.push_str("ffl"),
+                0xFB05 | 0xFB06 => m.push_str("st"),
                 _ => m.push(c),
             }
         }
@@ -384,7 +669,14 @@ mod uni {
 // ------------------------------------------------- pre-tokenizer programs
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Cat { L, M, N, P, S, Ws }
+enum Cat {
+    L,
+    M,
+    N,
+    P,
+    S,
+    Ws,
+}
 
 fn cat_has(k: Cat, c: char) -> bool {
     match k {
@@ -399,21 +691,51 @@ fn cat_has(k: Cat, c: char) -> bool {
 
 /// A set of characters as written in a regex: ranges, `\p{..}` categories, `\s`, optionally negated.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
-struct Class { neg: bool, ranges: Vec<(u32, u32)>, cats: Vec<(Cat, bool)> }
+struct Class {
+    neg: bool,
+    ranges: Vec<(u32, u32)>,
+    cats: Vec<(Cat, bool)>,
+}
 impl Class {
-    fn of(k: Cat) -> Class { Class { cats: vec![(k, false)], ..Default::default() } }
-    fn from_ranges(r: &[(u32, u32)]) -> Class { let mut c = Class { ranges: r.to_vec(), ..Default::default() }; c.finish(); c }
+    fn of(k: Cat) -> Class {
+        Class {
+            cats: vec![(k, false)],
+            ..Default::default()
+        }
+    }
+    fn from_ranges(r: &[(u32, u32)]) -> Class {
+        let mut c = Class {
+            ranges: r.to_vec(),
+            ..Default::default()
+        };
+        c.finish();
+        c
+    }
     fn finish(&mut self) {
         self.ranges.sort_unstable();
         let mut m: Vec<(u32, u32)> = vec![];
         for &(a, b) in &self.ranges {
-            match m.last_mut() { Some(l) if a <= l.1.saturating_add(1) => l.1 = l.1.max(b), _ => m.push((a, b)) }
+            match m.last_mut() {
+                Some(l) if a <= l.1.saturating_add(1) => l.1 = l.1.max(b),
+                _ => m.push((a, b)),
+            }
         }
         self.ranges = m;
     }
     fn matches(&self, c: char) -> bool {
         let u = c as u32;
-        let hit = self.ranges.binary_search_by(|&(a, b)| if b < u { std::cmp::Ordering::Less } else if a > u { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal }).is_ok()
+        let hit = self
+            .ranges
+            .binary_search_by(|&(a, b)| {
+                if b < u {
+                    std::cmp::Ordering::Less
+                } else if a > u {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .is_ok()
             || self.cats.iter().any(|&(k, neg)| cat_has(k, c) != neg);
         hit != self.neg
     }
@@ -443,23 +765,35 @@ fn scan<'a>(piece: &'a str, f: impl Fn(&[(usize, char)], usize) -> usize, out: &
     while i < n {
         let e = f(&cs, i);
         if e > i {
-            if gap < cs[i].0 { out.push(&piece[gap..cs[i].0]); }
+            if gap < cs[i].0 {
+                out.push(&piece[gap..cs[i].0]);
+            }
             out.push(&piece[cs[i].0..byte(e)]);
             gap = byte(e);
             i = e;
-        } else { i += 1; }
+        } else {
+            i += 1;
+        }
     }
-    if gap < piece.len() { out.push(&piece[gap..]); }
+    if gap < piece.len() {
+        out.push(&piece[gap..]);
+    }
 }
 
 fn run_class(cs: &[(usize, char)], mut k: usize, cl: &Class, max: usize) -> usize {
     let start = k;
-    while k < cs.len() && k - start < max && cl.matches(cs[k].1) { k += 1; }
+    while k < cs.len() && k - start < max && cl.matches(cs[k].1) {
+        k += 1;
+    }
     k
 }
 
-fn is_lm(c: char) -> bool { uni::is_letter(c) || uni::is_mark(c) }
-fn is_ps(c: char) -> bool { uni::is_punct(c) || uni::is_symbol(c) }
+fn is_lm(c: char) -> bool {
+    uni::is_letter(c) || uni::is_mark(c)
+}
+fn is_ps(c: char) -> bool {
+    uni::is_punct(c) || uni::is_symbol(c)
+}
 
 /// DeepSeek-V3's third pattern, alternative by alternative (first match wins, as in PCRE):
 /// `[ASCII punct][A-Za-z]+ | [^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+ | ?[\p{P}\p{S}]+[\r\n]* |
@@ -471,17 +805,25 @@ fn ds3_at(cs: &[(usize, char)], i: usize) -> usize {
         return run(cs, i + 1, |c| c.is_ascii_alphabetic());
     }
     let lead = !is_nl(c) && !uni::is_letter(c) && !uni::is_punct(c) && !uni::is_symbol(c);
-    if lead && at(cs, i + 1).is_some_and(is_lm) { return run(cs, i + 1, is_lm); }
-    if is_lm(c) { return run(cs, i, is_lm); }
+    if lead && at(cs, i + 1).is_some_and(is_lm) {
+        return run(cs, i + 1, is_lm);
+    }
+    if is_lm(c) {
+        return run(cs, i, is_lm);
+    }
     let s = if c == ' ' { i + 1 } else { i };
     if at(cs, s).is_some_and(is_ps) {
         let mut k = run(cs, s, is_ps);
-        while at(cs, k).is_some_and(is_nl) { k += 1; }
+        while at(cs, k).is_some_and(is_nl) {
+            k += 1;
+        }
         return k;
     }
     if c.is_whitespace() {
         let e = run(cs, i, |c| c.is_whitespace());
-        if let Some(k) = (i..e).rev().find(|&k| is_nl(cs[k].1)) { return k + 1; }
+        if let Some(k) = (i..e).rev().find(|&k| is_nl(cs[k].1)) {
+            return k + 1;
+        }
         return if e >= n || e - i == 1 { e } else { e - 1 };
     }
     0
@@ -491,15 +833,31 @@ impl Stage {
     fn apply<'a>(&self, piece: &'a str, out: &mut Vec<&'a str>) {
         match self {
             Stage::Run(cl, max) => scan(piece, |cs, i| run_class(cs, i, cl, *max), out),
-            Stage::OptWsRun(cl) => scan(piece, |cs, i| {
-                if cs[i].1.is_whitespace() && at(cs, i + 1).is_some_and(|d| cl.matches(d)) { return run_class(cs, i + 1, cl, usize::MAX); }
-                if cl.matches(cs[i].1) { run_class(cs, i, cl, usize::MAX) } else { i }
-            }, out),
+            Stage::OptWsRun(cl) => scan(
+                piece,
+                |cs, i| {
+                    if cs[i].1.is_whitespace() && at(cs, i + 1).is_some_and(|d| cl.matches(d)) {
+                        return run_class(cs, i + 1, cl, usize::MAX);
+                    }
+                    if cl.matches(cs[i].1) {
+                        run_class(cs, i, cl, usize::MAX)
+                    } else {
+                        i
+                    }
+                },
+                out,
+            ),
             Stage::TrailingWs => {
                 let mut start = piece.len();
-                for (b, c) in piece.char_indices().rev() { if c.is_whitespace() { start = b } else { break } }
-                if start == piece.len() { out.push(piece) } else {
-                    if start > 0 { out.push(&piece[..start]); }
+                for (b, c) in piece.char_indices().rev() {
+                    if c.is_whitespace() { start = b } else { break }
+                }
+                if start == piece.len() {
+                    out.push(piece)
+                } else {
+                    if start > 0 {
+                        out.push(&piece[..start]);
+                    }
                     out.push(&piece[start..]);
                 }
             }
@@ -514,7 +872,9 @@ fn run_program<'a>(text: &'a str, prog: &[Stage]) -> Vec<&'a str> {
     let mut cur: Vec<&str> = if text.is_empty() { vec![] } else { vec![text] };
     for st in prog {
         let mut next = Vec::with_capacity(cur.len() + 8);
-        for p in cur { st.apply(p, &mut next); }
+        for p in cur {
+            st.apply(p, &mut next);
+        }
         cur = next;
     }
     cur
@@ -522,13 +882,30 @@ fn run_program<'a>(text: &'a str, prog: &[Stage]) -> Vec<&'a str> {
 
 // -- parsing the regex strings found in tokenizer.json files
 
-enum Item { Ch(char), Cat(Cat, bool) }
+enum Item {
+    Ch(char),
+    Cat(Cat, bool),
+}
 
-struct Rx<'a> { s: &'a [char], i: usize }
+struct Rx<'a> {
+    s: &'a [char],
+    i: usize,
+}
 impl Rx<'_> {
-    fn peek(&self) -> Option<char> { self.s.get(self.i).copied() }
-    fn eat(&mut self, c: char) -> bool { if self.peek() == Some(c) { self.i += 1; true } else { false } }
-    fn rest(&self) -> String { self.s[self.i.min(self.s.len())..].iter().collect() }
+    fn peek(&self) -> Option<char> {
+        self.s.get(self.i).copied()
+    }
+    fn eat(&mut self, c: char) -> bool {
+        if self.peek() == Some(c) {
+            self.i += 1;
+            true
+        } else {
+            false
+        }
+    }
+    fn rest(&self) -> String {
+        self.s[self.i.min(self.s.len())..].iter().collect()
+    }
 
     /// After a backslash.
     fn escape(&mut self) -> Option<Item> {
@@ -536,17 +913,41 @@ impl Rx<'_> {
         self.i += 1;
         Some(match e {
             'p' | 'P' => {
-                if !self.eat('{') { return None; }
+                if !self.eat('{') {
+                    return None;
+                }
                 let mut name = String::new();
-                loop { let c = self.peek()?; self.i += 1; if c == '}' { break } name.push(c); if name.len() > 12 { return None; } }
-                let k = match name.as_str() { "L" => Cat::L, "M" => Cat::M, "N" | "Nd" => Cat::N, "P" => Cat::P, "S" => Cat::S, "Z" => Cat::Ws, _ => return None };
+                loop {
+                    let c = self.peek()?;
+                    self.i += 1;
+                    if c == '}' {
+                        break;
+                    }
+                    name.push(c);
+                    if name.len() > 12 {
+                        return None;
+                    }
+                }
+                let k = match name.as_str() {
+                    "L" => Cat::L,
+                    "M" => Cat::M,
+                    "N" | "Nd" => Cat::N,
+                    "P" => Cat::P,
+                    "S" => Cat::S,
+                    "Z" => Cat::Ws,
+                    _ => return None,
+                };
                 Item::Cat(k, e == 'P')
             }
             's' => Item::Cat(Cat::Ws, false),
             'S' => Item::Cat(Cat::Ws, true),
             'd' => Item::Cat(Cat::N, false),
             'D' => Item::Cat(Cat::N, true),
-            'r' => Item::Ch('\r'), 'n' => Item::Ch('\n'), 't' => Item::Ch('\t'), 'f' => Item::Ch('\u{c}'), 'v' => Item::Ch('\u{b}'),
+            'r' => Item::Ch('\r'),
+            'n' => Item::Ch('\n'),
+            't' => Item::Ch('\t'),
+            'f' => Item::Ch('\u{c}'),
+            'v' => Item::Ch('\u{b}'),
             c if c.is_ascii_alphanumeric() => return None,
             c => Item::Ch(c),
         })
@@ -554,35 +955,65 @@ impl Rx<'_> {
     fn class_item(&mut self) -> Option<Item> {
         let c = self.peek()?;
         self.i += 1;
-        if c == '\\' { self.escape() } else { Some(Item::Ch(c)) }
+        if c == '\\' {
+            self.escape()
+        } else {
+            Some(Item::Ch(c))
+        }
     }
     /// At `[`.
     fn class(&mut self) -> Option<Class> {
-        if !self.eat('[') { return None; }
-        let mut cl = Class { neg: self.eat('^'), ..Default::default() };
+        if !self.eat('[') {
+            return None;
+        }
+        let mut cl = Class {
+            neg: self.eat('^'),
+            ..Default::default()
+        };
         let mut guard = 0;
         loop {
-            if self.eat(']') { break; }
+            if self.eat(']') {
+                break;
+            }
             guard += 1;
-            if guard > 8192 { return None; }
+            if guard > 8192 {
+                return None;
+            }
             match self.class_item()? {
                 Item::Cat(k, n) => cl.cats.push((k, n)),
                 Item::Ch(a) => {
-                    if self.peek() == Some('-') && self.s.get(self.i + 1).is_some_and(|&c| c != ']') {
+                    if self.peek() == Some('-') && self.s.get(self.i + 1).is_some_and(|&c| c != ']')
+                    {
                         self.i += 1;
-                        match self.class_item()? { Item::Ch(b) if b >= a => cl.ranges.push((a as u32, b as u32)), _ => return None }
-                    } else { cl.ranges.push((a as u32, a as u32)); }
+                        match self.class_item()? {
+                            Item::Ch(b) if b >= a => cl.ranges.push((a as u32, b as u32)),
+                            _ => return None,
+                        }
+                    } else {
+                        cl.ranges.push((a as u32, a as u32));
+                    }
                 }
             }
         }
-        if cl.ranges.is_empty() && cl.cats.is_empty() { return None; }
+        if cl.ranges.is_empty() && cl.cats.is_empty() {
+            return None;
+        }
         cl.finish();
         Some(cl)
     }
     fn atom(&mut self) -> Option<Class> {
         match self.peek()? {
             '[' => self.class(),
-            '\\' => { self.i += 1; match self.escape()? { Item::Cat(k, n) => Some(Class { cats: vec![(k, n)], ..Default::default() }), Item::Ch(c) => Some(Class::from_ranges(&[(c as u32, c as u32)])) } }
+            '\\' => {
+                self.i += 1;
+                match self.escape()? {
+                    Item::Cat(k, n) => Some(Class {
+                        cats: vec![(k, n)],
+                        ..Default::default()
+                    }),
+                    Item::Ch(c) => Some(Class::from_ranges(&[(c as u32, c as u32)])),
+                }
+            }
             _ => None,
         }
     }
@@ -591,24 +1022,43 @@ impl Rx<'_> {
 /// The Llama-3 / Qwen-2 / GPT-2 regexes are recognised by shape and handled by hand-written code.
 fn main_family(p: &str) -> Option<PreCfg> {
     if p.contains(r"[^\r\n\p{L}\p{N}]?\p{L}+") {
-        return Some(PreCfg { new_style: true, ci_contractions: p.contains("(?i:"), digit_max: if p.contains(r"\p{N}{1,") { 3 } else { 1 }, ..PreCfg::GPT2 });
+        return Some(PreCfg {
+            new_style: true,
+            ci_contractions: p.contains("(?i:"),
+            digit_max: if p.contains(r"\p{N}{1,") { 3 } else { 1 },
+            ..PreCfg::GPT2
+        });
     }
-    if p.contains("'s|'t|'re|'ve|'m|'ll|'d") && p.contains(r"\p{L}+") && p.contains(r"\p{N}+") { return Some(PreCfg::GPT2); }
+    if p.contains("'s|'t|'re|'ve|'m|'ll|'d") && p.contains(r"\p{L}+") && p.contains(r"\p{N}+") {
+        return Some(PreCfg::GPT2);
+    }
     None
 }
 
-fn is_ds3(p: &str) -> bool { p.contains(r"[\p{L}\p{M}]+") && p.contains(r"[\p{P}\p{S}]+") && p.contains(r"(?!\S)") }
+fn is_ds3(p: &str) -> bool {
+    p.contains(r"[\p{L}\p{M}]+") && p.contains(r"[\p{P}\p{S}]+") && p.contains(r"(?!\S)")
+}
 
 /// Turn one regex string into a [`Stage`], or `None` if its shape is not one we know.
 fn parse_stage(pat: &str) -> Option<Stage> {
-    if pat.len() > 1 << 16 { return None; }
-    if is_ds3(pat) { return Some(Stage::Ds3); }
-    if let Some(cfg) = main_family(pat) { return Some(Stage::Main(cfg)); }
-    if pat == r"\s+$" { return Some(Stage::TrailingWs); }
+    if pat.len() > 1 << 16 {
+        return None;
+    }
+    if is_ds3(pat) {
+        return Some(Stage::Ds3);
+    }
+    if let Some(cfg) = main_family(pat) {
+        return Some(Stage::Main(cfg));
+    }
+    if pat == r"\s+$" {
+        return Some(Stage::TrailingWs);
+    }
     let cs: Vec<char> = pat.chars().collect();
     let mut rx = Rx { s: &cs, i: 0 };
     let ws = cs.starts_with(&['\\', 's', '?']);
-    if ws { rx.i = 3; }
+    if ws {
+        rx.i = 3;
+    }
     let cl = rx.atom()?;
     let rest = rx.rest();
     match (ws, rest.as_str()) {
@@ -616,7 +1066,10 @@ fn parse_stage(pat: &str) -> Option<Stage> {
         (false, "+") => Some(Stage::Run(cl, usize::MAX)),
         (true, "+") => Some(Stage::OptWsRun(cl)),
         (false, r) if r.starts_with("{1,") && r.ends_with('}') => {
-            let n: usize = r[3..r.len() - 1].parse().ok().filter(|n| (1..=64).contains(n))?;
+            let n: usize = r[3..r.len() - 1]
+                .parse()
+                .ok()
+                .filter(|n| (1..=64).contains(n))?;
             Some(Stage::Run(cl, n))
         }
         _ => None,
@@ -627,15 +1080,25 @@ fn parse_stage(pat: &str) -> Option<Stage> {
 /// that could not be honoured.
 fn parse_program(node: Option<&Value>, warns: &mut Vec<String>) -> Vec<Stage> {
     let mut prog = vec![];
-    let Some(node) = node.filter(|n| n.is_object()) else { return prog };
+    let Some(node) = node.filter(|n| n.is_object()) else {
+        return prog;
+    };
     let items: Vec<&Value> = match node.get("type").and_then(Value::as_str) {
-        Some("Sequence") => node.get("pretokenizers").and_then(Value::as_array).map_or(vec![], |a| a.iter().collect()),
+        Some("Sequence") => node
+            .get("pretokenizers")
+            .and_then(Value::as_array)
+            .map_or(vec![], |a| a.iter().collect()),
         _ => vec![node],
     };
     for it in items.into_iter().take(64) {
         match it.get("type").and_then(Value::as_str) {
             Some("Split") => {
-                if it.get("behavior").and_then(Value::as_str).is_some_and(|b| b != "Isolated") || it.get("invert").and_then(Value::as_bool) == Some(true) {
+                if it
+                    .get("behavior")
+                    .and_then(Value::as_str)
+                    .is_some_and(|b| b != "Isolated")
+                    || it.get("invert").and_then(Value::as_bool) == Some(true)
+                {
                     warns.push("a Split pre-tokenizer with a behaviour other than Isolated was treated as Isolated".into());
                 }
                 let pat = it.get("pattern");
@@ -643,22 +1106,46 @@ fn parse_program(node: Option<&Value>, warns: &mut Vec<String>) -> Vec<Stage> {
                     match parse_stage(r) {
                         Some(s) => prog.push(s),
                         None => {
-                            let near = if r.contains(r"\p{L}") { main_family(r).unwrap_or(PreCfg::GPT2) } else { PreCfg::GPT2 };
+                            let near = if r.contains(r"\p{L}") {
+                                main_family(r).unwrap_or(PreCfg::GPT2)
+                            } else {
+                                PreCfg::GPT2
+                            };
                             warns.push(format!("unrecognised pre-tokenizer pattern {:?}; approximated by the nearest known family", r.chars().take(60).collect::<String>()));
-                            if r.contains(r"\p{L}") && !prog.iter().any(|s| matches!(s, Stage::Main(_))) { prog.push(Stage::Main(near)); }
+                            if r.contains(r"\p{L}")
+                                && !prog.iter().any(|s| matches!(s, Stage::Main(_)))
+                            {
+                                prog.push(Stage::Main(near));
+                            }
                         }
                     }
                 } else if let Some(sv) = pat.and_then(|p| p.get("String")).and_then(Value::as_str) {
-                    let cl = Class::from_ranges(&sv.chars().map(|c| (c as u32, c as u32)).collect::<Vec<_>>());
+                    let cl = Class::from_ranges(
+                        &sv.chars().map(|c| (c as u32, c as u32)).collect::<Vec<_>>(),
+                    );
                     prog.push(Stage::Run(cl, usize::MAX));
                 }
             }
             Some("Digits") => {
-                if it.get("individual_digits").and_then(Value::as_bool).unwrap_or(false) { prog.push(Stage::Run(Class::of(Cat::N), 1)) } else { prog.push(Stage::Run(Class::of(Cat::N), usize::MAX)) }
+                if it
+                    .get("individual_digits")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    prog.push(Stage::Run(Class::of(Cat::N), 1))
+                } else {
+                    prog.push(Stage::Run(Class::of(Cat::N), usize::MAX))
+                }
             }
-            Some("ByteLevel") => if it.get("use_regex").and_then(Value::as_bool).unwrap_or(true) { prog.push(Stage::Main(PreCfg::GPT2)) },
+            Some("ByteLevel") => {
+                if it.get("use_regex").and_then(Value::as_bool).unwrap_or(true) {
+                    prog.push(Stage::Main(PreCfg::GPT2))
+                }
+            }
             Some("Metaspace") | None => {}
-            Some(o) => warns.push(format!("pre-tokenizer type {o} is not supported and was skipped")),
+            Some(o) => warns.push(format!(
+                "pre-tokenizer type {o} is not supported and was skipped"
+            )),
         }
     }
     prog
@@ -674,7 +1161,9 @@ fn parse_const_class(s: &str) -> Class {
     let cs: Vec<char> = s.chars().collect();
     Rx { s: &cs, i: 0 }.class().unwrap_or_default()
 }
-fn cjk_class() -> Class { Class::from_ranges(&[(0x4E00, 0x9FA5), (0x0800, 0x4E00), (0xAC00, 0xD7FF)]) }
+fn cjk_class() -> Class {
+    Class::from_ranges(&[(0x4E00, 0x9FA5), (0x0800, 0x4E00), (0xAC00, 0xD7FF)])
+}
 
 fn ds_llm_program() -> Vec<Stage> {
     vec![
@@ -699,7 +1188,10 @@ fn ds_coder_program() -> Vec<Stage> {
 fn ds_v3_program() -> Vec<Stage> {
     vec![
         Stage::Run(Class::of(Cat::N), 3),
-        Stage::Run(Class::from_ranges(&[(0x4E00, 0x9FA5), (0x3040, 0x309F), (0x30A0, 0x30FF)]), usize::MAX),
+        Stage::Run(
+            Class::from_ranges(&[(0x4E00, 0x9FA5), (0x3040, 0x309F), (0x30A0, 0x30FF)]),
+            usize::MAX,
+        ),
         Stage::Ds3,
     ]
 }
@@ -707,37 +1199,109 @@ fn ds_v3_program() -> Vec<Stage> {
 // ------------------------------------------------------------- normalisers
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Norm { Nfc, NfkcLite, Lowercase, Strip(bool, bool), Replace(String, String), Prepend(String) }
+enum Norm {
+    Nfc,
+    NfkcLite,
+    Lowercase,
+    Strip(bool, bool),
+    Replace(String, String),
+    Prepend(String),
+}
 
 fn parse_norm(v: &Value, sp: bool, out: &mut Vec<Norm>, warns: &mut Vec<String>, depth: u32) {
-    if depth > 8 || !v.is_object() { return; }
+    if depth > 8 || !v.is_object() {
+        return;
+    }
     match v.get("type").and_then(Value::as_str) {
-        Some("Sequence") => for n in v.get("normalizers").and_then(Value::as_array).into_iter().flatten().take(64) { parse_norm(n, sp, out, warns, depth + 1) },
+        Some("Sequence") => {
+            for n in v
+                .get("normalizers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .take(64)
+            {
+                parse_norm(n, sp, out, warns, depth + 1)
+            }
+        }
         Some("NFC") => out.push(Norm::Nfc),
-        Some("NFKC") => { out.push(Norm::NfkcLite); warns.push("NFKC normaliser approximated by a lite subset (full-width forms, spaces, ligatures)".into()); }
-        Some("Precompiled") => { out.push(Norm::NfkcLite); warns.push("sentencepiece `Precompiled` charsmap approximated by NFKC-lite".into()); }
+        Some("NFKC") => {
+            out.push(Norm::NfkcLite);
+            warns.push("NFKC normaliser approximated by a lite subset (full-width forms, spaces, ligatures)".into());
+        }
+        Some("Precompiled") => {
+            out.push(Norm::NfkcLite);
+            warns.push("sentencepiece `Precompiled` charsmap approximated by NFKC-lite".into());
+        }
         Some("Lowercase") => out.push(Norm::Lowercase),
-        Some("Strip") => out.push(Norm::Strip(v.get("strip_left").and_then(Value::as_bool).unwrap_or(true), v.get("strip_right").and_then(Value::as_bool).unwrap_or(true))),
-        Some("Prepend") => { if !sp { out.push(Norm::Prepend(v.get("prepend").and_then(Value::as_str).unwrap_or("").to_string())); } }
-        Some("Replace") => match (v.get("pattern").and_then(|p| p.get("String")).and_then(Value::as_str), v.get("content").and_then(Value::as_str)) {
+        Some("Strip") => out.push(Norm::Strip(
+            v.get("strip_left").and_then(Value::as_bool).unwrap_or(true),
+            v.get("strip_right")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        )),
+        Some("Prepend") => {
+            if !sp {
+                out.push(Norm::Prepend(
+                    v.get("prepend")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                ));
+            }
+        }
+        Some("Replace") => match (
+            v.get("pattern")
+                .and_then(|p| p.get("String"))
+                .and_then(Value::as_str),
+            v.get("content").and_then(Value::as_str),
+        ) {
             (Some(" "), Some("\u{2581}")) if sp => {}
-            (Some(p), Some(c)) if !p.is_empty() => out.push(Norm::Replace(p.to_string(), c.to_string())),
-            _ => warns.push("a Replace normaliser with a regex pattern is not supported and was skipped".into()),
+            (Some(p), Some(c)) if !p.is_empty() => {
+                out.push(Norm::Replace(p.to_string(), c.to_string()))
+            }
+            _ => warns.push(
+                "a Replace normaliser with a regex pattern is not supported and was skipped".into(),
+            ),
         },
-        Some(o) => warns.push(format!("normaliser type {o} is not supported and was skipped")),
+        Some(o) => warns.push(format!(
+            "normaliser type {o} is not supported and was skipped"
+        )),
         None => {}
     }
 }
 
 fn apply_norms<'a>(t: &'a str, norms: &[Norm]) -> std::borrow::Cow<'a, str> {
-    if norms.is_empty() { return std::borrow::Cow::Borrowed(t); }
+    if norms.is_empty() {
+        return std::borrow::Cow::Borrowed(t);
+    }
     let mut s = std::borrow::Cow::Borrowed(t);
     for n in norms {
         s = match n {
-            Norm::Nfc => { let changed = match uni::nfc(&s) { std::borrow::Cow::Borrowed(_) => None, std::borrow::Cow::Owned(o) => Some(o) }; match changed { Some(o) => std::borrow::Cow::Owned(o), None => s } }
+            Norm::Nfc => {
+                let changed = match uni::nfc(&s) {
+                    std::borrow::Cow::Borrowed(_) => None,
+                    std::borrow::Cow::Owned(o) => Some(o),
+                };
+                match changed {
+                    Some(o) => std::borrow::Cow::Owned(o),
+                    None => s,
+                }
+            }
             Norm::NfkcLite => std::borrow::Cow::Owned(uni::nfkc_lite(&s)),
             Norm::Lowercase => std::borrow::Cow::Owned(s.to_lowercase()),
-            Norm::Strip(l, r) => { let x = if *l && *r { s.trim() } else if *l { s.trim_start() } else if *r { s.trim_end() } else { &s }; std::borrow::Cow::Owned(x.to_string()) }
+            Norm::Strip(l, r) => {
+                let x = if *l && *r {
+                    s.trim()
+                } else if *l {
+                    s.trim_start()
+                } else if *r {
+                    s.trim_end()
+                } else {
+                    &s
+                };
+                std::borrow::Cow::Owned(x.to_string())
+            }
             Norm::Replace(p, c) => std::borrow::Cow::Owned(s.replace(p.as_str(), c)),
             Norm::Prepend(p) => std::borrow::Cow::Owned(format!("{p}{s}")),
         };
@@ -747,14 +1311,28 @@ fn apply_norms<'a>(t: &'a str, norms: &[Norm]) -> std::borrow::Cow<'a, str> {
 
 // ------------------------------------------------------------ pre-tokenizer
 
-fn is_l(c: char) -> bool { uni::is_letter(c) }
-fn is_n(c: char) -> bool { uni::is_number(c) }
-fn is_ws(c: char) -> bool { c.is_whitespace() }
-fn is_nl(c: char) -> bool { c == '\r' || c == '\n' }
-fn is_p(c: char) -> bool { !c.is_whitespace() && !c.is_alphabetic() && !c.is_numeric() }
-fn at(cs: &[(usize, char)], k: usize) -> Option<char> { cs.get(k).map(|x| x.1) }
+fn is_l(c: char) -> bool {
+    uni::is_letter(c)
+}
+fn is_n(c: char) -> bool {
+    uni::is_number(c)
+}
+fn is_ws(c: char) -> bool {
+    c.is_whitespace()
+}
+fn is_nl(c: char) -> bool {
+    c == '\r' || c == '\n'
+}
+fn is_p(c: char) -> bool {
+    !c.is_whitespace() && !c.is_alphabetic() && !c.is_numeric()
+}
+fn at(cs: &[(usize, char)], k: usize) -> Option<char> {
+    cs.get(k).map(|x| x.1)
+}
 fn run(cs: &[(usize, char)], mut k: usize, f: fn(char) -> bool) -> usize {
-    while k < cs.len() && f(cs[k].1) { k += 1; }
+    while k < cs.len() && f(cs[k].1) {
+        k += 1;
+    }
     k
 }
 
@@ -776,31 +1354,49 @@ fn match_at(cs: &[(usize, char)], i: usize, cfg: &PreCfg) -> usize {
     let c = cs[i].1;
     if c == '\'' {
         let l = contraction(cs, i, cfg.ci_contractions);
-        if l > 0 { return i + l; }
+        if l > 0 {
+            return i + l;
+        }
     }
     if cfg.new_style {
-        if is_l(c) { return run(cs, i, is_l); }
-        if !is_nl(c) && !is_n(c) && at(cs, i + 1).is_some_and(is_l) { return run(cs, i + 1, is_l); }
+        if is_l(c) {
+            return run(cs, i, is_l);
+        }
+        if !is_nl(c) && !is_n(c) && at(cs, i + 1).is_some_and(is_l) {
+            return run(cs, i + 1, is_l);
+        }
         if is_n(c) {
             let mut k = i;
-            while k < n && k - i < cfg.digit_max && is_n(cs[k].1) { k += 1; }
+            while k < n && k - i < cfg.digit_max && is_n(cs[k].1) {
+                k += 1;
+            }
             return k;
         }
         let s = if c == ' ' { i + 1 } else { i };
         if at(cs, s).is_some_and(is_p) {
             let mut k = run(cs, s, is_p);
-            while at(cs, k).is_some_and(is_nl) { k += 1; }
+            while at(cs, k).is_some_and(is_nl) {
+                k += 1;
+            }
             return k;
         }
         if is_ws(c) {
             let e = run(cs, i, is_ws);
-            if let Some(k) = (i..e).rev().find(|&k| is_nl(cs[k].1)) { return k + 1; }
+            if let Some(k) = (i..e).rev().find(|&k| is_nl(cs[k].1)) {
+                return k + 1;
+            }
         }
     } else {
         let s = if c == ' ' { i + 1 } else { i };
-        if at(cs, s).is_some_and(is_l) { return run(cs, s, is_l); }
-        if at(cs, s).is_some_and(is_n) { return run(cs, s, is_n); }
-        if at(cs, s).is_some_and(is_p) { return run(cs, s, is_p); }
+        if at(cs, s).is_some_and(is_l) {
+            return run(cs, s, is_l);
+        }
+        if at(cs, s).is_some_and(is_n) {
+            return run(cs, s, is_n);
+        }
+        if at(cs, s).is_some_and(is_p) {
+            return run(cs, s, is_p);
+        }
     }
     if is_ws(c) {
         let e = run(cs, i, is_ws);
@@ -811,7 +1407,9 @@ fn match_at(cs: &[(usize, char)], i: usize, cfg: &PreCfg) -> usize {
 }
 
 /// Is `c` in `[\p{P}$+<=>^~|]`?
-fn is_punct_sym(c: char) -> bool { uni::is_punct(c) || matches!(c, '$' | '+' | '<' | '=' | '>' | '^' | '~' | '|') }
+fn is_punct_sym(c: char) -> bool {
+    uni::is_punct(c) || matches!(c, '$' | '+' | '<' | '=' | '>' | '^' | '~' | '|')
+}
 
 /// Cut `piece` into [non-matching, matching, …] segments for a per-run predicate, keeping order.
 fn isolate<'a>(piece: &'a str, f: impl Fn(char) -> bool, out: &mut Vec<&'a str>) {
@@ -819,10 +1417,15 @@ fn isolate<'a>(piece: &'a str, f: impl Fn(char) -> bool, out: &mut Vec<&'a str>)
     let mut cur: Option<bool> = None;
     for (i, c) in piece.char_indices() {
         let m = f(c);
-        if cur.is_some_and(|p| p != m) { out.push(&piece[start..i]); start = i; }
+        if cur.is_some_and(|p| p != m) {
+            out.push(&piece[start..i]);
+            start = i;
+        }
         cur = Some(m);
     }
-    if start < piece.len() { out.push(&piece[start..]); }
+    if start < piece.len() {
+        out.push(&piece[start..]);
+    }
 }
 
 /// Isolate every `[0-9]{3}` group (left to right, non-overlapping); leftovers stay as pieces.
@@ -831,13 +1434,19 @@ fn isolate_triples<'a>(piece: &'a str, out: &mut Vec<&'a str>) {
     let (mut start, mut i) = (0, 0);
     while i < b.len() {
         if i + 3 <= b.len() && b[i..i + 3].iter().all(u8::is_ascii_digit) {
-            if start < i { out.push(&piece[start..i]); }
+            if start < i {
+                out.push(&piece[start..i]);
+            }
             out.push(&piece[i..i + 3]);
             i += 3;
             start = i;
-        } else { i += 1; }
+        } else {
+            i += 1;
+        }
     }
-    if start < b.len() { out.push(&piece[start..]); }
+    if start < b.len() {
+        out.push(&piece[start..]);
+    }
 }
 
 fn main_split<'a>(text: &'a str, cfg: &PreCfg, out: &mut Vec<&'a str>) {
@@ -859,19 +1468,37 @@ pub fn split_pieces<'a>(text: &'a str, cfg: &PreCfg) -> Vec<&'a str> {
         return out;
     }
     let mut cur: Vec<&str> = vec![text];
-    let stage = |cur: Vec<&'a str>, f: &dyn Fn(&'a str, &mut Vec<&'a str>)| { let mut n = Vec::with_capacity(cur.len() + 8); for p in cur { f(p, &mut n); } n };
+    let stage = |cur: Vec<&'a str>, f: &dyn Fn(&'a str, &mut Vec<&'a str>)| {
+        let mut n = Vec::with_capacity(cur.len() + 8);
+        for p in cur {
+            f(p, &mut n);
+        }
+        n
+    };
     if cfg.each_digit {
         cur = stage(cur, &|p, o| {
             let mut start = 0;
             for (i, c) in p.char_indices() {
-                if is_n(c) { if start < i { o.push(&p[start..i]); } o.push(&p[i..i + c.len_utf8()]); start = i + c.len_utf8(); }
+                if is_n(c) {
+                    if start < i {
+                        o.push(&p[start..i]);
+                    }
+                    o.push(&p[i..i + c.len_utf8()]);
+                    start = i + c.len_utf8();
+                }
             }
-            if start < p.len() { o.push(&p[start..]); }
+            if start < p.len() {
+                o.push(&p[start..]);
+            }
         });
     }
-    if cfg.punct_first { cur = stage(cur, &|p, o| isolate(p, is_punct_sym, o)); }
+    if cfg.punct_first {
+        cur = stage(cur, &|p, o| isolate(p, is_punct_sym, o));
+    }
     cur = stage(cur, &|p, o| main_split(p, cfg, o));
-    if cfg.triple_digits { cur = stage(cur, &|p, o| isolate_triples(p, o)); }
+    if cfg.triple_digits {
+        cur = stage(cur, &|p, o| isolate_triples(p, o));
+    }
     cur
 }
 
@@ -888,14 +1515,28 @@ fn walk<'a>(v: &'a Value, f: &mut dyn FnMut(&'a Value)) {
 
 fn has_type(v: Option<&Value>, name: &str) -> bool {
     let mut found = false;
-    if let Some(v) = v { walk(v, &mut |x| if x.get("type").and_then(Value::as_str) == Some(name) { found = true; }); }
+    if let Some(v) = v {
+        walk(v, &mut |x| {
+            if x.get("type").and_then(Value::as_str) == Some(name) {
+                found = true;
+            }
+        });
+    }
     found
 }
 
 fn pre_from_regexes(root: &Value) -> PreCfg {
     let mut pats: Vec<&str> = vec![];
     if let Some(p) = root.get("pre_tokenizer") {
-        walk(p, &mut |x| if let Some(r) = x.get("pattern").and_then(|p| p.get("Regex")).and_then(Value::as_str) { pats.push(r); });
+        walk(p, &mut |x| {
+            if let Some(r) = x
+                .get("pattern")
+                .and_then(|p| p.get("Regex"))
+                .and_then(Value::as_str)
+            {
+                pats.push(r);
+            }
+        });
     }
     for p in pats {
         if p.contains(r"[^\r\n\p{L}\p{N}]?\p{L}+") {
@@ -916,23 +1557,47 @@ fn gguf_pre(name: Option<&str>, arch: Option<&str>) -> (PreCfg, Vec<Stage>, bool
     match name {
         // Old conversions carry no `pre` key; llama.cpp then uses its Falcon-like default for all of
         // them, but the models whose Hugging Face tokenizer is plain GPT-2 byte-level get GPT-2.
-        None if matches!(arch, Some("gptneox" | "gpt2" | "gptj" | "mpt" | "bloom" | "stablelm" | "opt")) => (PreCfg::GPT2, vec![], false, None),
+        None if matches!(
+            arch,
+            Some("gptneox" | "gpt2" | "gptj" | "mpt" | "bloom" | "stablelm" | "opt")
+        ) =>
+        {
+            (PreCfg::GPT2, vec![], false, None)
+        }
         None | Some("default" | "falcon") => (PreCfg::FALCON, vec![], false, None),
-        Some("gpt-2" | "gpt2" | "mpt" | "olmo" | "jais" | "stablelm2" | "bloom" | "gpt3-finnish" | "roberta-bpe" | "gpt-neox" | "gptneox" | "pythia") => (PreCfg::GPT2, vec![], false, None),
-        Some("starcoder" | "refact" | "command-r" | "smollm" | "codeshell" | "exaone" | "minerva-7b") => (PreCfg::STARCODER, vec![], false, None),
+        Some(
+            "gpt-2" | "gpt2" | "mpt" | "olmo" | "jais" | "stablelm2" | "bloom" | "gpt3-finnish"
+            | "roberta-bpe" | "gpt-neox" | "gptneox" | "pythia",
+        ) => (PreCfg::GPT2, vec![], false, None),
+        Some(
+            "starcoder" | "refact" | "command-r" | "smollm" | "codeshell" | "exaone" | "minerva-7b",
+        ) => (PreCfg::STARCODER, vec![], false, None),
         Some("deepseek-llm") => (PreCfg::GPT2, ds_llm_program(), false, None),
         Some("deepseek-coder") => (PreCfg::GPT2, ds_coder_program(), false, None),
         Some("deepseek-v3" | "deepseek3-llm") => (PreCfg::GPT2, ds_v3_program(), false, None),
         Some(p) if p.contains("qwen") => (PreCfg::QWEN2, vec![], true, None),
-        Some("llama-bpe" | "llama3" | "llama-3" | "dbrx" | "smaug-bpe" | "poro-chat") => (PreCfg::LLAMA3, vec![], false, None),
-        Some(p) => (PreCfg::LLAMA3, vec![], false, Some(format!("unknown tokenizer.ggml.pre {p:?}: using the Llama-3 pattern"))),
+        Some("llama-bpe" | "llama3" | "llama-3" | "dbrx" | "smaug-bpe" | "poro-chat") => {
+            (PreCfg::LLAMA3, vec![], false, None)
+        }
+        Some(p) => (
+            PreCfg::LLAMA3,
+            vec![],
+            false,
+            Some(format!(
+                "unknown tokenizer.ggml.pre {p:?}: using the Llama-3 pattern"
+            )),
+        ),
     }
 }
 
 impl Tokenizer {
     pub fn from_file(path: &std::path::Path) -> Result<Tokenizer, TokError> {
-        let len = std::fs::metadata(path).map_err(|e| TokError::Invalid(e.to_string()))?.len();
-        if len > 1 << 29 { return invalid("tokenizer file is implausibly large"); }
+        let len = std::fs::metadata(path)
+            .map_err(|e| TokError::Invalid(e.to_string()))?
+            .len();
+        if len > 1 << 29 {
+            return invalid("tokenizer file is implausibly large");
+        }
         let s = std::fs::read_to_string(path).map_err(|e| TokError::Invalid(e.to_string()))?;
         Tokenizer::from_json(&s)
     }
@@ -940,85 +1605,194 @@ impl Tokenizer {
     /// Hugging Face `tokenizer.json` with `model.type` BPE.
     pub fn from_json(s: &str) -> Result<Tokenizer, TokError> {
         let root: Value = serde_json::from_str(s).map_err(|e| TokError::Json(e.to_string()))?;
-        let model = root.get("model").and_then(Value::as_object).ok_or_else(|| TokError::Invalid("no `model` object".into()))?;
+        let model = root
+            .get("model")
+            .and_then(Value::as_object)
+            .ok_or_else(|| TokError::Invalid("no `model` object".into()))?;
         match model.get("type").and_then(Value::as_str) {
             Some("BPE") | None => {}
             Some(o) => return Err(TokError::Unsupported(format!("model type {o}"))),
         }
-        let vocab_obj = model.get("vocab").and_then(Value::as_object).ok_or_else(|| TokError::Invalid("no vocab".into()))?;
-        let added_arr: &[Value] = root.get("added_tokens").and_then(Value::as_array).map_or(&[], Vec::as_slice);
+        let vocab_obj = model
+            .get("vocab")
+            .and_then(Value::as_object)
+            .ok_or_else(|| TokError::Invalid("no vocab".into()))?;
+        let added_arr: &[Value] = root
+            .get("added_tokens")
+            .and_then(Value::as_array)
+            .map_or(&[], Vec::as_slice);
         let limit = MAX_ID_HARD.min(4 * (vocab_obj.len() + added_arr.len()) as u64 + 65_536);
         let mut tokens: Vec<String> = vec![];
         let mut place = |id: u64, s: &str| -> Result<(), TokError> {
-            if id >= limit { return invalid(format!("token id {id} is out of range")); }
-            if tokens.len() <= id as usize { tokens.resize(id as usize + 1, String::new()); }
+            if id >= limit {
+                return invalid(format!("token id {id} is out of range"));
+            }
+            if tokens.len() <= id as usize {
+                tokens.resize(id as usize + 1, String::new());
+            }
             tokens[id as usize] = s.to_string();
             Ok(())
         };
         for (t, id) in vocab_obj {
-            place(id.as_u64().ok_or_else(|| TokError::Invalid(format!("bad id for {t:?}")))?, t)?;
+            place(
+                id.as_u64()
+                    .ok_or_else(|| TokError::Invalid(format!("bad id for {t:?}")))?,
+                t,
+            )?;
         }
         let mut added = vec![];
         for a in added_arr {
-            let (Some(id), Some(c)) = (a.get("id").and_then(Value::as_u64), a.get("content").and_then(Value::as_str)) else { continue };
+            let (Some(id), Some(c)) = (
+                a.get("id").and_then(Value::as_u64),
+                a.get("content").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
             place(id, c)?;
-            added.push((id as u32, a.get("special").and_then(Value::as_bool).unwrap_or(false)));
+            added.push((
+                id as u32,
+                a.get("special").and_then(Value::as_bool).unwrap_or(false),
+            ));
         }
         let vocab = make_vocab(&tokens);
-        let merge_pairs = model.get("merges").and_then(Value::as_array).map_or(&[][..], Vec::as_slice).iter().filter_map(merge_pair);
+        let merge_pairs = model
+            .get("merges")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .filter_map(merge_pair);
         let merge_ids = resolve_merges(&vocab, merge_pairs);
 
-        let byte_level = has_type(root.get("pre_tokenizer"), "ByteLevel") || has_type(root.get("decoder"), "ByteLevel");
-        let kind = if byte_level { Kind::ByteLevel } else { Kind::SentencePiece };
-        let pre = if byte_level { pre_from_regexes(&root) } else { PreCfg::GPT2 };
+        let byte_level = has_type(root.get("pre_tokenizer"), "ByteLevel")
+            || has_type(root.get("decoder"), "ByteLevel");
+        let kind = if byte_level {
+            Kind::ByteLevel
+        } else {
+            Kind::SentencePiece
+        };
+        let pre = if byte_level {
+            pre_from_regexes(&root)
+        } else {
+            PreCfg::GPT2
+        };
         let mut warns: Vec<String> = vec![];
-        let mut prog = if byte_level { parse_program(root.get("pre_tokenizer"), &mut warns) } else { vec![] };
+        let mut prog = if byte_level {
+            parse_program(root.get("pre_tokenizer"), &mut warns)
+        } else {
+            vec![]
+        };
         // Programs made only of the hand-written families are covered by the legacy `pre` path.
-        if prog.iter().all(|st| matches!(st, Stage::Main(_))) { prog.clear(); }
+        if prog.iter().all(|st| matches!(st, Stage::Main(_))) {
+            prog.clear();
+        }
         let mut norms = vec![];
-        if let Some(n) = root.get("normalizer") { parse_norm(n, !byte_level, &mut norms, &mut warns, 0); }
-        let norm = root.get("normalizer").map(Value::to_string).unwrap_or_default();
-        let pre_s = root.get("pre_tokenizer").map(Value::to_string).unwrap_or_default();
-        let add_prefix = !byte_level && (norm.contains("\"Prepend\"")
-            || (pre_s.contains("Metaspace") && !pre_s.contains("\"prepend_scheme\":\"never\"") && !pre_s.contains("\"add_prefix_space\":false")));
+        if let Some(n) = root.get("normalizer") {
+            parse_norm(n, !byte_level, &mut norms, &mut warns, 0);
+        }
+        let norm = root
+            .get("normalizer")
+            .map(Value::to_string)
+            .unwrap_or_default();
+        let pre_s = root
+            .get("pre_tokenizer")
+            .map(Value::to_string)
+            .unwrap_or_default();
+        let add_prefix = !byte_level
+            && (norm.contains("\"Prepend\"")
+                || (pre_s.contains("Metaspace")
+                    && !pre_s.contains("\"prepend_scheme\":\"never\"")
+                    && !pre_s.contains("\"add_prefix_space\":false")));
 
         // bos / eos from a TemplateProcessing "single" template: specials before / after the sequence.
         let (mut bos, mut eos) = (None, None);
         if let Some(pp) = root.get("post_processor") {
             let mut singles: Vec<&Vec<Value>> = vec![];
-            walk(pp, &mut |x| if x.get("type").and_then(Value::as_str) == Some("TemplateProcessing")
-                && let Some(a) = x.get("single").and_then(Value::as_array) { singles.push(a); });
+            walk(pp, &mut |x| {
+                if x.get("type").and_then(Value::as_str) == Some("TemplateProcessing")
+                    && let Some(a) = x.get("single").and_then(Value::as_array)
+                {
+                    singles.push(a);
+                }
+            });
             if let Some(items) = singles.first() {
                 let mut seen_seq = false;
                 for it in items.iter() {
-                    if it.get("Sequence").is_some() { seen_seq = true; continue; }
-                    let id = it.get("SpecialToken").and_then(|s| s.get("id")).and_then(Value::as_str).and_then(|n| vocab.get(n)).copied();
-                    if seen_seq { eos = eos.or(id) } else { bos = bos.or(id) }
+                    if it.get("Sequence").is_some() {
+                        seen_seq = true;
+                        continue;
+                    }
+                    let id = it
+                        .get("SpecialToken")
+                        .and_then(|s| s.get("id"))
+                        .and_then(Value::as_str)
+                        .and_then(|n| vocab.get(n))
+                        .copied();
+                    if seen_seq {
+                        eos = eos.or(id)
+                    } else {
+                        bos = bos.or(id)
+                    }
                 }
             }
         }
-        let unk = model.get("unk_token").and_then(Value::as_str).and_then(|u| vocab.get(u)).copied();
-        let ignore_merges = model.get("ignore_merges").and_then(Value::as_bool).unwrap_or(false);
-        Ok(assemble(Parts { kind, pre, tokens, vocab, merge_ids, added, unk, bos, eos, add_prefix, ignore_merges, prog, norms, warns }))
+        let unk = model
+            .get("unk_token")
+            .and_then(Value::as_str)
+            .and_then(|u| vocab.get(u))
+            .copied();
+        let ignore_merges = model
+            .get("ignore_merges")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Ok(assemble(Parts {
+            kind,
+            pre,
+            tokens,
+            vocab,
+            merge_ids,
+            added,
+            unk,
+            bos,
+            eos,
+            add_prefix,
+            ignore_merges,
+            prog,
+            norms,
+            warns,
+        }))
     }
 
     /// GGUF `tokenizer.ggml.*` metadata. `gpt2` = byte-level BPE; `llama` = SentencePiece
     /// (merge order derived from token scores when the file carries no merge list).
     pub fn from_gguf(g: &Gguf) -> Result<Tokenizer, TokError> {
         let meta = |k: &str| g.meta.get(k);
-        let model = meta("tokenizer.ggml.model").and_then(GValue::as_str).ok_or_else(|| TokError::Invalid("no tokenizer.ggml.model".into()))?;
+        let model = meta("tokenizer.ggml.model")
+            .and_then(GValue::as_str)
+            .ok_or_else(|| TokError::Invalid("no tokenizer.ggml.model".into()))?;
         let kind = match model {
             "gpt2" => Kind::ByteLevel,
             "llama" => Kind::SentencePiece,
             o => return Err(TokError::Unsupported(format!("GGUF tokenizer model {o}"))),
         };
         let tokens: Vec<String> = match meta("tokenizer.ggml.tokens") {
-            Some(GValue::Array(a)) => a.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect(),
+            Some(GValue::Array(a)) => a
+                .iter()
+                .map(|x| x.as_str().unwrap_or("").to_string())
+                .collect(),
             _ => return invalid("no tokenizer.ggml.tokens"),
         };
-        if tokens.is_empty() { return invalid("empty vocabulary"); }
+        if tokens.is_empty() {
+            return invalid("empty vocabulary");
+        }
         let types: Vec<i64> = match meta("tokenizer.ggml.token_type") {
-            Some(GValue::Array(a)) => a.iter().map(|x| match x { GValue::U64(v) => *v as i64, GValue::I64(v) => *v, _ => 1 }).collect(),
+            Some(GValue::Array(a)) => a
+                .iter()
+                .map(|x| match x {
+                    GValue::U64(v) => *v as i64,
+                    GValue::I64(v) => *v,
+                    _ => 1,
+                })
+                .collect(),
             _ => vec![],
         };
         let scores: Vec<f64> = match meta("tokenizer.ggml.scores") {
@@ -1027,7 +1801,15 @@ impl Tokenizer {
         };
         let vocab = make_vocab(&tokens);
         let merge_strs: Option<Vec<(String, String)>> = match meta("tokenizer.ggml.merges") {
-            Some(GValue::Array(a)) if !a.is_empty() => Some(a.iter().filter_map(|x| x.as_str()?.split_once(' ').map(|(l, r)| (l.to_string(), r.to_string()))).collect()),
+            Some(GValue::Array(a)) if !a.is_empty() => Some(
+                a.iter()
+                    .filter_map(|x| {
+                        x.as_str()?
+                            .split_once(' ')
+                            .map(|(l, r)| (l.to_string(), r.to_string()))
+                    })
+                    .collect(),
+            ),
             _ => None,
         };
         let merge_ids = match (merge_strs, kind) {
@@ -1035,32 +1817,84 @@ impl Tokenizer {
             (None, Kind::SentencePiece) => derive_merges(&tokens, &vocab, &types, &scores),
             (None, Kind::ByteLevel) => return invalid("byte-level BPE vocabulary without merges"),
         };
-        let added = types.iter().enumerate().filter(|(i, t)| (**t == 3 || **t == 4) && *i < tokens.len()).map(|(i, t)| (i as u32, *t == 3)).collect();
-        let id_of = |k: &str| meta(k).and_then(GValue::as_u64).filter(|v| (*v as usize) < tokens.len()).map(|v| v as u32);
-        let (pre, prog, nfc, warn) = gguf_pre(meta("tokenizer.ggml.pre").and_then(GValue::as_str), g.architecture());
+        let added = types
+            .iter()
+            .enumerate()
+            .filter(|(i, t)| (**t == 3 || **t == 4) && *i < tokens.len())
+            .map(|(i, t)| (i as u32, *t == 3))
+            .collect();
+        let id_of = |k: &str| {
+            meta(k)
+                .and_then(GValue::as_u64)
+                .filter(|v| (*v as usize) < tokens.len())
+                .map(|v| v as u32)
+        };
+        let (pre, prog, nfc, warn) = gguf_pre(
+            meta("tokenizer.ggml.pre").and_then(GValue::as_str),
+            g.architecture(),
+        );
         let (prog, norms, warns) = if kind == Kind::ByteLevel {
-            (prog, if nfc { vec![Norm::Nfc] } else { vec![] }, warn.into_iter().collect())
-        } else { (vec![], vec![], vec![]) };
-        let add_prefix = match meta("tokenizer.ggml.add_space_prefix") { Some(GValue::Bool(b)) => *b, _ => true };
-        let (unk, bos, eos) = (id_of("tokenizer.ggml.unknown_token_id"), id_of("tokenizer.ggml.bos_token_id"), id_of("tokenizer.ggml.eos_token_id"));
-        Ok(assemble(Parts { kind, pre, tokens, vocab, merge_ids, added, unk, bos, eos, add_prefix: add_prefix && kind == Kind::SentencePiece, ignore_merges: kind == Kind::ByteLevel, prog, norms, warns }))
+            (
+                prog,
+                if nfc { vec![Norm::Nfc] } else { vec![] },
+                warn.into_iter().collect(),
+            )
+        } else {
+            (vec![], vec![], vec![])
+        };
+        let add_prefix = match meta("tokenizer.ggml.add_space_prefix") {
+            Some(GValue::Bool(b)) => *b,
+            _ => true,
+        };
+        let (unk, bos, eos) = (
+            id_of("tokenizer.ggml.unknown_token_id"),
+            id_of("tokenizer.ggml.bos_token_id"),
+            id_of("tokenizer.ggml.eos_token_id"),
+        );
+        Ok(assemble(Parts {
+            kind,
+            pre,
+            tokens,
+            vocab,
+            merge_ids,
+            added,
+            unk,
+            bos,
+            eos,
+            add_prefix: add_prefix && kind == Kind::SentencePiece,
+            ignore_merges: kind == Kind::ByteLevel,
+            prog,
+            norms,
+            warns,
+        }))
     }
 }
 
 /// Merge order for SentencePiece vocabularies: a pair merges if the joined text is a token, and
 /// higher-scored results merge first (ties: lower id first).
-fn derive_merges(tokens: &[String], vocab: &HashMap<String, u32>, types: &[i64], scores: &[f64]) -> Vec<(u32, u32, u32)> {
+fn derive_merges(
+    tokens: &[String],
+    vocab: &HashMap<String, u32>,
+    types: &[i64],
+    scores: &[f64],
+) -> Vec<(u32, u32, u32)> {
     let normal = |id: u32| types.get(id as usize).is_none_or(|t| *t == 1);
     let mut c: Vec<(f64, u32, u32, u32)> = vec![];
     for (id, t) in tokens.iter().enumerate() {
         let id = id as u32;
         let n = t.chars().count();
-        if !(2..=64).contains(&n) || vocab.get(t) != Some(&id) || !normal(id) { continue; }
+        if !(2..=64).contains(&n) || vocab.get(t) != Some(&id) || !normal(id) {
+            continue;
+        }
         let score = scores.get(id as usize).copied().unwrap_or(0.0);
         for (bi, _) in t.char_indices().skip(1) {
             let (l, r) = t.split_at(bi);
             if let (Some(&li), Some(&ri)) = (vocab.get(l), vocab.get(r))
-                && normal(li) && normal(ri) { c.push((score, li, ri, id)); }
+                && normal(li)
+                && normal(ri)
+            {
+                c.push((score, li, ri, id));
+            }
         }
     }
     c.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.3.cmp(&b.3)));
@@ -1069,52 +1903,91 @@ fn derive_merges(tokens: &[String], vocab: &HashMap<String, u32>, types: &[i64],
 
 // ------------------------------------------------------------------ encoding
 
-enum Seg<'a> { Text(&'a str), Tok(u32) }
+enum Seg<'a> {
+    Text(&'a str),
+    Tok(u32),
+}
 
 impl Tokenizer {
     /// Unicode NFC composition (borrowed when the text is already composed).
-    pub fn nfc(s: &str) -> std::borrow::Cow<'_, str> { uni::nfc(s) }
-    pub fn vocab_size(&self) -> usize { self.tokens.len() }
+    pub fn nfc(s: &str) -> std::borrow::Cow<'_, str> {
+        uni::nfc(s)
+    }
+    pub fn vocab_size(&self) -> usize {
+        self.tokens.len()
+    }
     /// Things in the model file this tokenizer could not honour exactly (unknown regex shapes,
     /// unsupported normalisers, approximations). Empty means the file was understood completely.
-    pub fn warnings(&self) -> &[String] { &self.warns }
+    pub fn warnings(&self) -> &[String] {
+        &self.warns
+    }
     /// The pieces the pre-tokenizer cuts `text` into (byte-level models; after normalisation).
     pub fn pre_tokenize(&self, text: &str) -> Vec<String> {
         let t = apply_norms(text, &self.norms);
-        let ps = if self.prog.is_empty() { split_pieces(&t, &self.pre) } else { run_program(&t, &self.prog) };
+        let ps = if self.prog.is_empty() {
+            split_pieces(&t, &self.pre)
+        } else {
+            run_program(&t, &self.prog)
+        };
         ps.into_iter().map(str::to_string).collect()
     }
-    pub fn token_to_id(&self, t: &str) -> Option<u32> { self.vocab.get(t).copied() }
-    pub fn id_to_token(&self, id: u32) -> Option<&str> { self.tokens.get(id as usize).map(String::as_str) }
-    pub fn is_special(&self, id: u32) -> bool { self.added_flag.get(id as usize) == Some(&2) }
+    pub fn token_to_id(&self, t: &str) -> Option<u32> {
+        self.vocab.get(t).copied()
+    }
+    pub fn id_to_token(&self, id: u32) -> Option<&str> {
+        self.tokens.get(id as usize).map(String::as_str)
+    }
+    pub fn is_special(&self, id: u32) -> bool {
+        self.added_flag.get(id as usize) == Some(&2)
+    }
 
     fn segments<'a>(&self, text: &'a str) -> Vec<Seg<'a>> {
-        if self.added.is_empty() { return vec![Seg::Text(text)]; }
+        if self.added.is_empty() {
+            return vec![Seg::Text(text)];
+        }
         let b = text.as_bytes();
         let (mut out, mut i, mut last) = (vec![], 0, 0);
-        'scan: while i < b.len() {
-            if let Some(c) = self.added_first.get(&b[i]) {
-                for &k in c {
-                    let (s, id) = &self.added[k];
-                    if b[i..].starts_with(s.as_bytes()) {
-                        if last < i { out.push(Seg::Text(&text[last..i])); }
-                        out.push(Seg::Tok(*id));
-                        i += s.len();
-                        last = i;
-                        continue 'scan;
-                    }
+        while i < b.len() {
+            // walk the trie from `i`; the match is the earliest-listed (longest) added token seen
+            let (mut n, mut j, mut best): (usize, usize, Option<(u32, usize)>) = (0, i, None);
+            while j < b.len() {
+                let Ok(p) = self.added_trie[n]
+                    .kids
+                    .binary_search_by_key(&b[j], |&(c, _)| c)
+                else {
+                    break;
+                };
+                n = self.added_trie[n].kids[p].1 as usize;
+                j += 1;
+                if let Some(k) = self.added_trie[n].end
+                    && best.is_none_or(|(bk, _)| k < bk)
+                {
+                    best = Some((k, j));
                 }
             }
-            i += 1;
+            if let Some((k, end)) = best {
+                if last < i {
+                    out.push(Seg::Text(&text[last..i]));
+                }
+                out.push(Seg::Tok(self.added[k as usize].1));
+                i = end;
+                last = i;
+            } else {
+                i += 1;
+            }
         }
-        if last < b.len() { out.push(Seg::Text(&text[last..])); }
+        if last < b.len() {
+            out.push(Seg::Text(&text[last..]));
+        }
         out
     }
 
     /// Merge a symbol sequence by rank using a heap over a doubly linked list.
     fn bpe(&self, ids: Vec<u32>) -> Vec<u32> {
         let n = ids.len();
-        if n < 2 || self.merges.is_empty() { return ids; }
+        if n < 2 || self.merges.is_empty() {
+            return ids;
+        }
         const NONE: usize = usize::MAX;
         let mut id = ids;
         let mut next: Vec<usize> = (1..=n).map(|k| if k < n { k } else { NONE }).collect();
@@ -1122,53 +1995,99 @@ impl Tokenizer {
         let mut alive = vec![true; n];
         let mut heap = BinaryHeap::new();
         for k in 0..n - 1 {
-            if let Some(&(r, _)) = self.merges.get(&(id[k], id[k + 1])) { heap.push(Reverse((r, k, id[k], id[k + 1]))); }
+            if let Some(&(r, _)) = self.merges.get(&(id[k], id[k + 1])) {
+                heap.push(Reverse((r, k, id[k], id[k + 1])));
+            }
         }
         while let Some(Reverse((_, l, li, ri))) = heap.pop() {
-            if !alive[l] { continue; }
+            if !alive[l] {
+                continue;
+            }
             let r = next[l];
-            if r == NONE || id[l] != li || id[r] != ri { continue; }
-            let Some(&(_, m)) = self.merges.get(&(li, ri)) else { continue };
+            if r == NONE || id[l] != li || id[r] != ri {
+                continue;
+            }
+            let Some(&(_, m)) = self.merges.get(&(li, ri)) else {
+                continue;
+            };
             id[l] = m;
             alive[r] = false;
             let nr = next[r];
             next[l] = nr;
             if nr != NONE {
                 prev[nr] = l;
-                if let Some(&(rk, _)) = self.merges.get(&(m, id[nr])) { heap.push(Reverse((rk, l, m, id[nr]))); }
+                if let Some(&(rk, _)) = self.merges.get(&(m, id[nr])) {
+                    heap.push(Reverse((rk, l, m, id[nr])));
+                }
             }
             let p = prev[l];
             if p != NONE
-                && let Some(&(rk, _)) = self.merges.get(&(id[p], m)) { heap.push(Reverse((rk, p, id[p], m))); }
+                && let Some(&(rk, _)) = self.merges.get(&(id[p], m))
+            {
+                heap.push(Reverse((rk, p, id[p], m)));
+            }
         }
         let mut out = Vec::with_capacity(n);
         let mut k = 0;
-        while k != NONE { out.push(id[k]); k = next[k]; }
+        while k != NONE {
+            out.push(id[k]);
+            k = next[k];
+        }
         out
     }
 
     fn encode_bytelevel(&self, text: &str, out: &mut Vec<u32>) {
-        let pieces = if self.prog.is_empty() { split_pieces(text, &self.pre) } else { run_program(text, &self.prog) };
-        for piece in pieces {
+        let pieces = if self.prog.is_empty() {
+            split_pieces(text, &self.pre)
+        } else {
+            run_program(text, &self.prog)
+        };
+        for piece in pieces
+            .into_iter()
+            .flat_map(|p| windows(p, MAX_BPE_PIECE, false))
+        {
             if self.ignore_merges {
                 let mapped: String = piece.bytes().map(|b| self.b2c[b as usize]).collect();
-                if let Some(&id) = self.vocab.get(&mapped) { out.push(id); continue; }
+                if let Some(&id) = self.vocab.get(&mapped) {
+                    out.push(id);
+                    continue;
+                }
             }
-            let ids: Vec<u32> = piece.bytes().filter_map(|b| self.byte_ids[b as usize].or(self.unk)).collect();
+            let ids: Vec<u32> = piece
+                .bytes()
+                .filter_map(|b| self.byte_ids[b as usize].or(self.unk))
+                .collect();
             out.extend(self.bpe(ids));
         }
     }
 
     fn encode_sp(&self, text: &str, prefix: bool, out: &mut Vec<u32>) {
+        let parts = windows(text, MAX_SP_SEGMENT, true);
+        if parts.len() > 1 {
+            for (n, part) in parts.into_iter().enumerate() {
+                self.encode_sp_one(part, prefix && n == 0, out);
+            }
+            return;
+        }
+        self.encode_sp_one(text, prefix, out);
+    }
+
+    fn encode_sp_one(&self, text: &str, prefix: bool, out: &mut Vec<u32>) {
         let mut ids = vec![];
         let mut buf = [0u8; 4];
         let mut symbols = text.chars().map(|c| if c == ' ' { SPACE } else { c });
         let first = if prefix { Some(SPACE) } else { None };
         for ch in first.into_iter().chain(&mut symbols) {
             let s = ch.encode_utf8(&mut buf);
-            if let Some(&id) = self.vocab.get(&*s) { ids.push(id); continue; }
+            if let Some(&id) = self.vocab.get(&*s) {
+                ids.push(id);
+                continue;
+            }
             let bytes: Option<Vec<u32>> = s.bytes().map(|b| self.byte_ids[b as usize]).collect();
-            match bytes { Some(v) => ids.extend(v), None => ids.extend(self.unk) }
+            match bytes {
+                Some(v) => ids.extend(v),
+                None => ids.extend(self.unk),
+            }
         }
         out.extend(self.bpe(ids));
     }
@@ -1176,21 +2095,31 @@ impl Tokenizer {
     /// Text → token ids. `add_bos` prepends the model's BOS token if it has one.
     pub fn encode(&self, text: &str, add_bos: bool) -> Vec<u32> {
         let mut out = Vec::with_capacity(text.len() / 3 + 2);
-        if add_bos { out.extend(self.bos); }
+        if add_bos {
+            out.extend(self.bos);
+        }
         for (idx, seg) in self.segments(text).into_iter().enumerate() {
             match seg {
                 Seg::Tok(id) => out.push(id),
-                Seg::Text(t) => { let t = apply_norms(t, &self.norms); let t: &str = &t; match self.kind {
-                    Kind::ByteLevel => self.encode_bytelevel(t, &mut out),
-                    Kind::SentencePiece => self.encode_sp(t, idx == 0 && self.add_prefix, &mut out),
-                } }
+                Seg::Text(t) => {
+                    let t = apply_norms(t, &self.norms);
+                    let t: &str = &t;
+                    match self.kind {
+                        Kind::ByteLevel => self.encode_bytelevel(t, &mut out),
+                        Kind::SentencePiece => {
+                            self.encode_sp(t, idx == 0 && self.add_prefix, &mut out)
+                        }
+                    }
+                }
             }
         }
         out
     }
 
     /// Token ids → text (special tokens are written out as their text).
-    pub fn decode(&self, ids: &[u32]) -> String { self.decode_with(ids, false) }
+    pub fn decode(&self, ids: &[u32]) -> String {
+        self.decode_with(ids, false)
+    }
 
     pub fn decode_with(&self, ids: &[u32], skip_special: bool) -> String {
         let mut d = self.decoder();
@@ -1201,14 +2130,31 @@ impl Tokenizer {
     }
 
     /// Streaming decoder: feed ids one by one, get text as soon as it is complete UTF-8.
-    pub fn decoder(&self) -> Decoder<'_> { Decoder { tok: self, pending: vec![], first: true, skip_special: false } }
+    pub fn decoder(&self) -> Decoder<'_> {
+        Decoder {
+            tok: self,
+            pending: vec![],
+            first: true,
+            skip_special: false,
+        }
+    }
 
     /// Append the raw bytes of one token; true if the token contributed any text.
-    fn append_token_bytes(&self, id: u32, first: bool, skip_special: bool, out: &mut Vec<u8>) -> bool {
-        let Some(t) = self.tokens.get(id as usize) else { return false };
+    fn append_token_bytes(
+        &self,
+        id: u32,
+        first: bool,
+        skip_special: bool,
+        out: &mut Vec<u8>,
+    ) -> bool {
+        let Some(t) = self.tokens.get(id as usize) else {
+            return false;
+        };
         let flag = self.added_flag.get(id as usize).copied().unwrap_or(0);
         if flag != 0 {
-            if skip_special && flag == 2 { return false; }
+            if skip_special && flag == 2 {
+                return false;
+            }
             out.extend_from_slice(t.as_bytes());
             return !t.is_empty();
         }
@@ -1223,13 +2169,22 @@ impl Tokenizer {
                 !t.is_empty()
             }
             Kind::SentencePiece => {
-                if let Some(b) = parse_byte_token(t) { out.push(b); return true; }
+                if let Some(b) = parse_byte_token(t) {
+                    out.push(b);
+                    return true;
+                }
                 let start = out.len();
                 for ch in t.chars() {
-                    if ch == SPACE { out.push(b' ') } else { out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes()) }
+                    if ch == SPACE {
+                        out.push(b' ')
+                    } else {
+                        out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes())
+                    }
                 }
                 let produced = out.len() > start;
-                if first && self.add_prefix && produced && out[start] == b' ' { out.remove(start); }
+                if first && self.add_prefix && produced && out[start] == b' ' {
+                    out.remove(start);
+                }
                 produced
             }
         }
@@ -1245,25 +2200,42 @@ pub struct Decoder<'a> {
 }
 impl Decoder<'_> {
     pub fn push(&mut self, id: u32) -> String {
-        if self.tok.append_token_bytes(id, self.first, self.skip_special, &mut self.pending) { self.first = false; }
+        if self
+            .tok
+            .append_token_bytes(id, self.first, self.skip_special, &mut self.pending)
+        {
+            self.first = false;
+        }
         self.drain(false)
     }
     /// Flush anything left over (an incomplete trailing sequence becomes U+FFFD).
-    pub fn finish(&mut self) -> String { self.drain(true) }
+    pub fn finish(&mut self) -> String {
+        self.drain(true)
+    }
 
     fn drain(&mut self, flush: bool) -> String {
         let mut out = String::new();
         loop {
             match std::str::from_utf8(&self.pending) {
-                Ok(s) => { out.push_str(s); self.pending.clear(); return out; }
+                Ok(s) => {
+                    out.push_str(s);
+                    self.pending.clear();
+                    return out;
+                }
                 Err(e) => {
                     let v = e.valid_up_to();
                     out.push_str(&String::from_utf8_lossy(&self.pending[..v]));
                     match e.error_len() {
-                        Some(n) => { out.push('\u{fffd}'); self.pending.drain(..v + n); }
+                        Some(n) => {
+                            out.push('\u{fffd}');
+                            self.pending.drain(..v + n);
+                        }
                         None => {
                             self.pending.drain(..v);
-                            if flush { out.push('\u{fffd}'); self.pending.clear(); }
+                            if flush {
+                                out.push('\u{fffd}');
+                                self.pending.clear();
+                            }
                             return out;
                         }
                     }
@@ -1281,7 +2253,9 @@ mod tests {
     const LLAMA3_RE: &str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
     const QWEN2_RE: &str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 
-    fn gpt2_pre() -> Value { json!({"type": "ByteLevel", "add_prefix_space": false, "use_regex": true}) }
+    fn gpt2_pre() -> Value {
+        json!({"type": "ByteLevel", "add_prefix_space": false, "use_regex": true})
+    }
     fn regex_pre(re: &str) -> Value {
         json!({"type": "Sequence", "pretokenizers": [
             {"type": "Split", "pattern": {"Regex": re}, "behavior": "Isolated", "invert": false},
@@ -1293,32 +2267,141 @@ mod tests {
         let (t, _) = byte_tables();
         let mut vocab = serde_json::Map::new();
         let mut n = 0u64;
-        for c in t.iter() { vocab.insert(c.to_string(), n.into()); n += 1; }
+        for c in t.iter() {
+            vocab.insert(c.to_string(), n.into());
+            n += 1;
+        }
         let mut ms = vec![];
         for (a, b) in merges {
             let m = format!("{a}{b}");
-            if !vocab.contains_key(&m) { vocab.insert(m, n.into()); n += 1; }
+            if !vocab.contains_key(&m) {
+                vocab.insert(m, n.into());
+                n += 1;
+            }
             ms.push(Value::String(format!("{a} {b}")));
         }
         let mut ad = vec![];
-        for (c, sp) in added { ad.push(json!({"id": n, "content": c, "special": sp})); n += 1; }
+        for (c, sp) in added {
+            ad.push(json!({"id": n, "content": c, "special": sp}));
+            n += 1;
+        }
         let j = json!({"model": {"type": "BPE", "vocab": vocab, "merges": ms, "ignore_merges": ignore},
             "added_tokens": ad, "pre_tokenizer": pre});
         Tokenizer::from_json(&j.to_string()).unwrap()
     }
     fn hello() -> Tokenizer {
-        bl(&[("h", "e"), ("l", "l"), ("he", "ll"), ("hell", "o"), ("Ġ", "hello")], &[("<|bos|>", true), ("<|eos|>", true)], gpt2_pre(), false)
+        bl(
+            &[
+                ("h", "e"),
+                ("l", "l"),
+                ("he", "ll"),
+                ("hell", "o"),
+                ("Ġ", "hello"),
+            ],
+            &[("<|bos|>", true), ("<|eos|>", true)],
+            gpt2_pre(),
+            false,
+        )
     }
 
-    fn rng(s: &mut u64) -> u64 { *s ^= *s << 13; *s ^= *s >> 7; *s ^= *s << 17; *s }
+    #[test]
+    fn many_added_tokens_with_a_shared_prefix_scan_in_linear_time() {
+        // 250 added tokens that all start with the same 25 bytes, and a 4 MiB body made of that
+        // prefix over and over (never completing a token): the old per-token scan did ~1e9
+        // comparisons here; the trie does one short walk per position.
+        let names: Vec<String> = (0..250)
+            .map(|i| format!("<|reserved_special_token_{i}|>"))
+            .collect();
+        let added: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), true)).collect();
+        let t = bl(&[("h", "e")], &added, gpt2_pre(), false);
+        let body = "<|reserved_special_token_".repeat((4 << 20) / 25);
+        let start = std::time::Instant::now();
+        let _ = t.encode(&body, false);
+        assert!(start.elapsed().as_secs() < 20, "took {:?}", start.elapsed());
+        // and the matcher still finds the right token: longest listed first, ids in order
+        let ids = t.encode(
+            "a<|reserved_special_token_7|>b<|reserved_special_token_249|>",
+            false,
+        );
+        let (id7, id249) = (t.vocab[&names[7]], t.vocab[&names[249]]);
+        assert!(ids.contains(&id7) && ids.contains(&id249));
+        assert_eq!(ids.iter().filter(|&&i| i == id7 || i == id249).count(), 2);
+        // a prefix of a token is plain text
+        assert!(
+            !t.encode("<|reserved_special_token_7|", false)
+                .contains(&id7)
+        );
+    }
+
+    #[test]
+    fn overlong_unbroken_pieces_are_windowed_not_merged_whole() {
+        let t = hello();
+        // 4 MiB with no space or punctuation: one huge piece for the pre-tokenizer
+        let body = "hello".repeat((4 << 20) / 5);
+        let start = std::time::Instant::now();
+        let ids = t.encode(&body, false);
+        assert!(start.elapsed().as_secs() < 20, "took {:?}", start.elapsed());
+        assert!(!ids.is_empty());
+        assert_eq!(
+            t.decode(&ids),
+            body,
+            "windows must not lose or reorder text"
+        );
+        // determinism, and short pieces are untouched by the window
+        assert_eq!(t.encode(&body, false), ids);
+        assert_eq!(
+            t.encode("hello hello", false),
+            t.encode("hello", false)
+                .into_iter()
+                .chain(t.encode(" hello", false))
+                .collect::<Vec<_>>()
+        );
+        // window edges are character boundaries (multi-byte text must round-trip)
+        let uni = "ș".repeat(40_000);
+        assert_eq!(t.decode(&t.encode(&uni, false)), uni);
+    }
+
+    #[test]
+    fn windows_cut_at_char_boundaries_and_prefer_spaces() {
+        let s = "aș ".repeat(30_000);
+        for at_space in [false, true] {
+            let w = windows(&s, 1000, at_space);
+            assert_eq!(w.concat(), s);
+            assert!(w.iter().all(|p| p.len() <= 1000 && !p.is_empty()));
+        }
+        assert!(
+            windows(&s, 1000, true)
+                .iter()
+                .rev()
+                .skip(1)
+                .all(|p| p.ends_with(' '))
+        );
+        assert_eq!(windows("short", 1000, true), vec!["short"]);
+    }
+
+    fn rng(s: &mut u64) -> u64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    }
     fn nasty(seed: u64, max: usize) -> String {
         let mut s = seed | 1;
-        let alpha: Vec<char> = "aAzZ09 \n\r\t'\".,!?-_é😀漢字日本語العربية\u{0301}\u{200d}\u{0}\u{ffff}<|>ß Σ٣".chars().collect();
+        let alpha: Vec<char> =
+            "aAzZ09 \n\r\t'\".,!?-_é😀漢字日本語العربية\u{0301}\u{200d}\u{0}\u{ffff}<|>ß Σ٣"
+                .chars()
+                .collect();
         let len = (rng(&mut s) % max as u64) as usize;
-        (0..len).filter_map(|_| {
-            let r = rng(&mut s);
-            if r.is_multiple_of(5) { char::from_u32((r >> 8) as u32 % 0x11_0000) } else { Some(alpha[(r >> 8) as usize % alpha.len()]) }
-        }).collect()
+        (0..len)
+            .filter_map(|_| {
+                let r = rng(&mut s);
+                if r.is_multiple_of(5) {
+                    char::from_u32((r >> 8) as u32 % 0x11_0000)
+                } else {
+                    Some(alpha[(r >> 8) as usize % alpha.len()])
+                }
+            })
+            .collect()
     }
 
     // ----------------------------------------------------------- splitting
@@ -1326,7 +2409,10 @@ mod tests {
     #[test]
     fn gpt2_pieces() {
         let p = |t| split_pieces(t, &PreCfg::GPT2);
-        assert_eq!(p("Hello, world!  x"), ["Hello", ",", " world", "!", " ", " x"]);
+        assert_eq!(
+            p("Hello, world!  x"),
+            ["Hello", ",", " world", "!", " ", " x"]
+        );
         assert_eq!(p("don't DON'T"), ["don", "'t", " DON", "'", "T"]);
         assert_eq!(p("a  \n b"), ["a", "  \n", " b"]);
         assert_eq!(p("x 12 345.6"), ["x", " 12", " 345", ".", "6"]);
@@ -1337,7 +2423,10 @@ mod tests {
     #[test]
     fn llama3_and_qwen_pieces() {
         let p = |t, c| split_pieces(t, &c);
-        assert_eq!(p("Hello, world!\n\nfoo 12345", PreCfg::LLAMA3), ["Hello", ",", " world", "!\n\n", "foo", " ", "123", "45"]);
+        assert_eq!(
+            p("Hello, world!\n\nfoo 12345", PreCfg::LLAMA3),
+            ["Hello", ",", " world", "!\n\n", "foo", " ", "123", "45"]
+        );
         assert_eq!(p("DON'T go", PreCfg::LLAMA3), ["DON", "'T", " go"]);
         assert_eq!(p("12345", PreCfg::QWEN2), ["1", "2", "3", "4", "5"]);
         assert_eq!(p("a\r\n  \nb", PreCfg::LLAMA3), ["a", "\r\n  \n", "b"]);
@@ -1359,7 +2448,10 @@ mod tests {
 
     #[test]
     fn regex_in_the_file_selects_the_pattern() {
-        assert_eq!(bl(&[], &[], regex_pre(LLAMA3_RE), false).pre, PreCfg::LLAMA3);
+        assert_eq!(
+            bl(&[], &[], regex_pre(LLAMA3_RE), false).pre,
+            PreCfg::LLAMA3
+        );
         assert_eq!(bl(&[], &[], regex_pre(QWEN2_RE), false).pre, PreCfg::QWEN2);
         assert_eq!(bl(&[], &[], gpt2_pre(), false).pre, PreCfg::GPT2);
     }
@@ -1374,20 +2466,34 @@ mod tests {
         assert_eq!(t.encode("hell", false), [id("hell")]);
         // rank decides: "b c" (0) beats "a b" (1)
         let t = bl(&[("b", "c"), ("a", "b")], &[], gpt2_pre(), false);
-        assert_eq!(t.encode("abc", false), [t.token_to_id("a").unwrap(), t.token_to_id("bc").unwrap()]);
+        assert_eq!(
+            t.encode("abc", false),
+            [t.token_to_id("a").unwrap(), t.token_to_id("bc").unwrap()]
+        );
     }
 
     #[test]
     fn staged_pre_tokenizers_match_the_llama_cpp_families() {
         let p = |t, c| split_pieces(t, &c);
         // StarCoder family: single digits, GPT-2 whitespace rule (a newline joins its blanks)
-        assert_eq!(p("a 12\n    b", PreCfg::STARCODER), ["a", " ", "1", "2", "\n   ", " b"]);
+        assert_eq!(
+            p("a 12\n    b", PreCfg::STARCODER),
+            ["a", " ", "1", "2", "\n   ", " b"]
+        );
         // Falcon: punctuation runs and three-digit groups are cut out
-        assert_eq!(p("x 3333 !!y", PreCfg::FALCON), ["x", " ", "333", "3", " ", "!!", "y"]);
+        assert_eq!(
+            p("x 3333 !!y", PreCfg::FALCON),
+            ["x", " ", "333", "3", " ", "!!", "y"]
+        );
         assert_eq!(p("$a+b", PreCfg::FALCON), ["$", "a", "+", "b"]);
         // every stage tiles the text exactly
         for cfg in [PreCfg::STARCODER, PreCfg::FALCON] {
-            for t in ["", " ", "\n\n 12 ,,, 987654 \u{2014}x", "日本語 123 \u{1f600}!"] {
+            for t in [
+                "",
+                " ",
+                "\n\n 12 ,,, 987654 \u{2014}x",
+                "日本語 123 \u{1f600}!",
+            ] {
                 assert_eq!(split_pieces(t, &cfg).concat(), t);
             }
         }
@@ -1398,16 +2504,27 @@ mod tests {
         // "hello" is a token, but the merges alone only reach "he"
         let merges = [("h", "e"), ("he", "llo")];
         let on = bl(&merges, &[], gpt2_pre(), true);
-        assert_eq!(on.encode("hello", false), [on.token_to_id("hello").unwrap()]);
+        assert_eq!(
+            on.encode("hello", false),
+            [on.token_to_id("hello").unwrap()]
+        );
         let off = bl(&merges, &[], gpt2_pre(), false);
         assert_eq!(off.encode("hello", false).len(), 4);
     }
 
     #[test]
     fn specials_are_matched_first_longest_and_decode_back() {
-        let t = bl(&[], &[("<|a|>", true), ("<|a|>b", false), ("<", false)], gpt2_pre(), false);
+        let t = bl(
+            &[],
+            &[("<|a|>", true), ("<|a|>b", false), ("<", false)],
+            gpt2_pre(),
+            false,
+        );
         let ids = t.encode("x<|a|>by<|a|>", false);
-        let (a, ab) = (t.token_to_id("<|a|>").unwrap(), t.token_to_id("<|a|>b").unwrap());
+        let (a, ab) = (
+            t.token_to_id("<|a|>").unwrap(),
+            t.token_to_id("<|a|>b").unwrap(),
+        );
         assert_eq!(ids.iter().filter(|&&i| i == ab).count(), 1);
         assert_eq!(ids.iter().filter(|&&i| i == a).count(), 1);
         assert_eq!(t.decode(&ids), "x<|a|>by<|a|>");
@@ -1426,8 +2543,18 @@ mod tests {
     #[test]
     fn every_string_round_trips() {
         let t = hello();
-        for s in ["", "plain ascii", "emoji 😀🎉 and ZWJ 👩‍👩‍👧", "漢字 日本語 한국어", "  leading and\ttabs\r\nand\n\n\nnewlines   ",
-            "العربية עברית", "e\u{0301} combining", "nul\0char", "<|bos|>mixed<|eos|>text<|bos|>", "'s 't 're don't"] {
+        for s in [
+            "",
+            "plain ascii",
+            "emoji 😀🎉 and ZWJ 👩‍👩‍👧",
+            "漢字 日本語 한국어",
+            "  leading and\ttabs\r\nand\n\n\nnewlines   ",
+            "العربية עברית",
+            "e\u{0301} combining",
+            "nul\0char",
+            "<|bos|>mixed<|eos|>text<|bos|>",
+            "'s 't 're don't",
+        ] {
             assert_eq!(t.decode(&t.encode(s, false)), s, "{s:?}");
         }
         for seed in 0..400 {
@@ -1446,12 +2573,17 @@ mod tests {
         let mut empties = 0;
         for &i in &ids {
             let piece = d.push(i);
-            if piece.is_empty() { empties += 1; }
+            if piece.is_empty() {
+                empties += 1;
+            }
             got.push_str(&piece);
         }
         got.push_str(&d.finish());
         assert_eq!(got, s);
-        assert!(empties >= 4, "multi-byte characters must be held back ({empties})");
+        assert!(
+            empties >= 4,
+            "multi-byte characters must be held back ({empties})"
+        );
         // a dangling lead byte is flushed as U+FFFD
         let mut d = t.decoder();
         assert_eq!(d.push(t.byte_ids[0xC3].unwrap()), "");
@@ -1479,12 +2611,33 @@ mod tests {
     fn sp_json() -> String {
         let mut vocab = serde_json::Map::new();
         let mut n = 0u64;
-        for t in ["<unk>", "<s>", "</s>"] { vocab.insert(t.into(), n.into()); n += 1; }
-        for b in 0..256 { vocab.insert(format!("<0x{b:02X}>"), n.into()); n += 1; }
-        for t in ["▁", "h", "e", "l", "o", "w", "r", "d", "▁h", "▁he", "ll", "▁hell", "▁hello", "▁w", "or", "▁wor", "ld", "▁world"] {
-            vocab.insert(t.into(), n.into()); n += 1;
+        for t in ["<unk>", "<s>", "</s>"] {
+            vocab.insert(t.into(), n.into());
+            n += 1;
         }
-        let merges = ["▁ h", "▁h e", "l l", "▁he ll", "▁hell o", "▁ w", "o r", "▁w or", "l d", "▁wor ld"];
+        for b in 0..256 {
+            vocab.insert(format!("<0x{b:02X}>"), n.into());
+            n += 1;
+        }
+        for t in [
+            "▁", "h", "e", "l", "o", "w", "r", "d", "▁h", "▁he", "ll", "▁hell", "▁hello", "▁w",
+            "or", "▁wor", "ld", "▁world",
+        ] {
+            vocab.insert(t.into(), n.into());
+            n += 1;
+        }
+        let merges = [
+            "▁ h",
+            "▁h e",
+            "l l",
+            "▁he ll",
+            "▁hell o",
+            "▁ w",
+            "o r",
+            "▁w or",
+            "l d",
+            "▁wor ld",
+        ];
         json!({"model": {"type": "BPE", "vocab": vocab, "merges": merges, "byte_fallback": true, "unk_token": "<unk>"},
             "normalizer": {"type": "Sequence", "normalizers": [{"type": "Prepend", "prepend": "▁"}, {"type": "Replace", "pattern": {"String": " "}, "content": "▁"}]},
             "decoder": {"type": "Sequence", "decoders": [{"type": "Replace"}, {"type": "ByteFallback"}, {"type": "Fuse"}, {"type": "Strip", "content": " ", "start": 1, "stop": 0}]},
@@ -1501,7 +2654,14 @@ mod tests {
         assert_eq!(t.encode("hello world", false), [id("▁hello"), id("▁world")]);
         assert_eq!(t.bos, Some(1));
         assert_eq!(t.encode("hello", true)[0], 1);
-        for s in ["hello world", " hi", "hello  world ", "naïve 😀\nline", "", "<s>hello</s>"] {
+        for s in [
+            "hello world",
+            " hi",
+            "hello  world ",
+            "naïve 😀\nline",
+            "",
+            "<s>hello</s>",
+        ] {
             assert_eq!(t.decode(&t.encode(s, false)), s, "{s:?}");
         }
     }
@@ -1510,7 +2670,10 @@ mod tests {
     fn sentencepiece_byte_fallback_and_unknown() {
         let t = Tokenizer::from_json(&sp_json()).unwrap();
         let ids = t.encode("é", false);
-        assert!(ids.contains(&t.token_to_id("<0xC3>").unwrap()) && ids.contains(&t.token_to_id("<0xA9>").unwrap()));
+        assert!(
+            ids.contains(&t.token_to_id("<0xC3>").unwrap())
+                && ids.contains(&t.token_to_id("<0xA9>").unwrap())
+        );
         // no byte tokens at all: unknown characters become <unk>
         let j = json!({"model": {"type": "BPE", "vocab": {"<unk>": 0, "▁": 1, "a": 2}, "merges": [], "unk_token": "<unk>"},
             "normalizer": {"type": "Prepend", "prepend": "▁"}});
@@ -1520,51 +2683,84 @@ mod tests {
 
     // ------------------------------------------------------------------ GGUF
 
-    fn gstr(s: &str) -> GValue { GValue::Str(s.into()) }
+    fn gstr(s: &str) -> GValue {
+        GValue::Str(s.into())
+    }
 
     #[test]
     fn gguf_byte_level() {
         let (t, _) = byte_tables();
         let mut toks: Vec<GValue> = t.iter().map(|c| gstr(&c.to_string())).collect();
-        for x in ["he", "ll", "hell"] { toks.push(gstr(x)); }
+        for x in ["he", "ll", "hell"] {
+            toks.push(gstr(x));
+        }
         toks.push(gstr("<|endoftext|>"));
         let mut types = vec![GValue::U64(1); toks.len()];
         *types.last_mut().unwrap() = GValue::U64(3);
         let mut g = Gguf::default();
         g.meta.insert("tokenizer.ggml.model".into(), gstr("gpt2"));
-        g.meta.insert("tokenizer.ggml.pre".into(), gstr("llama-bpe"));
+        g.meta
+            .insert("tokenizer.ggml.pre".into(), gstr("llama-bpe"));
         let eos = toks.len() as u64 - 1;
-        g.meta.insert("tokenizer.ggml.tokens".into(), GValue::Array(toks));
-        g.meta.insert("tokenizer.ggml.token_type".into(), GValue::Array(types));
-        g.meta.insert("tokenizer.ggml.merges".into(), GValue::Array(vec![gstr("h e"), gstr("l l"), gstr("he ll")]));
-        g.meta.insert("tokenizer.ggml.eos_token_id".into(), GValue::U64(eos));
+        g.meta
+            .insert("tokenizer.ggml.tokens".into(), GValue::Array(toks));
+        g.meta
+            .insert("tokenizer.ggml.token_type".into(), GValue::Array(types));
+        g.meta.insert(
+            "tokenizer.ggml.merges".into(),
+            GValue::Array(vec![gstr("h e"), gstr("l l"), gstr("he ll")]),
+        );
+        g.meta
+            .insert("tokenizer.ggml.eos_token_id".into(), GValue::U64(eos));
         let tk = Tokenizer::from_gguf(&g).unwrap();
         assert_eq!(tk.pre, PreCfg::LLAMA3);
         assert_eq!(tk.eos, Some(eos as u32));
         let ids = tk.encode("hell<|endoftext|>x", false);
-        assert_eq!(ids, [tk.token_to_id("hell").unwrap(), eos as u32, tk.token_to_id("x").unwrap()]);
+        assert_eq!(
+            ids,
+            [
+                tk.token_to_id("hell").unwrap(),
+                eos as u32,
+                tk.token_to_id("x").unwrap()
+            ]
+        );
         assert_eq!(tk.decode(&ids), "hell<|endoftext|>x");
         assert_eq!(tk.decode_with(&ids, true), "hellx");
     }
 
     #[test]
     fn gguf_sentencepiece_derives_merges_from_scores() {
-        let toks = ["<unk>", "<s>", "</s>", "<0x0A>", "▁", "a", "b", "▁a", "ab", "▁ab"];
+        let toks = [
+            "<unk>", "<s>", "</s>", "<0x0A>", "▁", "a", "b", "▁a", "ab", "▁ab",
+        ];
         let types = [2, 3, 3, 6, 1, 1, 1, 1, 1, 1];
         let scores = [0.0, 0.0, 0.0, 0.0, 0.0, -1.0, -1.0, -2.0, -1.5, -3.0];
         let mut g = Gguf::default();
         g.meta.insert("tokenizer.ggml.model".into(), gstr("llama"));
-        g.meta.insert("tokenizer.ggml.tokens".into(), GValue::Array(toks.iter().map(|t| gstr(t)).collect()));
-        g.meta.insert("tokenizer.ggml.token_type".into(), GValue::Array(types.iter().map(|t| GValue::U64(*t)).collect()));
-        g.meta.insert("tokenizer.ggml.scores".into(), GValue::Array(scores.iter().map(|s| GValue::F64(*s)).collect()));
-        g.meta.insert("tokenizer.ggml.unknown_token_id".into(), GValue::U64(0));
-        g.meta.insert("tokenizer.ggml.bos_token_id".into(), GValue::U64(1));
+        g.meta.insert(
+            "tokenizer.ggml.tokens".into(),
+            GValue::Array(toks.iter().map(|t| gstr(t)).collect()),
+        );
+        g.meta.insert(
+            "tokenizer.ggml.token_type".into(),
+            GValue::Array(types.iter().map(|t| GValue::U64(*t)).collect()),
+        );
+        g.meta.insert(
+            "tokenizer.ggml.scores".into(),
+            GValue::Array(scores.iter().map(|s| GValue::F64(*s)).collect()),
+        );
+        g.meta
+            .insert("tokenizer.ggml.unknown_token_id".into(), GValue::U64(0));
+        g.meta
+            .insert("tokenizer.ggml.bos_token_id".into(), GValue::U64(1));
         let t = Tokenizer::from_gguf(&g).unwrap();
         assert_eq!(t.encode("ab", false), [9]);
         assert_eq!(t.encode("b", false), [4, 6]);
         assert_eq!(t.encode("\n", false), [4, 3]);
         assert_eq!(t.encode("ab", true), [1, 9]);
-        for s in ["ab", "b a", "\n", "a\nb"] { assert_eq!(t.decode(&t.encode(s, false)), s, "{s:?}"); }
+        for s in ["ab", "b a", "\n", "a\nb"] {
+            assert_eq!(t.decode(&t.encode(s, false)), s, "{s:?}");
+        }
         assert!(t.is_special(1) && !t.is_special(3));
     }
 
@@ -1573,11 +2769,18 @@ mod tests {
         let mut g = Gguf::default();
         assert!(Tokenizer::from_gguf(&g).is_err());
         g.meta.insert("tokenizer.ggml.model".into(), gstr("bert"));
-        assert!(matches!(Tokenizer::from_gguf(&g), Err(TokError::Unsupported(_))));
+        assert!(matches!(
+            Tokenizer::from_gguf(&g),
+            Err(TokError::Unsupported(_))
+        ));
         g.meta.insert("tokenizer.ggml.model".into(), gstr("gpt2"));
-        g.meta.insert("tokenizer.ggml.tokens".into(), GValue::Array(vec![gstr("a")]));
+        g.meta.insert(
+            "tokenizer.ggml.tokens".into(),
+            GValue::Array(vec![gstr("a")]),
+        );
         assert!(Tokenizer::from_gguf(&g).is_err()); // byte-level without merges
-        g.meta.insert("tokenizer.ggml.tokens".into(), GValue::Array(vec![]));
+        g.meta
+            .insert("tokenizer.ggml.tokens".into(), GValue::Array(vec![]));
         assert!(Tokenizer::from_gguf(&g).is_err());
     }
 
@@ -1585,9 +2788,18 @@ mod tests {
 
     #[test]
     fn broken_json_is_an_error_never_a_panic() {
-        for s in ["", "{}", "[]", "null", "{\"model\":3}", "{\"model\":{\"type\":\"WordPiece\",\"vocab\":{}}}",
-            "{\"model\":{\"type\":\"Unigram\",\"vocab\":[]}}", "{\"model\":{\"vocab\":{\"a\":99999999999}}}",
-            "{\"model\":{\"vocab\":{\"a\":-1}}}", "{\"model\":{\"vocab\":{\"a\":\"x\"}}}"] {
+        for s in [
+            "",
+            "{}",
+            "[]",
+            "null",
+            "{\"model\":3}",
+            "{\"model\":{\"type\":\"WordPiece\",\"vocab\":{}}}",
+            "{\"model\":{\"type\":\"Unigram\",\"vocab\":[]}}",
+            "{\"model\":{\"vocab\":{\"a\":99999999999}}}",
+            "{\"model\":{\"vocab\":{\"a\":-1}}}",
+            "{\"model\":{\"vocab\":{\"a\":\"x\"}}}",
+        ] {
             assert!(Tokenizer::from_json(s).is_err(), "{s}");
         }
         let deep = "[".repeat(5000);
@@ -1600,7 +2812,10 @@ mod tests {
         let bytes = valid.as_bytes();
         for _ in 0..300 {
             let mut b = bytes.to_vec();
-            for _ in 0..1 + rng(&mut s) % 6 { let i = rng(&mut s) as usize % b.len(); b[i] = rng(&mut s) as u8; }
+            for _ in 0..1 + rng(&mut s) % 6 {
+                let i = rng(&mut s) as usize % b.len();
+                b[i] = rng(&mut s) as u8;
+            }
             if let Ok(t) = Tokenizer::from_json(&String::from_utf8_lossy(&b)) {
                 let _ = t.decode(&t.encode("héllo wörld 😀", true)); // a mutated but valid file must still behave
             }
@@ -1621,16 +2836,28 @@ mod tests {
 
     #[test]
     fn fuzz_encode_decode_on_every_kind() {
-        let toks = [hello(), Tokenizer::from_json(&sp_json()).unwrap(),
-            bl(&[("a", "a"), ("aa", "a")], &[("<s>", true)], regex_pre(QWEN2_RE), true)];
+        let toks = [
+            hello(),
+            Tokenizer::from_json(&sp_json()).unwrap(),
+            bl(
+                &[("a", "a"), ("aa", "a")],
+                &[("<s>", true)],
+                regex_pre(QWEN2_RE),
+                true,
+            ),
+        ];
         for (k, t) in toks.iter().enumerate() {
             for seed in 0..300 {
                 let s = nasty(seed * 3 + k as u64, 250);
                 let ids = t.encode(&s, true);
-                assert!(ids.iter().all(|&i| (i as usize) < t.vocab_size()), "tokenizer {k} seed {seed}");
+                assert!(
+                    ids.iter().all(|&i| (i as usize) < t.vocab_size()),
+                    "tokenizer {k} seed {seed}"
+                );
                 let _ = t.decode(&ids);
                 let mut d = t.decoder();
-                let streamed: String = ids.iter().map(|&i| d.push(i)).collect::<String>() + &d.finish();
+                let streamed: String =
+                    ids.iter().map(|&i| d.push(i)).collect::<String>() + &d.finish();
                 assert_eq!(streamed, t.decode(&ids));
             }
         }
@@ -1640,23 +2867,63 @@ mod tests {
 
     #[test]
     fn categories_are_right_for_many_scripts() {
-        for c in ['a', 'Z', 'é', 'Ж', 'ß', 'Σ', '中', 'ひ', 'カ', '한', 'ก', 'ا', 'א', 'अ', 'ក', 'ᚠ', '𐐀', '𝒜', 'ª'] { assert!(uni::is_letter(c), "{c:?} should be \\p{{L}}"); }
-        for c in ['1', ' ', '_', '$', '+', '!', '\u{301}', '٣', '½', '€', '。', '😀', '\n', 'Ⅳ'] { assert!(!uni::is_letter(c), "{c:?} should not be \\p{{L}}"); }
-        for c in ['\u{301}', '\u{93e}', '\u{e31}', '\u{200d}', '\u{20e3}', '\u{ff9e}'] {
+        for c in [
+            'a', 'Z', 'é', 'Ж', 'ß', 'Σ', '中', 'ひ', 'カ', '한', 'ก', 'ا', 'א', 'अ', 'ក', 'ᚠ',
+            '𐐀', '𝒜', 'ª',
+        ] {
+            assert!(uni::is_letter(c), "{c:?} should be \\p{{L}}");
+        }
+        for c in [
+            '1', ' ', '_', '$', '+', '!', '\u{301}', '٣', '½', '€', '。', '😀', '\n', 'Ⅳ',
+        ] {
+            assert!(!uni::is_letter(c), "{c:?} should not be \\p{{L}}");
+        }
+        for c in [
+            '\u{301}', '\u{93e}', '\u{e31}', '\u{200d}', '\u{20e3}', '\u{ff9e}',
+        ] {
             assert_eq!(uni::is_mark(c), c != '\u{200d}' && c != '\u{ff9e}', "{c:?}");
         }
-        for c in ['0', '٣', '½', 'Ⅳ', '²', '๓', '①', '१'] { assert!(uni::is_number(c), "{c:?} should be \\p{{N}}"); }
-        for c in ['a', '_', '。', '€'] { assert!(!uni::is_number(c)); }
-        for c in ['!', '"', '_', '-', '«', '»', '¿', '—', '、', '。', '٪', '‘', '’', '(', '「', '？', '·'] { assert!(uni::is_punct(c), "{c:?} should be \\p{{P}}"); }
-        for c in ['$', '+', '<', '=', '>', '^', '`', '|', '~', '€', '©', '®', '→', '∑', '😀', '™', '°', '±'] { assert!(uni::is_symbol(c), "{c:?} should be \\p{{S}}"); }
-        for c in ['a', '1', ' ', '$', '+'] { assert!(!uni::is_punct(c)); }
-        for c in ['a', '1', ' ', '!', '_'] { assert!(!uni::is_symbol(c)); }
+        for c in ['0', '٣', '½', 'Ⅳ', '²', '๓', '①', '१'] {
+            assert!(uni::is_number(c), "{c:?} should be \\p{{N}}");
+        }
+        for c in ['a', '_', '。', '€'] {
+            assert!(!uni::is_number(c));
+        }
+        for c in [
+            '!', '"', '_', '-', '«', '»', '¿', '—', '、', '。', '٪', '‘', '’', '(', '「', '？', '·',
+        ] {
+            assert!(uni::is_punct(c), "{c:?} should be \\p{{P}}");
+        }
+        for c in [
+            '$', '+', '<', '=', '>', '^', '`', '|', '~', '€', '©', '®', '→', '∑', '😀', '™', '°',
+            '±',
+        ] {
+            assert!(uni::is_symbol(c), "{c:?} should be \\p{{S}}");
+        }
+        for c in ['a', '1', ' ', '$', '+'] {
+            assert!(!uni::is_punct(c));
+        }
+        for c in ['a', '1', ' ', '!', '_'] {
+            assert!(!uni::is_symbol(c));
+        }
         // every ASCII character is in exactly one of letter / number / punct / symbol / other
         for u in 0u8..128 {
             let c = u as char;
-            let n = [uni::is_letter(c), uni::is_number(c), uni::is_punct(c), uni::is_symbol(c)].iter().filter(|b| **b).count();
+            let n = [
+                uni::is_letter(c),
+                uni::is_number(c),
+                uni::is_punct(c),
+                uni::is_symbol(c),
+            ]
+            .iter()
+            .filter(|b| **b)
+            .count();
             assert!(n <= 1, "{c:?}");
-            assert_eq!(n == 1, c.is_ascii_alphanumeric() || c.is_ascii_punctuation(), "{c:?}");
+            assert_eq!(
+                n == 1,
+                c.is_ascii_alphanumeric() || c.is_ascii_punctuation(),
+                "{c:?}"
+            );
         }
     }
 
@@ -1665,7 +2932,11 @@ mod tests {
         let n = |s: &str| uni::nfc(s).into_owned();
         assert_eq!(n("e\u{301}"), "é");
         assert_eq!(n("a\u{323}\u{302}"), "\u{1EAD}");
-        assert_eq!(n("a\u{302}\u{323}"), "\u{1EAD}", "marks are reordered by combining class");
+        assert_eq!(
+            n("a\u{302}\u{323}"),
+            "\u{1EAD}",
+            "marks are reordered by combining class"
+        );
         assert_eq!(n("\u{1112}\u{1161}\u{11AB}"), "한");
         assert_eq!(n("\u{1100}\u{1161}"), "가");
         assert_eq!(n("α\u{301}"), "ά");
@@ -1675,8 +2946,16 @@ mod tests {
         assert_eq!(n("ư\u{301}"), "ứ");
         assert_eq!(n("\u{212B}"), "Å", "singleton decomposition");
         assert_eq!(n("\u{212A}"), "K");
-        assert_eq!(n("\u{958}"), "\u{915}\u{93C}", "composition exclusions stay decomposed");
-        assert_eq!(n("\u{301}a"), "\u{301}a", "a mark with no base is untouched");
+        assert_eq!(
+            n("\u{958}"),
+            "\u{915}\u{93C}",
+            "composition exclusions stay decomposed"
+        );
+        assert_eq!(
+            n("\u{301}a"),
+            "\u{301}a",
+            "a mark with no base is untouched"
+        );
         assert_eq!(n("s\u{323}\u{307}"), "\u{1E69}");
         assert_eq!(n("\u{1E69}"), "\u{1E69}");
         assert_eq!(n("Ș ș Ț ț"), "Ș ș Ț ț");
@@ -1684,15 +2963,24 @@ mod tests {
 
     #[test]
     fn nfc_is_idempotent_cheap_on_plain_text_and_never_panics() {
-        assert!(matches!(uni::nfc("plain ASCII text éàü"), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(
+            uni::nfc("plain ASCII text éàü"),
+            std::borrow::Cow::Borrowed(_)
+        ));
         let alpha: Vec<char> = "aeiouAEIOU\u{300}\u{301}\u{302}\u{303}\u{308}\u{323}\u{327}\u{31b}\u{345}\u{3099}\u{1100}\u{1161}\u{11a8}가한ᄀ\u{958}\u{93c}\u{915}ǆ\u{1f71}\u{0}\u{10ffff}😀".chars().collect();
         for seed in 1..400u64 {
             let mut st = seed;
-            let t: String = (0..(rng(&mut st) % 40) as usize).map(|_| alpha[(rng(&mut st) >> 8) as usize % alpha.len()]).collect();
+            let t: String = (0..(rng(&mut st) % 40) as usize)
+                .map(|_| alpha[(rng(&mut st) >> 8) as usize % alpha.len()])
+                .collect();
             let once = uni::nfc(&t).into_owned();
             assert_eq!(uni::nfc(&once), once, "not idempotent for {t:?}");
         }
-        for seed in 0..200 { let t = nasty(seed, 300); let a = uni::nfc(&t).into_owned(); assert_eq!(uni::nfc(&a), a); }
+        for seed in 0..200 {
+            let t = nasty(seed, 300);
+            let a = uni::nfc(&t).into_owned();
+            assert_eq!(uni::nfc(&a), a);
+        }
         let big = "e\u{301}".repeat(100_000);
         assert_eq!(uni::nfc(&big).chars().count(), 100_000);
     }
@@ -1710,7 +2998,9 @@ mod tests {
     const DS_PUNCT_RE: &str = "\\s?[!-/:-~！-／：-～‘-‟\u{3000}-。]+";
     const DS3_MAIN_RE: &str = "[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
-    fn split_node(re: &str) -> Value { json!({"type": "Split", "pattern": {"Regex": re}, "behavior": "Isolated", "invert": false}) }
+    fn split_node(re: &str) -> Value {
+        json!({"type": "Split", "pattern": {"Regex": re}, "behavior": "Isolated", "invert": false})
+    }
     fn ds_llm_json() -> Value {
         json!({"type": "Sequence", "pretokenizers": [
             split_node("[\r\n]"),
@@ -1729,8 +3019,19 @@ mod tests {
             {"type": "ByteLevel", "add_prefix_space": false, "use_regex": false}]})
     }
     #[test]
-    fn ds_letter_class_parses_completely() { let cs: Vec<char> = DS_LETTERS.chars().collect(); let mut rx = Rx { s: &cs, i: 0 }; assert!(rx.class().is_some(), "stopped at {} {:?}", rx.i, cs.get(rx.i.saturating_sub(3)..(rx.i+3).min(cs.len()))); }
-    fn pieces(t: &Tokenizer, s: &str) -> Vec<String> { t.pre_tokenize(s) }
+    fn ds_letter_class_parses_completely() {
+        let cs: Vec<char> = DS_LETTERS.chars().collect();
+        let mut rx = Rx { s: &cs, i: 0 };
+        assert!(
+            rx.class().is_some(),
+            "stopped at {} {:?}",
+            rx.i,
+            cs.get(rx.i.saturating_sub(3)..(rx.i + 3).min(cs.len()))
+        );
+    }
+    fn pieces(t: &Tokenizer, s: &str) -> Vec<String> {
+        t.pre_tokenize(s)
+    }
 
     #[test]
     fn deepseek_llm_pieces_from_the_json_patterns() {
@@ -1781,7 +3082,14 @@ mod tests {
         for seed in 0..300 {
             let s = nasty(seed, 160);
             let a = run_program(&s, &built);
-            assert_eq!(a, t.pre_tokenize(&s).iter().map(String::as_str).collect::<Vec<_>>(), "{s:?}");
+            assert_eq!(
+                a,
+                t.pre_tokenize(&s)
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                "{s:?}"
+            );
         }
     }
 
@@ -1801,21 +3109,44 @@ mod tests {
     fn regex_shapes_are_recognised_and_hostile_ones_are_refused() {
         assert!(matches!(parse_stage(r"[\r\n]"), Some(Stage::Run(_, 1))));
         assert!(matches!(parse_stage("[\r\n]"), Some(Stage::Run(_, 1))));
-        assert!(matches!(parse_stage(r"\s?\p{L}+"), Some(Stage::OptWsRun(_))));
+        assert!(matches!(
+            parse_stage(r"\s?\p{L}+"),
+            Some(Stage::OptWsRun(_))
+        ));
         assert!(matches!(parse_stage(r"\s+$"), Some(Stage::TrailingWs)));
         assert!(matches!(parse_stage(r"\p{N}{1,3}"), Some(Stage::Run(_, 3))));
         assert!(matches!(parse_stage(r"\p{N}"), Some(Stage::Run(_, 1))));
-        assert!(matches!(parse_stage(r"[一-龥]+"), Some(Stage::Run(_, usize::MAX))));
+        assert!(matches!(
+            parse_stage(r"[一-龥]+"),
+            Some(Stage::Run(_, usize::MAX))
+        ));
         assert!(matches!(parse_stage(DS3_MAIN_RE), Some(Stage::Ds3)));
         assert!(matches!(parse_stage(LLAMA3_RE), Some(Stage::Main(c)) if c == PreCfg::LLAMA3));
-        for bad in [r"\w+", r"[abc", r"[z-a]", r"\p{Han}+", "", "(", r"\", r"[\p{Lu}]+", r"\p{L}{2,5}", "[^]", r"\s?"] {
-            assert!(parse_stage(bad).is_none(), "{bad:?} should not be recognised");
+        for bad in [
+            r"\w+",
+            r"[abc",
+            r"[z-a]",
+            r"\p{Han}+",
+            "",
+            "(",
+            r"\",
+            r"[\p{Lu}]+",
+            r"\p{L}{2,5}",
+            "[^]",
+            r"\s?",
+        ] {
+            assert!(
+                parse_stage(bad).is_none(),
+                "{bad:?} should not be recognised"
+            );
         }
         let mut st = 7u64;
         let alpha: Vec<char> = "[]\\^-+?{}1,spPLNdrn$()| aZ0\u{3000}".chars().collect();
         for _ in 0..20_000 {
             let n = (rng(&mut st) % 14) as usize;
-            let s: String = (0..n).map(|_| alpha[(rng(&mut st) >> 8) as usize % alpha.len()]).collect();
+            let s: String = (0..n)
+                .map(|_| alpha[(rng(&mut st) >> 8) as usize % alpha.len()])
+                .collect();
             if let Some(stage) = parse_stage(&s) {
                 // whatever it recognised must run without panicking and keep the text intact
                 let mut out = vec![];
@@ -1838,14 +3169,23 @@ mod tests {
         assert!(w.contains("Whitespace"), "{w}");
         assert_eq!(t.encode("hi", false).len(), 2, "still usable");
         let pre = json!({"type": "Sequence", "pretokenizers": [{"type": "Split", "pattern": {"Regex": r"\s?[a-z]+"}, "behavior": "Removed", "invert": true}, {"type": "ByteLevel", "use_regex": false}]});
-        assert!(bl(&[], &[], pre, false).warnings().iter().any(|w| w.contains("Isolated")));
+        assert!(
+            bl(&[], &[], pre, false)
+                .warnings()
+                .iter()
+                .any(|w| w.contains("Isolated"))
+        );
     }
 
     // -------------------------------------------------------------- normalisers
 
     fn bl_norm(norm: Value) -> Tokenizer {
         let (t, _) = byte_tables();
-        let vocab: serde_json::Map<String, Value> = t.iter().enumerate().map(|(i, c)| (c.to_string(), Value::from(i as u64))).collect();
+        let vocab: serde_json::Map<String, Value> = t
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.to_string(), Value::from(i as u64)))
+            .collect();
         let j = json!({"model": {"type": "BPE", "vocab": vocab, "merges": []}, "pre_tokenizer": gpt2_pre(), "normalizer": norm});
         Tokenizer::from_json(&j.to_string()).unwrap()
     }
@@ -1854,25 +3194,41 @@ mod tests {
     fn normalisers_from_the_file_are_applied() {
         let nfc = bl_norm(json!({"type": "NFC"}));
         assert_eq!(nfc.encode("e\u{301}", false), nfc.encode("é", false));
-        assert_ne!(bl_norm(json!(null)).encode("e\u{301}", false), nfc.encode("é", false), "without NFC the two spellings differ");
-        let seq = bl_norm(json!({"type": "Sequence", "normalizers": [{"type": "NFC"}, {"type": "Lowercase"}, {"type": "Strip", "strip_left": true, "strip_right": true}]}));
+        assert_ne!(
+            bl_norm(json!(null)).encode("e\u{301}", false),
+            nfc.encode("é", false),
+            "without NFC the two spellings differ"
+        );
+        let seq = bl_norm(
+            json!({"type": "Sequence", "normalizers": [{"type": "NFC"}, {"type": "Lowercase"}, {"type": "Strip", "strip_left": true, "strip_right": true}]}),
+        );
         assert_eq!(seq.encode("  Å\u{301}B ", false), seq.encode("ǻb", false));
         let rep = bl_norm(json!({"type": "Replace", "pattern": {"String": "a"}, "content": "b"}));
         assert_eq!(rep.encode("aa", false), rep.encode("bb", false));
         let pre = bl_norm(json!({"type": "Prepend", "prepend": "x"}));
-        assert_eq!(pre.encode("y", false), bl_norm(json!(null)).encode("xy", false));
+        assert_eq!(
+            pre.encode("y", false),
+            bl_norm(json!(null)).encode("xy", false)
+        );
         assert!(nfc.warnings().is_empty());
     }
 
     #[test]
     fn unsupported_normalisers_are_reported_not_ignored() {
-        let t = bl_norm(json!({"type": "Sequence", "normalizers": [{"type": "BertNormalizer"}, {"type": "Replace", "pattern": {"Regex": "x+"}, "content": "y"}, {"type": "Precompiled", "precompiled_charsmap": "AAAA"}]}));
+        let t = bl_norm(
+            json!({"type": "Sequence", "normalizers": [{"type": "BertNormalizer"}, {"type": "Replace", "pattern": {"Regex": "x+"}, "content": "y"}, {"type": "Precompiled", "precompiled_charsmap": "AAAA"}]}),
+        );
         let w = t.warnings().join(" | ");
-        assert!(w.contains("BertNormalizer") && w.contains("regex") && w.contains("Precompiled"), "{w}");
+        assert!(
+            w.contains("BertNormalizer") && w.contains("regex") && w.contains("Precompiled"),
+            "{w}"
+        );
         assert_eq!(t.encode("a", false).len(), 1);
         // absurd nesting is cut off, not followed forever
         let mut n = json!({"type": "NFC"});
-        for _ in 0..40 { n = json!({"type": "Sequence", "normalizers": [n]}); }
+        for _ in 0..40 {
+            n = json!({"type": "Sequence", "normalizers": [n]});
+        }
         let _ = bl_norm(n);
     }
 
@@ -1883,6 +3239,9 @@ mod tests {
         let t = Tokenizer::from_json(&j.to_string()).unwrap();
         assert!(t.warnings().is_empty(), "{:?}", t.warnings());
         let base = Tokenizer::from_json(&sp_json()).unwrap();
-        assert_eq!(t.encode("hello world", false), base.encode("hello world", false));
+        assert_eq!(
+            t.encode("hello world", false),
+            base.encode("hello world", false)
+        );
     }
 }

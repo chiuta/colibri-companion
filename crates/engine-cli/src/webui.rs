@@ -16,11 +16,16 @@ pub const HEADERS: &[(&str, &str)] = &[
     ("X-Frame-Options", "DENY"),
     ("Referrer-Policy", "no-referrer"),
     ("Cross-Origin-Opener-Policy", "same-origin"),
-    ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+    (
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=()",
+    ),
 ];
 
 /// Paths that serve the page.
-pub fn is_page(path: &str) -> bool { path == "/" || path == "/ui" || path == "/ui/" }
+pub fn is_page(path: &str) -> bool {
+    path == "/" || path == "/ui" || path == "/ui/"
+}
 
 #[cfg(test)]
 mod tests {
@@ -29,7 +34,14 @@ mod tests {
     fn the_page_is_self_contained() {
         assert!(INDEX.len() > 1000 && INDEX.contains("<html"));
         // no external scripts, styles or fonts
-        for bad in ["<script src", "<link rel=\"stylesheet\"", "@import", "src=\"http"] { assert!(!INDEX.contains(bad), "{bad}"); }
+        for bad in [
+            "<script src",
+            "<link rel=\"stylesheet\"",
+            "@import",
+            "src=\"http",
+        ] {
+            assert!(!INDEX.contains(bad), "{bad}");
+        }
         assert!(is_page("/") && is_page("/ui") && !is_page("/v1/models"));
     }
 }

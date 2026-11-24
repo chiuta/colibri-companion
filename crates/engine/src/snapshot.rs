@@ -6,13 +6,20 @@
 //! ```text
 //! 0   magic    "CMPSNAP1"
 //! 8   u32      format version (1)
-//! 12  u32      flags (bit 0: payload is LZ-compressed, planes are byte-shuffled)
+//! 12  u32      flags (bit 0: payload is LZ-compressed, planes are byte-shuffled;
+//!                     bit 1: a keyed MAC follows the hash)
 //! 16  [u8; 32] model fingerprint, see Model::fingerprint
 //! 48  u64      payload length once decompressed
 //! 56  u64      payload length as stored
 //! 64  ...      payload
 //! ..  [u8; 32] SHA-256 of everything above
+//! ..  [u8; 32] only with flag bit 1: HMAC-SHA256 (store key) of everything above, hash included
 //! ```
+//!
+//! The SHA-256 detects damage; it does not authenticate (anyone who can write the file can
+//! recompute it). A [`SnapshotStore::open_keyed`] store therefore also signs every entry with a
+//! per-store secret kept in a `0600` key file, and refuses any entry without a valid MAC: a
+//! snapshot planted in a shared directory is never loaded. Unkeyed stores still read old files.
 //!
 //! The hash is checked first, then the fingerprint, then every length in the payload is checked
 //! against what is left of the file before anything is allocated: a damaged, truncated or foreign
@@ -31,8 +38,8 @@ use crate::model::{KvKind, Model, ModelError, PlaneData, PlaneRef, State};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 const MAGIC: &[u8; 8] = b"CMPSNAP1";
@@ -40,6 +47,15 @@ const VERSION: u32 = 1;
 const HEADER: usize = 64;
 const TRAILER: usize = 32;
 const FLAG_COMPRESSED: u32 = 1;
+const FLAG_KEYED: u32 = 2;
+/// Length of the HMAC appended to keyed snapshots.
+const MAC_BYTES: usize = 32;
+/// No snapshot payload may decompress to more than this (4 GiB), whatever the header claims.
+const MAX_RAW_BYTES: usize = 1 << 32;
+/// Nothing is pre-allocated beyond this before real data has been produced.
+const PREALLOC_CAP: usize = 64 << 20;
+/// Name of the key file inside a keyed store.
+const KEY_FILE: &str = ".store.key";
 
 #[derive(Debug)]
 pub enum SnapshotError {
@@ -69,10 +85,20 @@ impl std::fmt::Display for SnapshotError {
     }
 }
 impl std::error::Error for SnapshotError {}
-impl From<std::io::Error> for SnapshotError { fn from(e: std::io::Error) -> Self { SnapshotError::Io(e.to_string()) } }
-impl From<ModelError> for SnapshotError { fn from(e: ModelError) -> Self { SnapshotError::Model(e) } }
+impl From<std::io::Error> for SnapshotError {
+    fn from(e: std::io::Error) -> Self {
+        SnapshotError::Io(e.to_string())
+    }
+}
+impl From<ModelError> for SnapshotError {
+    fn from(e: ModelError) -> Self {
+        SnapshotError::Model(e)
+    }
+}
 type Res<T> = Result<T, SnapshotError>;
-fn fmt_err<T>(m: &str) -> Res<T> { Err(SnapshotError::Format(m.into())) }
+fn fmt_err<T>(m: &str) -> Res<T> {
+    Err(SnapshotError::Format(m.into()))
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SnapOptions {
@@ -86,25 +112,44 @@ pub struct SnapOptions {
 fn shuffle(d: &[u8], w: usize) -> Vec<u8> {
     let n = d.len() / w;
     let mut o = vec![0u8; d.len()];
-    for i in 0..n { for j in 0..w { o[j * n + i] = d[i * w + j]; } }
+    for i in 0..n {
+        for j in 0..w {
+            o[j * n + i] = d[i * w + j];
+        }
+    }
     o
 }
 fn unshuffle(d: &[u8], w: usize) -> Vec<u8> {
     let n = d.len() / w;
     let mut o = vec![0u8; d.len()];
-    for i in 0..n { for j in 0..w { o[i * w + j] = d[j * n + i]; } }
+    for i in 0..n {
+        for j in 0..w {
+            o[i * w + j] = d[j * n + i];
+        }
+    }
     o
 }
 
 fn lz_emit(out: &mut Vec<u8>, lits: &[u8], m: Option<(usize, usize)>) {
     let (ll, ml) = (lits.len(), m.map_or(0, |(_, l)| l - 4));
     out.push(((ll.min(15) as u8) << 4) | ml.min(15) as u8);
-    let ext = |out: &mut Vec<u8>, v: usize| { let mut r = v - 15; while r >= 255 { out.push(255); r -= 255; } out.push(r as u8); };
-    if ll >= 15 { ext(out, ll); }
+    let ext = |out: &mut Vec<u8>, v: usize| {
+        let mut r = v - 15;
+        while r >= 255 {
+            out.push(255);
+            r -= 255;
+        }
+        out.push(r as u8);
+    };
+    if ll >= 15 {
+        ext(out, ll);
+    }
     out.extend_from_slice(lits);
     if let Some((off, _)) = m {
         out.extend_from_slice(&(off as u16).to_le_bytes());
-        if ml >= 15 { ext(out, ml); }
+        if ml >= 15 {
+            ext(out, ml);
+        }
     }
 }
 /// LZ77 block compression (4-byte minimum match, 64 KiB window).
@@ -118,51 +163,84 @@ fn lz_compress(src: &[u8]) -> Vec<u8> {
         let h = (w.wrapping_mul(2_654_435_761) >> 16) as usize;
         let cand = table[h];
         table[h] = i as u32;
-        if cand != u32::MAX && i - cand as usize <= 65_535 && src[cand as usize..cand as usize + 4] == src[i..i + 4] {
+        if cand != u32::MAX
+            && i - cand as usize <= 65_535
+            && src[cand as usize..cand as usize + 4] == src[i..i + 4]
+        {
             let c = cand as usize;
             let mut l = 4;
-            while i + l < n && src[c + l] == src[i + l] { l += 1; }
+            while i + l < n && src[c + l] == src[i + l] {
+                l += 1;
+            }
             lz_emit(&mut out, &src[anchor..i], Some((i - c, l)));
             i += l;
             anchor = i;
-        } else { i += 1; }
+        } else {
+            i += 1;
+        }
     }
     lz_emit(&mut out, &src[anchor..], None);
     out
 }
 fn lz_decompress(src: &[u8], raw_len: usize) -> Res<Vec<u8>> {
     let bad = || SnapshotError::Format("the compressed payload is damaged".into());
-    let mut out: Vec<u8> = Vec::with_capacity(raw_len);
+    // Check the claimed size before allocating anything: it comes from the file. An LZ stream
+    // cannot expand more than 255-fold, and no snapshot is larger than MAX_RAW_BYTES.
+    if raw_len > MAX_RAW_BYTES || raw_len > src.len().saturating_mul(255).saturating_add(64) {
+        return Err(bad());
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(raw_len.min(PREALLOC_CAP));
     let mut i = 0;
     let ext = |i: &mut usize, mut v: usize| -> Res<usize> {
         loop {
             let b = *src.get(*i).ok_or_else(bad)?;
             *i += 1;
             v += b as usize;
-            if v > raw_len + 15 { return Err(bad()); }
-            if b != 255 { return Ok(v); }
+            if v > raw_len + 15 {
+                return Err(bad());
+            }
+            if b != 255 {
+                return Ok(v);
+            }
         }
     };
     while i < src.len() {
         let tok = src[i];
         i += 1;
         let mut ll = (tok >> 4) as usize;
-        if ll == 15 { ll = ext(&mut i, 15)?; }
-        if i + ll > src.len() || out.len() + ll > raw_len { return Err(bad()); }
+        if ll == 15 {
+            ll = ext(&mut i, 15)?;
+        }
+        if i + ll > src.len() || out.len() + ll > raw_len {
+            return Err(bad());
+        }
         out.extend_from_slice(&src[i..i + ll]);
         i += ll;
-        if i == src.len() { break; }
-        if i + 2 > src.len() { return Err(bad()); }
+        if i == src.len() {
+            break;
+        }
+        if i + 2 > src.len() {
+            return Err(bad());
+        }
         let off = u16::from_le_bytes([src[i], src[i + 1]]) as usize;
         i += 2;
         let mut ml = (tok & 15) as usize;
-        if ml == 15 { ml = ext(&mut i, 15)?; }
+        if ml == 15 {
+            ml = ext(&mut i, 15)?;
+        }
         ml += 4;
-        if off == 0 || off > out.len() || out.len() + ml > raw_len { return Err(bad()); }
+        if off == 0 || off > out.len() || out.len() + ml > raw_len {
+            return Err(bad());
+        }
         let from = out.len() - off;
-        for k in 0..ml { let b = out[from + k]; out.push(b); }
+        for k in 0..ml {
+            let b = out[from + k];
+            out.push(b);
+        }
     }
-    if out.len() != raw_len { return Err(bad()); }
+    if out.len() != raw_len {
+        return Err(bad());
+    }
     Ok(out)
 }
 
@@ -170,22 +248,36 @@ fn lz_decompress(src: &[u8], raw_len: usize) -> Res<Vec<u8>> {
 
 struct W(Vec<u8>);
 impl W {
-    fn u64(&mut self, v: usize) { self.0.extend_from_slice(&(v as u64).to_le_bytes()); }
-    fn bytes(&mut self, b: &[u8]) { self.0.extend_from_slice(b); }
+    fn u64(&mut self, v: usize) {
+        self.0.extend_from_slice(&(v as u64).to_le_bytes());
+    }
+    fn bytes(&mut self, b: &[u8]) {
+        self.0.extend_from_slice(b);
+    }
 }
-struct R<'a> { b: &'a [u8], i: usize }
+struct R<'a> {
+    b: &'a [u8],
+    i: usize,
+}
 impl<'a> R<'a> {
     fn take(&mut self, n: usize) -> Res<&'a [u8]> {
-        let end = self.i.checked_add(n).filter(|&e| e <= self.b.len()).ok_or_else(|| SnapshotError::Format("the file ends inside a record".into()))?;
+        let end = self
+            .i
+            .checked_add(n)
+            .filter(|&e| e <= self.b.len())
+            .ok_or_else(|| SnapshotError::Format("the file ends inside a record".into()))?;
         let s = &self.b[self.i..end];
         self.i = end;
         Ok(s)
     }
     fn u64(&mut self) -> Res<usize> {
         let v = u64::from_le_bytes(self.take(8)?.try_into().unwrap_or([0; 8]));
-        usize::try_from(v).map_err(|_| SnapshotError::Format("a length does not fit this machine".into()))
+        usize::try_from(v)
+            .map_err(|_| SnapshotError::Format("a length does not fit this machine".into()))
     }
-    fn left(&self) -> usize { self.b.len() - self.i }
+    fn left(&self) -> usize {
+        self.b.len() - self.i
+    }
 }
 
 fn put_f32(w: &mut W, v: &[f32], shuf: bool) {
@@ -210,48 +302,107 @@ fn put_plane(w: &mut W, p: &PlaneRef<'_>, shuf: bool) {
 }
 fn get_f32(r: &mut R<'_>, shuf: bool) -> Res<Vec<f32>> {
     let n = r.u64()?;
-    let raw = r.take(n.checked_mul(4).ok_or_else(|| SnapshotError::Format("a length overflows".into()))?)?;
-    let raw = if shuf { unshuffle(raw, 4) } else { raw.to_vec() };
-    Ok(raw.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+    let raw = r.take(
+        n.checked_mul(4)
+            .ok_or_else(|| SnapshotError::Format("a length overflows".into()))?,
+    )?;
+    let raw = if shuf {
+        unshuffle(raw, 4)
+    } else {
+        raw.to_vec()
+    };
+    Ok(raw
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
 }
 fn get_plane(r: &mut R<'_>, kind: KvKind, shuf: bool) -> Res<PlaneData> {
     Ok(match kind {
         KvKind::F32 => PlaneData::F32(get_f32(r, shuf)?),
         KvKind::F16 => {
             let n = r.u64()?;
-            let raw = r.take(n.checked_mul(2).ok_or_else(|| SnapshotError::Format("a length overflows".into()))?)?;
-            let raw = if shuf { unshuffle(raw, 2) } else { raw.to_vec() };
-            PlaneData::F16(raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect())
+            let raw = r.take(
+                n.checked_mul(2)
+                    .ok_or_else(|| SnapshotError::Format("a length overflows".into()))?,
+            )?;
+            let raw = if shuf {
+                unshuffle(raw, 2)
+            } else {
+                raw.to_vec()
+            };
+            PlaneData::F16(
+                raw.chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect(),
+            )
         }
         KvKind::Q8 => {
             let n = r.u64()?;
             let q = r.take(n)?.iter().map(|&b| b as i8).collect();
-            PlaneData::Q8 { q, s: get_f32(r, shuf)? }
+            PlaneData::Q8 {
+                q,
+                s: get_f32(r, shuf)?,
+            }
         }
     })
 }
-fn kind_code(k: KvKind) -> u8 { match k { KvKind::F32 => 0, KvKind::F16 => 1, KvKind::Q8 => 2 } }
+fn kind_code(k: KvKind) -> u8 {
+    match k {
+        KvKind::F32 => 0,
+        KvKind::F16 => 1,
+        KvKind::Q8 => 2,
+    }
+}
 
 fn digest(parts: &[&[u8]]) -> [u8; 32] {
     let mut h = Sha256::new();
-    for p in parts { h.update(p); }
+    for p in parts {
+        h.update(p);
+    }
     h.finish()
 }
 
-/// The whole snapshot as bytes.
+/// The whole snapshot as bytes (hash only; see [`encode_keyed`] for an authenticated one).
 pub fn encode(model: &Model, st: &State, opts: SnapOptions) -> Res<Vec<u8>> {
+    encode_with(model, st, opts, None)
+}
+
+/// Like [`encode`], and signs the file with HMAC-SHA256 under `key`.
+pub fn encode_keyed(model: &Model, st: &State, opts: SnapOptions, key: &[u8]) -> Res<Vec<u8>> {
+    encode_with(model, st, opts, Some(key))
+}
+
+fn encode_with(model: &Model, st: &State, opts: SnapOptions, key: Option<&[u8]>) -> Res<Vec<u8>> {
     let views = st.kv_views();
-    if views.len() != model.spec.layers as usize { return Err(SnapshotError::Unsupported("the state was not made by this model".into())); }
+    if views.len() != model.spec.layers as usize {
+        return Err(SnapshotError::Unsupported(
+            "the state was not made by this model".into(),
+        ));
+    }
     let held = |cap: usize| if cap > 0 { st.pos.min(cap) } else { st.pos };
     for v in &views {
         let want = held(v.cap) * v.kd;
-        let len = |p: &PlaneRef<'_>| match p { PlaneRef::F32(x) => x.len(), PlaneRef::F16(x) => x.len(), PlaneRef::Q8 { q, .. } => q.len() };
+        let len = |p: &PlaneRef<'_>| match p {
+            PlaneRef::F32(x) => x.len(),
+            PlaneRef::F16(x) => x.len(),
+            PlaneRef::Q8 { q, .. } => q.len(),
+        };
         if len(&v.k) != want || len(&v.v) != want {
-            return Err(SnapshotError::Unsupported("the cache is not held on the host (accelerator state) and cannot be saved".into()));
+            return Err(SnapshotError::Unsupported(
+                "the cache is not held on the host (accelerator state) and cannot be saved".into(),
+            ));
         }
     }
-    if st.tokens().len() != st.pos { return Err(SnapshotError::Unsupported("the token history is out of step with the cache".into())); }
-    if st.tokens().iter().any(|&t| t > u32::MAX as usize) { return Err(SnapshotError::Unsupported("token ids above 2^32 are not storable".into())); }
+    if st.tokens().len() != st.pos {
+        return Err(SnapshotError::Unsupported(
+            "the token history is out of step with the cache".into(),
+        ));
+    }
+    if st.tokens().iter().any(|&t| t > u32::MAX as usize) {
+        return Err(SnapshotError::Unsupported(
+            "token ids above 2^32 are not storable".into(),
+        ));
+    }
     let shuf = opts.compress;
     let (abs, gap) = st.kvx_parts();
     let mut w = W(Vec::new());
@@ -259,9 +410,18 @@ pub fn encode(model: &Model, st: &State, opts: SnapOptions) -> Res<Vec<u8>> {
     w.u64(gap);
     w.bytes(&[kind_code(st.kv_kind())]);
     w.u64(views.len());
-    w.bytes(&st.tokens().iter().flat_map(|&t| (t as u32).to_le_bytes()).collect::<Vec<u8>>());
+    w.bytes(
+        &st.tokens()
+            .iter()
+            .flat_map(|&t| (t as u32).to_le_bytes())
+            .collect::<Vec<u8>>(),
+    );
     w.u64(abs.len());
-    w.bytes(&abs.iter().flat_map(|&a| (a as u64).to_le_bytes()).collect::<Vec<u8>>());
+    w.bytes(
+        &abs.iter()
+            .flat_map(|&a| (a as u64).to_le_bytes())
+            .collect::<Vec<u8>>(),
+    );
     for v in &views {
         w.u64(v.cap);
         w.u64(v.kd);
@@ -270,91 +430,261 @@ pub fn encode(model: &Model, st: &State, opts: SnapOptions) -> Res<Vec<u8>> {
         put_plane(&mut w, &v.v, shuf);
     }
     let raw_len = w.0.len();
-    let stored = if opts.compress { lz_compress(&w.0) } else { w.0 };
+    let stored = if opts.compress {
+        lz_compress(&w.0)
+    } else {
+        w.0
+    };
     let mut out = Vec::with_capacity(HEADER + stored.len() + TRAILER);
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&VERSION.to_le_bytes());
-    out.extend_from_slice(&(if opts.compress { FLAG_COMPRESSED } else { 0 }).to_le_bytes());
+    let flags = (if opts.compress { FLAG_COMPRESSED } else { 0 })
+        | (if key.is_some() { FLAG_KEYED } else { 0 });
+    out.extend_from_slice(&flags.to_le_bytes());
     out.extend_from_slice(&model.fingerprint());
     out.extend_from_slice(&(raw_len as u64).to_le_bytes());
     out.extend_from_slice(&(stored.len() as u64).to_le_bytes());
     out.extend_from_slice(&stored);
     let h = digest(&[&out]);
     out.extend_from_slice(&h);
+    if let Some(k) = key {
+        out.extend_from_slice(&crate::mesh::hmac_sha256(k, &[&out]));
+    }
     Ok(out)
 }
 
+/// Constant-time equality (the length is not secret).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
+}
+
 /// A state back from `bytes`, bit for bit what [`encode`] saw. Errors for anything damaged,
-/// truncated, foreign or of another model.
+/// truncated, foreign or of another model. A keyed file is read too (its hash is checked, its MAC
+/// is not: nobody holding no key is claiming authenticity); use [`decode_keyed`] to insist on one.
 pub fn decode(model: &Model, bytes: &[u8]) -> Res<State> {
-    if bytes.len() < HEADER + TRAILER || &bytes[..8] != MAGIC { return fmt_err("not a snapshot file (or cut short)"); }
+    decode_with(model, bytes, None)
+}
+
+/// Like [`decode`], and refuses a file that is not signed under `key` (an old unkeyed snapshot, or
+/// one forged by anybody who can write to the directory).
+pub fn decode_keyed(model: &Model, bytes: &[u8], key: &[u8]) -> Res<State> {
+    decode_with(model, bytes, Some(key))
+}
+
+fn decode_with(model: &Model, bytes: &[u8], key: Option<&[u8]>) -> Res<State> {
+    if bytes.len() < HEADER + TRAILER || &bytes[..8] != MAGIC {
+        return fmt_err("not a snapshot file (or cut short)");
+    }
     let u32at = |o: usize| u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
     let u64at = |o: usize| u64::from_le_bytes(bytes[o..o + 8].try_into().unwrap_or([0; 8]));
     let version = u32at(8);
-    if version != VERSION { return Err(SnapshotError::Version(version)); }
-    let body = bytes.len() - TRAILER;
-    if digest(&[&bytes[..body]]) != bytes[body..] { return Err(SnapshotError::Corrupt); }
-    if bytes[16..48] != model.fingerprint() { return Err(SnapshotError::WrongModel); }
-    let (raw_len, stored_len) = (u64at(48), u64at(56));
-    if stored_len != (body - HEADER) as u64 { return fmt_err("the payload length does not match the file"); }
+    if version != VERSION {
+        return Err(SnapshotError::Version(version));
+    }
     let flags = u32at(12);
-    if flags & !FLAG_COMPRESSED != 0 { return fmt_err("unknown flags"); }
+    if flags & !(FLAG_COMPRESSED | FLAG_KEYED) != 0 {
+        return fmt_err("unknown flags");
+    }
+    let keyed_file = flags & FLAG_KEYED != 0;
+    let tail = TRAILER + if keyed_file { MAC_BYTES } else { 0 };
+    if let Some(k) = key {
+        if !keyed_file {
+            return fmt_err("the snapshot is not signed, and this store only accepts signed ones");
+        }
+        if bytes.len() < HEADER + tail {
+            return fmt_err("not a snapshot file (or cut short)");
+        }
+        let signed = bytes.len() - MAC_BYTES;
+        if !ct_eq(
+            &crate::mesh::hmac_sha256(k, &[&bytes[..signed]]),
+            &bytes[signed..],
+        ) {
+            return Err(SnapshotError::Corrupt);
+        }
+    }
+    if bytes.len() < HEADER + tail {
+        return fmt_err("not a snapshot file (or cut short)");
+    }
+    let body = bytes.len() - tail;
+    if digest(&[&bytes[..body]]) != bytes[body..body + TRAILER] {
+        return Err(SnapshotError::Corrupt);
+    }
+    if bytes[16..48] != model.fingerprint() {
+        return Err(SnapshotError::WrongModel);
+    }
+    let (raw_len, stored_len) = (u64at(48), u64at(56));
+    if stored_len != (body - HEADER) as u64 {
+        return fmt_err("the payload length does not match the file");
+    }
     let compressed = flags & FLAG_COMPRESSED != 0;
     let stored = &bytes[HEADER..body];
-    let raw_len = usize::try_from(raw_len).map_err(|_| SnapshotError::Format("payload too large".into()))?;
+    let raw_len =
+        usize::try_from(raw_len).map_err(|_| SnapshotError::Format("payload too large".into()))?;
     let owned;
     let raw: &[u8] = if compressed {
-        if raw_len > stored.len().saturating_mul(255).saturating_add(64) { return fmt_err("implausible compression ratio"); }
+        if raw_len > MAX_RAW_BYTES || raw_len > stored.len().saturating_mul(255).saturating_add(64)
+        {
+            return fmt_err("implausible compression ratio");
+        }
         owned = lz_decompress(stored, raw_len)?;
         &owned
     } else {
-        if raw_len != stored.len() { return fmt_err("the payload length does not match"); }
+        if raw_len != stored.len() {
+            return fmt_err("the payload length does not match");
+        }
         stored
     };
     let mut r = R { b: raw, i: 0 };
     let (pos, gap) = (r.u64()?, r.u64()?);
-    let kind = match r.take(1)?[0] { 0 => KvKind::F32, 1 => KvKind::F16, 2 => KvKind::Q8, _ => return fmt_err("unknown cache precision") };
+    let kind = match r.take(1)?[0] {
+        0 => KvKind::F32,
+        1 => KvKind::F16,
+        2 => KvKind::Q8,
+        _ => return fmt_err("unknown cache precision"),
+    };
     let layers = r.u64()?;
     let s = &model.spec;
-    if layers != s.layers as usize { return fmt_err("the layer count differs from the model"); }
-    if pos > s.context as usize { return fmt_err("more tokens than the model's context"); }
-    if pos.checked_mul(4).is_none_or(|b| b > r.left()) { return fmt_err("the token list is cut short"); }
-    let tokens: Vec<usize> = r.take(pos * 4)?.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as usize).collect();
-    if tokens.iter().any(|&t| t >= s.vocab as usize) { return fmt_err("a token lies outside the vocabulary"); }
+    if layers != s.layers as usize {
+        return fmt_err("the layer count differs from the model");
+    }
+    if pos > s.context as usize {
+        return fmt_err("more tokens than the model's context");
+    }
+    if pos.checked_mul(4).is_none_or(|b| b > r.left()) {
+        return fmt_err("the token list is cut short");
+    }
+    let tokens: Vec<usize> = r
+        .take(pos * 4)?
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as usize)
+        .collect();
+    if tokens.iter().any(|&t| t >= s.vocab as usize) {
+        return fmt_err("a token lies outside the vocabulary");
+    }
     let na = r.u64()?;
-    if na != 0 && na != pos { return fmt_err("the position table has the wrong length"); }
-    if na.checked_mul(8).is_none_or(|b| b > r.left()) { return fmt_err("the position table is cut short"); }
-    let abs: Vec<usize> = r.take(na * 8)?.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap_or([0; 8])) as usize).collect();
+    if na != 0 && na != pos {
+        return fmt_err("the position table has the wrong length");
+    }
+    if na.checked_mul(8).is_none_or(|b| b > r.left()) {
+        return fmt_err("the position table is cut short");
+    }
+    let abs: Vec<usize> = r
+        .take(na * 8)?
+        .chunks_exact(8)
+        .map(|c| u64::from_le_bytes(c.try_into().unwrap_or([0; 8])) as usize)
+        .collect();
     let mut st = model.new_state_with(kind);
-    let shapes: Vec<(usize, usize, usize)> = st.kv_views().iter().map(|v| (v.cap, v.kd, v.kvh)).collect();
+    let shapes: Vec<(usize, usize, usize)> =
+        st.kv_views().iter().map(|v| (v.cap, v.kd, v.kvh)).collect();
     let mut planes = Vec::with_capacity(shapes.len());
     for (cap, kd, kvh) in shapes {
-        if (r.u64()?, r.u64()?, r.u64()?) != (cap, kd, kvh) { return fmt_err("a layer's shape differs from the model"); }
+        if (r.u64()?, r.u64()?, r.u64()?) != (cap, kd, kvh) {
+            return fmt_err("a layer's shape differs from the model");
+        }
         let k = get_plane(&mut r, kind, compressed)?;
         let v = get_plane(&mut r, kind, compressed)?;
         planes.push((k, v));
     }
-    if r.left() != 0 { return fmt_err("unexpected bytes after the last layer"); }
+    if r.left() != 0 {
+        return fmt_err("unexpected bytes after the last layer");
+    }
     st.restore_raw(pos, tokens, abs, gap, planes)?;
     Ok(st)
 }
 
-static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+/// `n` random bytes from the operating system (`/dev/urandom`), falling back to a hash of the
+/// clock, the process id, a counter and the std hasher's per-process random keys.
+fn random_bytes(n: usize) -> Vec<u8> {
+    use std::io::Read;
+    let mut out = vec![0u8; n];
+    if let Ok(mut f) = fs::File::open("/dev/urandom")
+        && f.read_exact(&mut out).is_ok()
+    {
+        return out;
+    }
+    use std::hash::{BuildHasher, Hasher};
+    static CTR: AtomicU64 = AtomicU64::new(0);
+    let mut i = 0u64;
+    let mut at = 0;
+    while at < n {
+        let mut h = Sha256::new();
+        let rs = std::collections::hash_map::RandomState::new();
+        let mut hh = rs.build_hasher();
+        hh.write_u64(CTR.fetch_add(1, Ordering::Relaxed));
+        h.update(&hh.finish().to_le_bytes());
+        h.update(&std::process::id().to_le_bytes());
+        h.update(
+            &SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+                .to_le_bytes(),
+        );
+        h.update(&i.to_le_bytes());
+        for b in h.finish() {
+            if at < n {
+                out[at] = b;
+                at += 1;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Create `path` for writing, failing if anything exists there (a file, or a symlink even if
+/// dangling: `O_EXCL` never follows one). Owner-only permissions on Unix.
+fn create_exclusive(path: &Path) -> std::io::Result<fs::File> {
+    let mut o = fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o.open(path)
+}
+
 /// Write `bytes` to `path` through a temporary file in the same directory (flushed to disk, then
-/// renamed), so no reader ever sees a half-written file.
+/// renamed), so no reader ever sees a half-written file. The temporary name carries 128 random
+/// bits and is created exclusively, so it cannot be predicted or pre-planted as a symlink.
 fn write_atomic(path: &Path, bytes: &[u8]) -> Res<()> {
-    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-    let tmp = dir.join(format!(".{name}.{}.{}.{nanos}.tmp", std::process::id(), TMP_SEQ.fetch_add(1, Ordering::Relaxed)));
-    let r = (|| -> std::io::Result<()> {
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        fs::rename(&tmp, path)
-    })();
-    if r.is_err() { let _ = fs::remove_file(&tmp); }
-    Ok(r?)
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut last = None;
+    for _ in 0..8 {
+        let tmp = dir.join(format!(
+            ".{name}.{}.tmp",
+            crate::hub::hex(&random_bytes(16))
+        ));
+        let mut f = match create_exclusive(&tmp) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let r = (|| -> std::io::Result<()> {
+            f.write_all(bytes)?;
+            f.sync_all()?;
+            drop(f);
+            fs::rename(&tmp, path)
+        })();
+        if r.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        return Ok(r?);
+    }
+    Err(last.map_or_else(
+        || SnapshotError::Io("could not create a temporary file".into()),
+        SnapshotError::from,
+    ))
 }
 
 /// Save `st` to `path`; returns the file size.
@@ -364,15 +694,47 @@ pub fn save(model: &Model, st: &State, path: &Path, opts: SnapOptions) -> Res<u6
     Ok(b.len() as u64)
 }
 /// Load a state saved by [`save`].
-pub fn load(model: &Model, path: &Path) -> Res<State> { decode(model, &fs::read(path)?) }
+pub fn load(model: &Model, path: &Path) -> Res<State> {
+    decode(model, &fs::read(path)?)
+}
+/// [`save`] with a MAC under `key`.
+pub fn save_keyed(
+    model: &Model,
+    st: &State,
+    path: &Path,
+    opts: SnapOptions,
+    key: &[u8],
+) -> Res<u64> {
+    let b = encode_keyed(model, st, opts, key)?;
+    write_atomic(path, &b)?;
+    Ok(b.len() as u64)
+}
+/// [`load`], refusing a file that is not signed under `key`.
+pub fn load_keyed(model: &Model, path: &Path, key: &[u8]) -> Res<State> {
+    decode_keyed(model, &fs::read(path)?, key)
+}
 
 /// Rewind `st` to the leading tokens it shares with `tokens` (and at most `tokens.len()`). A cache
 /// that cannot be rewound (a sliding-window ring that has wrapped) comes back empty.
 /// Returns how many tokens are kept; feed the rest with [`Model::prefill_cached`].
 pub fn trim_to_prefix(st: &mut State, tokens: &[usize]) -> Result<usize, ModelError> {
-    let common = st.tokens().iter().zip(tokens).enumerate().take_while(|&(i, (a, b))| a == b && st.abs_pos(i) == i).count();
-    if common == st.pos { return Ok(common); }
-    if st.can_truncate(common) { st.truncate(common)?; Ok(common) } else { st.reset(); Ok(0) }
+    let common = st
+        .tokens()
+        .iter()
+        .zip(tokens)
+        .enumerate()
+        .take_while(|&(i, (a, b))| a == b && st.abs_pos(i) == i)
+        .count();
+    if common == st.pos {
+        return Ok(common);
+    }
+    if st.can_truncate(common) {
+        st.truncate(common)?;
+        Ok(common)
+    } else {
+        st.reset();
+        Ok(0)
+    }
 }
 /// [`decode`] then [`trim_to_prefix`]: restore only what is still valid for `tokens`.
 pub fn decode_prefix(model: &Model, bytes: &[u8], tokens: &[usize]) -> Res<(State, usize)> {
@@ -381,7 +743,9 @@ pub fn decode_prefix(model: &Model, bytes: &[u8], tokens: &[usize]) -> Res<(Stat
     Ok((st, kept))
 }
 /// [`load`] then [`trim_to_prefix`].
-pub fn load_prefix(model: &Model, path: &Path, tokens: &[usize]) -> Res<(State, usize)> { decode_prefix(model, &fs::read(path)?, tokens) }
+pub fn load_prefix(model: &Model, path: &Path, tokens: &[usize]) -> Res<(State, usize)> {
+    decode_prefix(model, &fs::read(path)?, tokens)
+}
 
 // ---------------------------------------------------------------- store
 
@@ -393,53 +757,168 @@ pub struct SnapshotStore {
     dir: PathBuf,
     cap: u64,
     clock: Mutex<SystemTime>,
+    /// Signing key of a keyed store (see [`SnapshotStore::open_keyed`]).
+    key: Option<[u8; 32]>,
 }
 
 fn token_key(tokens: &[usize]) -> String {
     let mut h = Sha256::new();
-    for t in tokens { h.update(&(*t as u32).to_le_bytes()); }
+    for t in tokens {
+        h.update(&(*t as u32).to_le_bytes());
+    }
     crate::hub::hex(&h.finish()[..16])
 }
 fn entry_name(model: &Model, tokens: &[usize]) -> String {
-    format!("{}-{:012}-{}.snap", crate::hub::hex(&model.fingerprint()[..8]), tokens.len(), token_key(tokens))
+    format!(
+        "{}-{:012}-{}.snap",
+        crate::hub::hex(&model.fingerprint()[..8]),
+        tokens.len(),
+        token_key(tokens)
+    )
 }
-struct Entry { name: String, size: u64, mtime: SystemTime }
+struct Entry {
+    name: String,
+    size: u64,
+    mtime: SystemTime,
+}
 
 impl SnapshotStore {
     /// Open (creating) `dir`, keeping at most `cap_bytes` of snapshots in it.
     pub fn open(dir: impl Into<PathBuf>, cap_bytes: u64) -> Res<SnapshotStore> {
-        let dir = dir.into();
+        Self::open_inner(dir.into(), cap_bytes, false)
+    }
+
+    /// Like [`open`](SnapshotStore::open), but every entry is signed with a secret kept in
+    /// `<dir>/.store.key` (created on first use with owner-only permissions) and any entry without a
+    /// valid signature is refused and deleted. Use this for a directory other users or processes can
+    /// write to. The key file must be a regular file of exactly 32 bytes, not group- or
+    /// world-accessible (Unix); anything else is an error rather than a silent fallback.
+    pub fn open_keyed(dir: impl Into<PathBuf>, cap_bytes: u64) -> Res<SnapshotStore> {
+        Self::open_inner(dir.into(), cap_bytes, true)
+    }
+
+    fn load_or_create_key(dir: &Path) -> Res<[u8; 32]> {
+        let path = dir.join(KEY_FILE);
+        match fs::symlink_metadata(&path) {
+            Ok(m) => {
+                if !m.is_file() {
+                    return Err(SnapshotError::Unsupported(format!(
+                        "{} is not a regular file",
+                        path.display()
+                    )));
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if m.permissions().mode() & 0o077 != 0 {
+                        return Err(SnapshotError::Unsupported(format!(
+                            "{} is accessible to other users (mode {:o}); chmod 600 it",
+                            path.display(),
+                            m.permissions().mode() & 0o777
+                        )));
+                    }
+                }
+                let b = fs::read(&path)?;
+                <[u8; 32]>::try_from(b.as_slice()).map_err(|_| {
+                    SnapshotError::Unsupported(format!(
+                        "{} must hold exactly 32 bytes",
+                        path.display()
+                    ))
+                })
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let key: [u8; 32] = random_bytes(32).try_into().unwrap_or([0; 32]);
+                match create_exclusive(&path) {
+                    Ok(mut f) => {
+                        f.write_all(&key)?;
+                        f.sync_all()?;
+                        Ok(key)
+                    }
+                    // lost a race with another process creating it: use theirs
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        Self::load_or_create_key(dir)
+                    }
+                    Err(e) => Err(e.into()),
+                }
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn open_inner(dir: PathBuf, cap_bytes: u64, keyed: bool) -> Res<SnapshotStore> {
         fs::create_dir_all(&dir)?;
-        let s = SnapshotStore { dir, cap: cap_bytes, clock: Mutex::new(SystemTime::UNIX_EPOCH) };
+        let key = if keyed {
+            Some(Self::load_or_create_key(&dir)?)
+        } else {
+            None
+        };
+        let s = SnapshotStore {
+            dir,
+            cap: cap_bytes,
+            clock: Mutex::new(SystemTime::UNIX_EPOCH),
+            key,
+        };
         // leftovers of a crashed writer
         if let Ok(rd) = fs::read_dir(&s.dir) {
             for e in rd.flatten() {
                 let n = e.file_name().to_string_lossy().into_owned();
-                let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a > Duration::from_secs(3600));
-                if n.ends_with(".tmp") && old { let _ = fs::remove_file(e.path()); }
+                let old = e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|a| a > Duration::from_secs(3600));
+                if n.ends_with(".tmp") && old {
+                    let _ = fs::remove_file(e.path());
+                }
             }
         }
-        let newest = s.entries().iter().map(|e| e.mtime).max().unwrap_or(SystemTime::UNIX_EPOCH);
+        let newest = s
+            .entries()
+            .iter()
+            .map(|e| e.mtime)
+            .max()
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         *s.clock.lock().unwrap_or_else(|e| e.into_inner()) = newest;
         Ok(s)
     }
-    pub fn dir(&self) -> &Path { &self.dir }
-    pub fn capacity(&self) -> u64 { self.cap }
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+    pub fn capacity(&self) -> u64 {
+        self.cap
+    }
 
     fn entries(&self) -> Vec<Entry> {
-        let Ok(rd) = fs::read_dir(&self.dir) else { return vec![] };
-        rd.flatten().filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if !name.ends_with(".snap") { return None; }
-            let m = e.metadata().ok()?;
-            Some(Entry { name, size: m.len(), mtime: m.modified().ok()? })
-        }).collect()
+        let Ok(rd) = fs::read_dir(&self.dir) else {
+            return vec![];
+        };
+        rd.flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !name.ends_with(".snap") {
+                    return None;
+                }
+                let m = e.metadata().ok()?;
+                Some(Entry {
+                    name,
+                    size: m.len(),
+                    mtime: m.modified().ok()?,
+                })
+            })
+            .collect()
     }
     /// Total bytes of snapshots held.
-    pub fn used_bytes(&self) -> u64 { self.entries().iter().map(|e| e.size).sum() }
+    pub fn used_bytes(&self) -> u64 {
+        self.entries().iter().map(|e| e.size).sum()
+    }
     /// Number of snapshots held.
-    pub fn len(&self) -> usize { self.entries().len() }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn len(&self) -> usize {
+        self.entries().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// A modification time later than every one handed out before, so recency is a strict order
     /// even on file systems with coarse timestamps.
@@ -451,7 +930,9 @@ impl SnapshotStore {
     }
     fn touch(&self, name: &str) {
         let t = self.tick();
-        if let Ok(f) = fs::OpenOptions::new().write(true).open(self.dir.join(name)) { let _ = f.set_modified(t); }
+        if let Ok(f) = fs::OpenOptions::new().write(true).open(self.dir.join(name)) {
+            let _ = f.set_modified(t);
+        }
     }
     fn evict(&self) {
         let _g = self.clock.lock().unwrap_or_else(|e| e.into_inner());
@@ -459,10 +940,14 @@ impl SnapshotStore {
         let mut total: u64 = es.iter().map(|e| e.size).sum();
         es.sort_by(|a, b| a.mtime.cmp(&b.mtime).then_with(|| a.name.cmp(&b.name)));
         for e in es {
-            if total <= self.cap { break; }
+            if total <= self.cap {
+                break;
+            }
             match fs::remove_file(self.dir.join(&e.name)) {
                 Ok(()) => total = total.saturating_sub(e.size),
-                Err(x) if x.kind() == std::io::ErrorKind::NotFound => total = total.saturating_sub(e.size),
+                Err(x) if x.kind() == std::io::ErrorKind::NotFound => {
+                    total = total.saturating_sub(e.size)
+                }
                 Err(_) => {}
             }
         }
@@ -472,10 +957,20 @@ impl SnapshotStore {
     /// cap. A state that has been through eviction is refused: its slots are not at their own
     /// positions, so it is no prefix of any prompt.
     pub fn put(&self, model: &Model, st: &State, opts: SnapOptions) -> Res<bool> {
-        if st.is_compacted() { return Err(SnapshotError::Unsupported("a cache that went through eviction cannot be stored by prompt prefix".into())); }
-        if st.pos == 0 { return Err(SnapshotError::Unsupported("an empty state is not worth storing".into())); }
-        let bytes = encode(model, st, opts)?;
-        if bytes.len() as u64 > self.cap { return Ok(false); }
+        if st.is_compacted() {
+            return Err(SnapshotError::Unsupported(
+                "a cache that went through eviction cannot be stored by prompt prefix".into(),
+            ));
+        }
+        if st.pos == 0 {
+            return Err(SnapshotError::Unsupported(
+                "an empty state is not worth storing".into(),
+            ));
+        }
+        let bytes = encode_with(model, st, opts, self.key.as_ref().map(|k| &k[..]))?;
+        if bytes.len() as u64 > self.cap {
+            return Ok(false);
+        }
         let name = entry_name(model, st.tokens());
         write_atomic(&self.dir.join(&name), &bytes)?;
         self.touch(&name);
@@ -490,17 +985,28 @@ impl SnapshotStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        match decode(model, &bytes) {
-            Ok(st) if st.tokens() == tokens => { self.touch(name); Ok(Some(st)) }
-            Ok(_) => { let _ = fs::remove_file(&path); Ok(None) }
+        match decode_with(model, &bytes, self.key.as_ref().map(|k| &k[..])) {
+            Ok(st) if st.tokens() == tokens => {
+                self.touch(name);
+                Ok(Some(st))
+            }
+            Ok(_) => {
+                let _ = fs::remove_file(&path);
+                Ok(None)
+            }
             Err(SnapshotError::WrongModel) => Ok(None),
             Err(SnapshotError::Io(e)) => Err(SnapshotError::Io(e)),
-            Err(_) => { let _ = fs::remove_file(&path); Ok(None) }
+            Err(_) => {
+                let _ = fs::remove_file(&path);
+                Ok(None)
+            }
         }
     }
     /// The snapshot holding exactly `tokens`, if any (and refreshing its recency).
     pub fn get(&self, model: &Model, tokens: &[usize]) -> Res<Option<State>> {
-        if tokens.is_empty() { return Ok(None); }
+        if tokens.is_empty() {
+            return Ok(None);
+        }
         self.read_entry(model, &entry_name(model, tokens), tokens)
     }
     /// The longest stored prefix of `tokens`: its state and length. Damaged files met on the way are
@@ -508,15 +1014,24 @@ impl SnapshotStore {
     /// and starts over for a sliding-window cache that has wrapped).
     pub fn best_prefix(&self, model: &Model, tokens: &[usize]) -> Res<Option<(State, usize)>> {
         let fp = crate::hub::hex(&model.fingerprint()[..8]);
-        let mut lens: Vec<usize> = self.entries().iter().filter_map(|e| {
-            let mut it = e.name.trim_end_matches(".snap").splitn(3, '-');
-            (it.next()? == fp).then_some(())?;
-            it.next()?.parse::<usize>().ok()
-        }).filter(|&l| l > 0 && l <= tokens.len()).collect();
+        let mut lens: Vec<usize> = self
+            .entries()
+            .iter()
+            .filter_map(|e| {
+                let mut it = e.name.trim_end_matches(".snap").splitn(3, '-');
+                (it.next()? == fp).then_some(())?;
+                it.next()?.parse::<usize>().ok()
+            })
+            .filter(|&l| l > 0 && l <= tokens.len())
+            .collect();
         lens.sort_unstable_by(|a, b| b.cmp(a));
         lens.dedup();
         for l in lens {
-            if let Some(st) = self.read_entry(model, &entry_name(model, &tokens[..l]), &tokens[..l])? { return Ok(Some((st, l))); }
+            if let Some(st) =
+                self.read_entry(model, &entry_name(model, &tokens[..l]), &tokens[..l])?
+            {
+                return Ok(Some((st, l)));
+            }
         }
         Ok(None)
     }
@@ -529,25 +1044,43 @@ mod tests {
     use crate::model::tests::{base_spec, model_of, random_weights, tiny};
 
     const KINDS: [KvKind; 3] = [KvKind::F32, KvKind::F16, KvKind::Q8];
-    fn prompt(n: usize) -> Vec<usize> { (0..n).map(|i| (i * 7 + 3) % 19 + 1).collect() }
+    fn prompt(n: usize) -> Vec<usize> {
+        (0..n).map(|i| (i * 7 + 3) % 19 + 1).collect()
+    }
 
     struct Tmp(PathBuf);
     impl Tmp {
         fn new(tag: &str) -> Tmp {
-            let n = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+            let n = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
             let p = std::env::temp_dir().join(format!("cmp-snap-{tag}-{}-{n}", std::process::id()));
             fs::create_dir_all(&p).unwrap();
             Tmp(p)
         }
     }
-    impl Drop for Tmp { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn models() -> Vec<(&'static str, Model)> {
         let mut sw = base_spec(4, 2, true);
-        sw.sliding_window = 5; sw.sliding_layers = vec![true, false, true]; sw.rope_theta_local = 500.0;
-        vec![("dense", tiny(4, 2, false)), ("sliding", model_of(sw, false)), ("moe", crate::model::tests::accel_and_prefix::moe_model())]
+        sw.sliding_window = 5;
+        sw.sliding_layers = vec![true, false, true];
+        sw.rope_theta_local = 500.0;
+        vec![
+            ("dense", tiny(4, 2, false)),
+            ("sliding", model_of(sw, false)),
+            ("moe", crate::model::tests::accel_and_prefix::moe_model()),
+        ]
     }
-    fn continue_with(m: &Model, st: &mut State, n: usize) -> Vec<Vec<f32>> { (0..n).map(|i| m.forward(st, 1 + (i * 5) % 18).unwrap()).collect() }
+    fn continue_with(m: &Model, st: &mut State, n: usize) -> Vec<Vec<f32>> {
+        (0..n)
+            .map(|i| m.forward(st, 1 + (i * 5) % 18).unwrap())
+            .collect()
+    }
 
     #[test]
     fn a_round_trip_continues_bit_exactly_for_every_precision_and_model_kind() {
@@ -560,9 +1093,17 @@ mod tests {
                         m.forward_batch(&mut st, &prompt(n)).unwrap();
                         let bytes = encode(&m, &st, SnapOptions { compress }).unwrap();
                         let mut back = decode(&m, &bytes).unwrap();
-                        assert_eq!((back.pos, back.tokens(), back.kv_bytes(), back.kv_kind()), (st.pos, st.tokens(), st.kv_bytes(), kind), "{name} {kind:?}");
+                        assert_eq!(
+                            (back.pos, back.tokens(), back.kv_bytes(), back.kv_kind()),
+                            (st.pos, st.tokens(), st.kv_bytes(), kind),
+                            "{name} {kind:?}"
+                        );
                         let want = continue_with(&m, &mut st, 6);
-                        assert_eq!(continue_with(&m, &mut back, 6), want, "{name} {kind:?} compress={compress} n={n}: logits after a round trip differ");
+                        assert_eq!(
+                            continue_with(&m, &mut back, 6),
+                            want,
+                            "{name} {kind:?} compress={compress} n={n}: logits after a round trip differ"
+                        );
                     }
                 }
             }
@@ -574,10 +1115,21 @@ mod tests {
         let m = tiny(4, 2, false);
         let mut st = m.new_state_with(KvKind::Q8);
         m.forward_batch(&mut st, &prompt(20)).unwrap();
-        st.apply_policy(&StreamingLlm { sinks: 3 }, 9, &LayerBudgets::Uniform).unwrap();
-        let mut back = decode(&m, &encode(&m, &st, SnapOptions { compress: true }).unwrap()).unwrap();
-        assert_eq!((back.rope_gap(), back.abs_pos(3), back.is_compacted()), (st.rope_gap(), st.abs_pos(3), true));
-        assert_eq!(continue_with(&m, &mut back, 5), continue_with(&m, &mut st, 5));
+        st.apply_policy(&StreamingLlm { sinks: 3 }, 9, &LayerBudgets::Uniform)
+            .unwrap();
+        let mut back = decode(
+            &m,
+            &encode(&m, &st, SnapOptions { compress: true }).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (back.rope_gap(), back.abs_pos(3), back.is_compacted()),
+            (st.rope_gap(), st.abs_pos(3), true)
+        );
+        assert_eq!(
+            continue_with(&m, &mut back, 5),
+            continue_with(&m, &mut st, 5)
+        );
     }
 
     #[test]
@@ -589,15 +1141,27 @@ mod tests {
         let p = t.0.join("chat.snap");
         let size = save(&m, &st, &p, SnapOptions::default()).unwrap();
         assert_eq!(fs::metadata(&p).unwrap().len(), size);
-        assert!(fs::read_dir(&t.0).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")), "no temporary file is left behind");
+        assert!(
+            fs::read_dir(&t.0)
+                .unwrap()
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")),
+            "no temporary file is left behind"
+        );
         let mut back = load(&m, &p).unwrap();
-        assert_eq!(continue_with(&m, &mut back, 3), continue_with(&m, &mut st, 3));
+        assert_eq!(
+            continue_with(&m, &mut back, 3),
+            continue_with(&m, &mut st, 3)
+        );
         // overwriting replaces the file in one step
         let mut st2 = m.new_state();
         m.forward_batch(&mut st2, &prompt(5)).unwrap();
         save(&m, &st2, &p, SnapOptions { compress: true }).unwrap();
         assert_eq!(load(&m, &p).unwrap().pos, 5);
-        assert!(matches!(load(&m, &t.0.join("missing.snap")), Err(SnapshotError::Io(_))));
+        assert!(matches!(
+            load(&m, &t.0.join("missing.snap")),
+            Err(SnapshotError::Io(_))
+        ));
     }
 
     /// Recompute the checksum so only the field under test is wrong.
@@ -617,13 +1181,31 @@ mod tests {
             let good = encode(&m, &st, SnapOptions { compress }).unwrap();
             assert!(decode(&m, &good).is_ok());
             // every byte, flipped one at a time (sampled), is caught
-            for i in (0..good.len()).step_by(7).chain([0, 8, 12, 16, 48, 56, 63, 64, good.len() - 1]) {
+            for i in
+                (0..good.len())
+                    .step_by(7)
+                    .chain([0, 8, 12, 16, 48, 56, 63, 64, good.len() - 1])
+            {
                 let mut b = good.clone();
                 b[i] ^= 0x40;
-                assert!(decode(&m, &b).is_err(), "flip at {i} (compress={compress}) went unnoticed");
+                assert!(
+                    decode(&m, &b).is_err(),
+                    "flip at {i} (compress={compress}) went unnoticed"
+                );
             }
             // cut anywhere
-            for n in [0, 1, 7, 8, 63, 64, 95, good.len() / 2, good.len() - 33, good.len() - 1] {
+            for n in [
+                0,
+                1,
+                7,
+                8,
+                63,
+                64,
+                95,
+                good.len() / 2,
+                good.len() - 33,
+                good.len() - 1,
+            ] {
                 assert!(decode(&m, &good[..n]).is_err(), "cut to {n} accepted");
             }
             // appended garbage
@@ -633,7 +1215,10 @@ mod tests {
             // a checksum that is right but a version that is not
             let mut b = good.clone();
             b[8] = 9;
-            assert!(matches!(decode(&m, &reseal(b)), Err(SnapshotError::Version(9))));
+            assert!(matches!(
+                decode(&m, &reseal(b)),
+                Err(SnapshotError::Version(9))
+            ));
             // unknown flag, wrong stored length, wrong raw length: all internally "valid" files, all rejected
             let mut b = good.clone();
             b[12] |= 0x80;
@@ -646,22 +1231,34 @@ mod tests {
             assert!(decode(&m, &reseal(b)).is_err());
             // a payload that lies about its contents (token count huge)
             let mut b = good.clone();
-            b[HEADER] = 0xff; b[HEADER + 1] = 0xff;
-            if !compress { assert!(decode(&m, &reseal(b)).is_err()); }
+            b[HEADER] = 0xff;
+            b[HEADER + 1] = 0xff;
+            if !compress {
+                assert!(decode(&m, &reseal(b)).is_err());
+            }
         }
         assert!(decode(&m, b"").is_err() && decode(&m, &[0u8; 200]).is_err());
         // another model: different weights of the same shape are not told apart, a different shape is
         let good = encode(&m, &st, SnapOptions::default()).unwrap();
         let other_shape = tiny(2, 2, false);
-        assert!(matches!(decode(&other_shape, &good), Err(SnapshotError::WrongModel)));
+        assert!(matches!(
+            decode(&other_shape, &good),
+            Err(SnapshotError::WrongModel)
+        ));
         let mut sp = base_spec(4, 2, false);
         sp.layers = 2;
         let fewer = Model::new(sp.clone(), random_weights(&sp, 7, false)).unwrap();
-        assert!(matches!(decode(&fewer, &good), Err(SnapshotError::WrongModel)));
+        assert!(matches!(
+            decode(&fewer, &good),
+            Err(SnapshotError::WrongModel)
+        ));
         let mut sp = base_spec(4, 2, false);
         sp.rope_theta = 12345.0;
         let theta = Model::new(sp.clone(), random_weights(&sp, 7, false)).unwrap();
-        assert!(matches!(decode(&theta, &good), Err(SnapshotError::WrongModel)));
+        assert!(matches!(
+            decode(&theta, &good),
+            Err(SnapshotError::WrongModel)
+        ));
         assert_ne!(m.fingerprint(), other_shape.fingerprint());
         assert_eq!(m.fingerprint(), tiny(4, 2, false).fingerprint());
     }
@@ -669,14 +1266,27 @@ mod tests {
     #[test]
     fn compression_round_trips_arbitrary_bytes_and_rejects_garbage_without_panicking() {
         let mut seed = 0x1234_5678_9abc_def1_u64;
-        let mut next = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
-        let mut cases: Vec<Vec<u8>> = vec![vec![], vec![7], vec![0; 1000], (0..=255u8).cycle().take(5000).collect(), b"abcabcabcabcabcabcabcabc".to_vec()];
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut cases: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![7],
+            vec![0; 1000],
+            (0..=255u8).cycle().take(5000).collect(),
+            b"abcabcabcabcabcabcabcabc".to_vec(),
+        ];
         cases.push((0..4000).map(|_| (next() % 3) as u8).collect());
         cases.push((0..3000).map(|_| next() as u8).collect());
         cases.push((0..70_000).map(|i| ((i / 300) % 251) as u8).collect());
         for c in &cases {
             assert_eq!(&lz_decompress(&lz_compress(c), c.len()).unwrap(), c);
-            if c.len() % 4 == 0 { assert_eq!(&unshuffle(&shuffle(c, 4), 4), c); }
+            if c.len() % 4 == 0 {
+                assert_eq!(&unshuffle(&shuffle(c, 4), 4), c);
+            }
         }
         assert!(lz_compress(&vec![0u8; 10_000]).len() < 200);
         for _ in 0..300 {
@@ -702,7 +1312,11 @@ mod tests {
         let got = m.prefill_cached(&mut part, &asked).unwrap();
         let want = m.forward_batch(&mut m.new_state(), &asked).unwrap();
         assert_eq!(part.reused(), 8);
-        let err = got.iter().zip(&want).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let err = got
+            .iter()
+            .zip(&want)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
         assert!(err < 1e-4, "{err}");
         // a request that extends the snapshot reuses all of it; an unrelated one reuses nothing
         let mut longer = full.clone();
@@ -711,43 +1325,82 @@ mod tests {
         assert_eq!(decode_prefix(&m, &bytes, &[19, 19]).unwrap().1, 0);
         // a wrapped sliding-window ring cannot be rewound: it restores empty rather than wrong
         let mut sw = base_spec(4, 2, true);
-        sw.sliding_window = 3; sw.sliding_layers = vec![true, false, true]; sw.rope_theta_local = 500.0;
+        sw.sliding_window = 3;
+        sw.sliding_layers = vec![true, false, true];
+        sw.rope_theta_local = 500.0;
         let m = model_of(sw, false);
         let mut st = m.new_state();
         m.forward_batch(&mut st, &full).unwrap();
         let bytes = encode(&m, &st, SnapOptions::default()).unwrap();
         let (s, kept) = decode_prefix(&m, &bytes, &asked).unwrap();
         assert_eq!((kept, s.pos), (0, 0));
-        assert_eq!(decode_prefix(&m, &bytes, &full).unwrap().1, 14, "the whole snapshot is still valid for its own prompt");
+        assert_eq!(
+            decode_prefix(&m, &bytes, &full).unwrap().1,
+            14,
+            "the whole snapshot is still valid for its own prompt"
+        );
     }
 
-    fn filled(m: &Model, toks: &[usize]) -> State { let mut s = m.new_state(); m.forward_batch(&mut s, toks).unwrap(); s }
+    fn filled(m: &Model, toks: &[usize]) -> State {
+        let mut s = m.new_state();
+        m.forward_batch(&mut s, toks).unwrap();
+        s
+    }
 
     #[test]
     fn the_store_evicts_least_recently_used_and_honours_its_cap() {
         let t = Tmp::new("lru");
         let m = tiny(4, 2, false);
         let (a, b, c) = (prompt(10), prompt(11), prompt(12));
-        let one = encode(&m, &filled(&m, &a), SnapOptions::default()).unwrap().len() as u64;
+        let one = encode(&m, &filled(&m, &a), SnapOptions::default())
+            .unwrap()
+            .len() as u64;
         let store = SnapshotStore::open(&t.0, one * 5 / 2 + 400).unwrap();
-        assert!(store.put(&m, &filled(&m, &a), SnapOptions::default()).unwrap());
-        assert!(store.put(&m, &filled(&m, &b), SnapOptions::default()).unwrap());
+        assert!(
+            store
+                .put(&m, &filled(&m, &a), SnapOptions::default())
+                .unwrap()
+        );
+        assert!(
+            store
+                .put(&m, &filled(&m, &b), SnapOptions::default())
+                .unwrap()
+        );
         assert_eq!(store.len(), 2);
-        assert!(store.get(&m, &a).unwrap().is_some(), "reading a refreshes it");
-        assert!(store.put(&m, &filled(&m, &c), SnapOptions::default()).unwrap());
+        assert!(
+            store.get(&m, &a).unwrap().is_some(),
+            "reading a refreshes it"
+        );
+        assert!(
+            store
+                .put(&m, &filled(&m, &c), SnapOptions::default())
+                .unwrap()
+        );
         assert!(store.used_bytes() <= store.capacity());
-        assert!(store.get(&m, &b).unwrap().is_none(), "b was the least recently used");
+        assert!(
+            store.get(&m, &b).unwrap().is_none(),
+            "b was the least recently used"
+        );
         assert!(store.get(&m, &a).unwrap().is_some() && store.get(&m, &c).unwrap().is_some());
         // a state bigger than the whole cap is not stored and evicts nothing
         let small = Tmp::new("small");
         let tiny_store = SnapshotStore::open(&small.0, 100).unwrap();
-        assert!(!tiny_store.put(&m, &filled(&m, &a), SnapOptions::default()).unwrap());
+        assert!(
+            !tiny_store
+                .put(&m, &filled(&m, &a), SnapOptions::default())
+                .unwrap()
+        );
         assert_eq!(tiny_store.len(), 0);
         // compacted and empty states are refused
         let mut ev = filled(&m, &prompt(16));
-        ev.apply_policy(&StreamingLlm { sinks: 2 }, 6, &LayerBudgets::Uniform).unwrap();
+        ev.apply_policy(&StreamingLlm { sinks: 2 }, 6, &LayerBudgets::Uniform)
+            .unwrap();
         assert!(store.put(&m, &ev, SnapOptions::default()).is_err());
-        assert!(store.put(&m, &m.new_state(), SnapOptions::default()).is_err());
+        assert!(
+            store
+                .put(&m, &m.new_state(), SnapOptions::default())
+                .is_err()
+        );
         // reopening sees what is there
         let again = SnapshotStore::open(&t.0, store.capacity()).unwrap();
         assert_eq!(again.len(), store.len());
@@ -759,8 +1412,12 @@ mod tests {
         let m = tiny(4, 2, false);
         let doc = prompt(20);
         let store = SnapshotStore::open(&t.0, 1 << 24).unwrap();
-        store.put(&m, &filled(&m, &doc[..6]), SnapOptions { compress: true }).unwrap();
-        store.put(&m, &filled(&m, &doc[..14]), SnapOptions::default()).unwrap();
+        store
+            .put(&m, &filled(&m, &doc[..6]), SnapOptions { compress: true })
+            .unwrap();
+        store
+            .put(&m, &filled(&m, &doc[..14]), SnapOptions::default())
+            .unwrap();
         let mut question = doc[..14].to_vec();
         question.extend_from_slice(&[3, 1, 4, 1, 5]);
         let (mut st, n) = store.best_prefix(&m, &question).unwrap().unwrap();
@@ -776,7 +1433,12 @@ mod tests {
         assert!(store.best_prefix(&m, &[19, 19, 19]).unwrap().is_none());
         assert!(store.best_prefix(&m, &[]).unwrap().is_none());
         // another model sees nothing
-        assert!(store.best_prefix(&tiny(2, 2, false), &question).unwrap().is_none());
+        assert!(
+            store
+                .best_prefix(&tiny(2, 2, false), &question)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -785,22 +1447,31 @@ mod tests {
         let m = tiny(4, 2, false);
         let a = prompt(9);
         let store = SnapshotStore::open(&t.0, 1 << 24).unwrap();
-        store.put(&m, &filled(&m, &a), SnapOptions::default()).unwrap();
+        store
+            .put(&m, &filled(&m, &a), SnapOptions::default())
+            .unwrap();
         let file = t.0.join(entry_name(&m, &a));
         let mut bytes = fs::read(&file).unwrap();
         let n = bytes.len();
         bytes[n / 2] ^= 1;
         fs::write(&file, &bytes).unwrap();
         assert!(store.get(&m, &a).unwrap().is_none());
-        assert!(!file.exists(), "a damaged entry is removed so it is not tried again");
+        assert!(
+            !file.exists(),
+            "a damaged entry is removed so it is not tried again"
+        );
         // truncated entry
-        store.put(&m, &filled(&m, &a), SnapOptions::default()).unwrap();
+        store
+            .put(&m, &filled(&m, &a), SnapOptions::default())
+            .unwrap();
         let good = fs::read(&file).unwrap();
         fs::write(&file, &good[..good.len() - 40]).unwrap();
         assert!(store.best_prefix(&m, &a).unwrap().is_none());
         assert!(!file.exists());
         // an entry filed under another model's name is a miss for the others but is kept
-        store.put(&m, &filled(&m, &a), SnapOptions::default()).unwrap();
+        store
+            .put(&m, &filled(&m, &a), SnapOptions::default())
+            .unwrap();
         let other = tiny(2, 2, false);
         assert!(store.get(&other, &a).unwrap().is_none());
         assert!(store.get(&m, &a).unwrap().is_some());
@@ -814,10 +1485,17 @@ mod tests {
     fn concurrent_writers_and_readers_never_see_a_torn_file() {
         let t = Tmp::new("conc");
         let m = tiny(4, 2, false);
-        let seqs: Vec<Vec<usize>> = (0..6).map(|i| (0..8 + i).map(|j| (j * (i + 3) + i) % 19 + 1).collect()).collect();
+        let seqs: Vec<Vec<usize>> = (0..6)
+            .map(|i| (0..8 + i).map(|j| (j * (i + 3) + i) % 19 + 1).collect())
+            .collect();
         let states: Vec<State> = seqs.iter().map(|s| filled(&m, s)).collect();
-        let want: Vec<Vec<f32>> = states.iter().map(|s| m.forward(&mut s.fork().unwrap(), 2).unwrap()).collect();
-        let one = encode(&m, &states[0], SnapOptions::default()).unwrap().len() as u64;
+        let want: Vec<Vec<f32>> = states
+            .iter()
+            .map(|s| m.forward(&mut s.fork().unwrap(), 2).unwrap())
+            .collect();
+        let one = encode(&m, &states[0], SnapOptions::default())
+            .unwrap()
+            .len() as u64;
         let store = SnapshotStore::open(&t.0, one * 3).unwrap();
         std::thread::scope(|sc| {
             for w in 0..6 {
@@ -825,21 +1503,42 @@ mod tests {
                 sc.spawn(move || {
                     for round in 0..12 {
                         let i = (w + round) % seqs.len();
-                        store.put(m, &states[i], SnapOptions { compress: round % 2 == 0 }).unwrap();
+                        store
+                            .put(
+                                m,
+                                &states[i],
+                                SnapOptions {
+                                    compress: round % 2 == 0,
+                                },
+                            )
+                            .unwrap();
                         let j = (w * 5 + round * 3) % seqs.len();
                         if let Some(mut s) = store.get(m, &seqs[j]).unwrap() {
                             assert_eq!(s.tokens(), seqs[j].as_slice());
-                            assert_eq!(&m.forward(&mut s, 2).unwrap(), &want[j], "a snapshot read while others write must be whole");
+                            assert_eq!(
+                                &m.forward(&mut s, 2).unwrap(),
+                                &want[j],
+                                "a snapshot read while others write must be whole"
+                            );
                         }
                         let _ = store.best_prefix(m, &seqs[j]).unwrap();
                     }
                 });
             }
         });
-        assert!(store.used_bytes() <= store.capacity() + one, "cap respected up to a write in flight: {} > {}", store.used_bytes(), store.capacity());
+        assert!(
+            store.used_bytes() <= store.capacity() + one,
+            "cap respected up to a write in flight: {} > {}",
+            store.used_bytes(),
+            store.capacity()
+        );
         store.put(&m, &states[0], SnapOptions::default()).unwrap();
         assert!(store.used_bytes() <= store.capacity());
-        let leftovers = fs::read_dir(&t.0).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).count();
+        let leftovers = fs::read_dir(&t.0)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
         assert_eq!(leftovers, 0);
     }
 
@@ -847,9 +1546,231 @@ mod tests {
     fn fingerprints_follow_the_shape_of_the_tensors() {
         let a = tiny(4, 2, false);
         let q = crate::model::tests::requantise(&a, crate::quant::DType::BF16);
-        assert_ne!(a.fingerprint(), q.fingerprint(), "the same architecture in another storage type is another model");
-        assert_eq!(q.fingerprint(), crate::model::tests::requantise(&tiny(4, 2, false), crate::quant::DType::BF16).fingerprint());
+        assert_ne!(
+            a.fingerprint(),
+            q.fingerprint(),
+            "the same architecture in another storage type is another model"
+        );
+        assert_eq!(
+            q.fingerprint(),
+            crate::model::tests::requantise(&tiny(4, 2, false), crate::quant::DType::BF16)
+                .fingerprint()
+        );
         let moe = crate::model::tests::accel_and_prefix::moe_model();
         assert_ne!(moe.fingerprint(), a.fingerprint());
+    }
+
+    // ---- hardening: allocation bound, keyed MAC, key file, exclusive temp files ----
+
+    /// Re-seal a (possibly edited) snapshot body with a fresh SHA-256, as an attacker would.
+    fn seal_body(mut body: Vec<u8>) -> Vec<u8> {
+        let h = digest(&[&body]);
+        body.extend_from_slice(&h);
+        body
+    }
+
+    #[test]
+    fn lz_decompress_refuses_an_absurd_claimed_size_without_allocating_it() {
+        assert!(lz_decompress(&[0u8; 8], usize::MAX).is_err());
+        assert!(lz_decompress(&[0u8; 8], MAX_RAW_BYTES + 1).is_err());
+        assert!(lz_decompress(&[0u8; 8], 1 << 40).is_err());
+        assert!(
+            lz_decompress(&[0u8; 8], 8 * 255 + 65).is_err(),
+            "more than any LZ stream can expand to"
+        );
+    }
+
+    #[test]
+    fn a_crafted_compressed_snapshot_with_a_huge_raw_len_and_a_valid_hash_is_refused() {
+        let m = tiny(4, 2, false);
+        let st = filled(&m, &prompt(6));
+        let good = encode(&m, &st, SnapOptions { compress: true }).unwrap();
+        let mut body = good[..good.len() - TRAILER].to_vec();
+        body[48..56].copy_from_slice(&(u64::MAX / 2).to_le_bytes());
+        assert!(matches!(
+            decode(&m, &seal_body(body.clone())),
+            Err(SnapshotError::Format(_))
+        ));
+        body[48..56].copy_from_slice(&((MAX_RAW_BYTES as u64) + 1).to_le_bytes());
+        assert!(matches!(
+            decode(&m, &seal_body(body)),
+            Err(SnapshotError::Format(_))
+        ));
+    }
+
+    #[test]
+    fn keyed_snapshots_round_trip_and_reject_a_wrong_key_a_missing_mac_and_a_resealed_body() {
+        let m = tiny(4, 2, false);
+        let st = filled(&m, &prompt(9));
+        let key = b"0123456789abcdef0123456789abcdef";
+        for compress in [false, true] {
+            let mut st2 = filled(&m, &prompt(9));
+            let bytes = encode_keyed(&m, &st, SnapOptions { compress }, key).unwrap();
+            let mut back = decode_keyed(&m, &bytes, key).unwrap();
+            assert_eq!(
+                continue_with(&m, &mut back, 3),
+                continue_with(&m, &mut st2, 3)
+            );
+            assert!(
+                matches!(
+                    decode_keyed(&m, &bytes, b"another key entirely, 32 bytes long"),
+                    Err(SnapshotError::Corrupt)
+                ),
+                "wrong key"
+            );
+            // old / unsigned file in a keyed reader
+            let plain = encode(&m, &st, SnapOptions { compress }).unwrap();
+            assert!(
+                matches!(decode_keyed(&m, &plain, key), Err(SnapshotError::Format(_))),
+                "unsigned"
+            );
+            // an unkeyed reader still reads both (backwards compatible)
+            assert!(decode(&m, &plain).is_ok());
+            assert!(
+                decode(&m, &bytes).is_ok(),
+                "a keyed file is readable unkeyed"
+            );
+            // flip a payload byte and recompute the SHA: passes the hash, must fail the MAC
+            let mut body = bytes[..bytes.len() - TRAILER - MAC_BYTES].to_vec();
+            let at = body.len() - 1;
+            body[at] ^= 1;
+            let forged = seal_body(body);
+            let mut forged_with_mac = forged.clone();
+            forged_with_mac.extend_from_slice(&bytes[bytes.len() - MAC_BYTES..]);
+            assert!(
+                matches!(
+                    decode_keyed(&m, &forged_with_mac, key),
+                    Err(SnapshotError::Corrupt)
+                ),
+                "forged body, old MAC"
+            );
+            // clearing the keyed flag does not downgrade a keyed reader either
+            let mut stripped = bytes[..bytes.len() - MAC_BYTES].to_vec();
+            stripped[12..16]
+                .copy_from_slice(&(if compress { FLAG_COMPRESSED } else { 0 }).to_le_bytes());
+            let l = stripped.len() - TRAILER;
+            let stripped = seal_body(stripped[..l].to_vec());
+            assert!(decode_keyed(&m, &stripped, key).is_err(), "downgrade");
+        }
+    }
+
+    #[test]
+    fn a_keyed_store_never_loads_a_planted_unsigned_snapshot() {
+        let t = Tmp::new("keyed");
+        let m = tiny(4, 2, false);
+        let toks = prompt(10);
+        let plain = encode(&m, &filled(&m, &toks), SnapOptions::default()).unwrap();
+        let store = SnapshotStore::open_keyed(&t.0, 1 << 24).unwrap();
+        fs::write(t.0.join(entry_name(&m, &toks)), &plain).unwrap();
+        assert!(
+            store.get(&m, &toks).unwrap().is_none(),
+            "a forged unsigned entry is a miss"
+        );
+        assert!(store.best_prefix(&m, &toks).unwrap().is_none());
+        assert!(
+            store
+                .put(&m, &filled(&m, &toks), SnapOptions::default())
+                .unwrap()
+        );
+        assert!(store.get(&m, &toks).unwrap().is_some());
+        // reopening picks the same key up; an unkeyed store may read the signed entry
+        assert!(
+            SnapshotStore::open_keyed(&t.0, 1 << 24)
+                .unwrap()
+                .get(&m, &toks)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            SnapshotStore::open(&t.0, 1 << 24)
+                .unwrap()
+                .get(&m, &toks)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_store_key_file_is_private_and_unsafe_ones_are_refused() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let t = Tmp::new("keyfile");
+        SnapshotStore::open_keyed(&t.0, 1 << 20).unwrap();
+        let kp = t.0.join(KEY_FILE);
+        assert_eq!(
+            fs::metadata(&kp).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&kp).unwrap().len(), 32);
+        fs::set_permissions(&kp, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            SnapshotStore::open_keyed(&t.0, 1 << 20).is_err(),
+            "world-readable key"
+        );
+        fs::set_permissions(&kp, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&kp, b"short").unwrap();
+        fs::set_permissions(&kp, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            SnapshotStore::open_keyed(&t.0, 1 << 20).is_err(),
+            "wrong length"
+        );
+        fs::remove_file(&kp).unwrap();
+        let real = t.0.join("elsewhere");
+        fs::write(&real, [7u8; 32]).unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&real, &kp).unwrap();
+        assert!(
+            SnapshotStore::open_keyed(&t.0, 1 << 20).is_err(),
+            "symlinked key"
+        );
+        assert_eq!(
+            fs::read(&real).unwrap(),
+            [7u8; 32],
+            "the link target is untouched"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_writes_do_not_follow_symlinks_and_use_unpredictable_exclusive_temp_names() {
+        use std::os::unix::fs::symlink;
+        let t = Tmp::new("atomic");
+        let victim = t.0.join("victim");
+        fs::write(&victim, b"precious").unwrap();
+        let dest = t.0.join("x.snap");
+        symlink(&victim, &dest).unwrap();
+        write_atomic(&dest, b"new contents").unwrap();
+        assert_eq!(
+            fs::read(&victim).unwrap(),
+            b"precious",
+            "the symlink target must not be written through"
+        );
+        assert_eq!(fs::read(&dest).unwrap(), b"new contents");
+        assert!(
+            !fs::symlink_metadata(&dest)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link itself was replaced"
+        );
+        // exclusive creation: an existing path (even a dangling symlink) is never reused
+        let taken = t.0.join("taken");
+        fs::write(&taken, b"x").unwrap();
+        assert_eq!(
+            create_exclusive(&taken).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        let dangling = t.0.join("dangling");
+        symlink(t.0.join("nowhere"), &dangling).unwrap();
+        assert!(create_exclusive(&dangling).is_err());
+        assert!(!t.0.join("nowhere").exists());
+        // names are random and no temp file is left behind
+        assert_ne!(random_bytes(16), random_bytes(16));
+        let left: Vec<_> = fs::read_dir(&t.0)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(left.is_empty());
     }
 }

@@ -21,42 +21,47 @@ macro_rules! out {
 /// harness' capture instead.
 pub fn out_str(s: &str) {
     #[cfg(test)]
-    { print!("{s}"); }
+    {
+        print!("{s}");
+    }
     #[cfg(not(test))]
     {
         use std::io::Write;
         let mut o = std::io::stdout().lock();
         if let Err(e) = o.write_all(s.as_bytes()).and_then(|()| o.flush()) {
-            if e.kind() != std::io::ErrorKind::BrokenPipe { eprintln!("corbul: cannot write to standard output: {e}"); std::process::exit(1); }
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                eprintln!("corbul: cannot write to standard output: {e}");
+                std::process::exit(1);
+            }
             std::process::exit(0);
         }
     }
 }
 
-pub mod fast;
-pub mod webui;
-pub mod rag_cmd;
-pub mod merge_cmd;
-pub mod steer_cmd;
-pub mod quant_cmd;
-pub mod search_cmd;
-pub mod wm;
+pub mod anthropic;
+pub mod args;
+pub mod auth;
+pub mod cmds;
+pub mod constraint;
 pub mod famrun;
+pub mod fast;
+pub mod genloop;
 pub mod http;
 pub mod load;
 pub mod lorasrc;
-pub mod auth;
-pub mod anthropic;
-pub mod constraint;
-pub mod genloop;
+pub mod merge_cmd;
 pub mod metrics;
 pub mod modelfile;
+pub mod quant_cmd;
 pub mod quotes;
-pub mod args;
-pub mod cmds;
-pub mod runner;
+pub mod rag_cmd;
 pub mod registry;
-pub mod shutdown;
+pub mod runner;
+pub mod search_cmd;
 pub mod serve;
+pub mod shutdown;
+pub mod steer_cmd;
 pub mod template;
 pub mod tools;
+pub mod webui;
+pub mod wm;

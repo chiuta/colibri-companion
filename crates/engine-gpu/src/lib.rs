@@ -19,6 +19,8 @@
 pub mod caps;
 pub mod emu;
 pub mod emubackend;
+#[cfg(feature = "wgpu")]
+pub mod gpu;
 pub mod layout;
 pub mod offload;
 pub mod plan;
@@ -26,5 +28,3 @@ pub mod report;
 pub mod runtime;
 pub mod shaders;
 pub mod timing;
-#[cfg(feature = "wgpu")]
-pub mod gpu;

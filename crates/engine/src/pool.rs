@@ -14,7 +14,7 @@
 use std::any::Any;
 use std::cell::Cell;
 use std::ops::Range;
-use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
@@ -24,11 +24,17 @@ thread_local! {
     static BUSY: Cell<bool> = const { Cell::new(false) };
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> { m.lock().unwrap_or_else(|e| e.into_inner()) }
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Best-effort placement hint. Currently a documented no-op.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum AffinityHint { #[default] None, PerformanceCores }
+pub enum AffinityHint {
+    #[default]
+    None,
+    PerformanceCores,
+}
 
 struct FnPtr(*const (dyn Fn(Range<usize>) + Sync));
 // SAFETY: the pointee is `Sync`, and the pointer is only dereferenced while the owning
@@ -52,7 +58,9 @@ struct Job {
 fn run_chunks(job: &Job) {
     loop {
         let idx = job.next.fetch_add(1, Ordering::Relaxed);
-        if idx >= job.total { break; }
+        if idx >= job.total {
+            break;
+        }
         let start = idx * job.chunk; // idx < ceil(n/chunk) so this is < n
         let end = start.saturating_add(job.chunk).min(job.n);
         if !job.failed.load(Ordering::Acquire) {
@@ -62,7 +70,9 @@ fn run_chunks(job: &Job) {
             if let Err(p) = catch_unwind(AssertUnwindSafe(|| f(start..end))) {
                 job.failed.store(true, Ordering::Release);
                 let mut g = lock(&job.panic);
-                if g.is_none() { *g = Some(p); }
+                if g.is_none() {
+                    *g = Some(p);
+                }
             }
         }
         if job.done.fetch_add(1, Ordering::AcqRel) + 1 == job.total {
@@ -72,8 +82,17 @@ fn run_chunks(job: &Job) {
     }
 }
 
-struct Slot { job: Option<Arc<Job>>, epoch: u64, shutdown: bool }
-struct Shared { slot: Mutex<Slot>, cv: Condvar, epoch_hint: AtomicU64, quit: AtomicBool }
+struct Slot {
+    job: Option<Arc<Job>>,
+    epoch: u64,
+    shutdown: bool,
+}
+struct Shared {
+    slot: Mutex<Slot>,
+    cv: Condvar,
+    epoch_hint: AtomicU64,
+    quit: AtomicBool,
+}
 
 fn worker(sh: Arc<Shared>) {
     let mut seen = 0u64;
@@ -81,17 +100,24 @@ fn worker(sh: Arc<Shared>) {
     loop {
         // Short spin first: during decoding the next matrix product arrives within microseconds.
         let mut spins = 0u32;
-        while sh.epoch_hint.load(Ordering::Acquire) == seen && !sh.quit.load(Ordering::Acquire) && spins < 3000 {
+        while sh.epoch_hint.load(Ordering::Acquire) == seen
+            && !sh.quit.load(Ordering::Acquire)
+            && spins < 3000
+        {
             std::hint::spin_loop();
             spins += 1;
         }
         let job = {
             let mut g = lock(&sh.slot);
             loop {
-                if g.shutdown { return; }
+                if g.shutdown {
+                    return;
+                }
                 if g.epoch != seen {
                     seen = g.epoch;
-                    if let Some(j) = g.job.clone() { break j; }
+                    if let Some(j) = g.job.clone() {
+                        break j;
+                    }
                     continue;
                 }
                 g = sh.cv.wait(g).unwrap_or_else(|e| e.into_inner());
@@ -102,7 +128,11 @@ fn worker(sh: Arc<Shared>) {
 }
 
 struct SendPtr<T>(*mut T);
-impl<T> SendPtr<T> { fn get(&self) -> *mut T { self.0 } }
+impl<T> SendPtr<T> {
+    fn get(&self) -> *mut T {
+        self.0
+    }
+}
 // SAFETY: only used to hand out disjoint sub-slices of one `&mut [T]` to different threads.
 unsafe impl<T: Send> Send for SendPtr<T> {}
 unsafe impl<T: Send> Sync for SendPtr<T> {}
@@ -118,22 +148,40 @@ impl Pool {
     /// A pool that runs jobs on `n` threads in total (the caller plus `n - 1` workers).
     pub fn new(n: usize) -> Pool {
         let want = n.max(1);
-        let shared = Arc::new(Shared { slot: Mutex::new(Slot { job: None, epoch: 0, shutdown: false }), cv: Condvar::new(),
-            epoch_hint: AtomicU64::new(0), quit: AtomicBool::new(false) });
+        let shared = Arc::new(Shared {
+            slot: Mutex::new(Slot {
+                job: None,
+                epoch: 0,
+                shutdown: false,
+            }),
+            cv: Condvar::new(),
+            epoch_hint: AtomicU64::new(0),
+            quit: AtomicBool::new(false),
+        });
         let mut handles = Vec::new();
         for i in 1..want {
             let sh = shared.clone();
-            match std::thread::Builder::new().name(format!("engine-pool-{i}")).spawn(move || worker(sh)) {
+            match std::thread::Builder::new()
+                .name(format!("engine-pool-{i}"))
+                .spawn(move || worker(sh))
+            {
                 Ok(h) => handles.push(h),
                 Err(_) => break, // fewer threads is fine
             }
         }
         let threads = handles.len() + 1;
-        Pool { shared, handles, call_lock: Mutex::new(()), threads }
+        Pool {
+            shared,
+            handles,
+            call_lock: Mutex::new(()),
+            threads,
+        }
     }
 
     /// Threads that take part in a job, including the caller.
-    pub fn threads(&self) -> usize { self.threads }
+    pub fn threads(&self) -> usize {
+        self.threads
+    }
 
     /// Documented no-op, see the module docs.
     pub fn set_affinity_hint(&self, _hint: AffinityHint) {}
@@ -141,20 +189,38 @@ impl Pool {
     /// Run `f` over disjoint sub-ranges covering `0..n`; every chunk has at least `min_chunk`
     /// items (except possibly the last). Returns when all chunks are done.
     pub fn parallel_for<F: Fn(Range<usize>) + Sync>(&self, n: usize, min_chunk: usize, f: F) {
-        if n == 0 { return; }
+        if n == 0 {
+            return;
+        }
         let min_chunk = min_chunk.max(1);
-        if self.threads <= 1 || n <= min_chunk || BUSY.with(Cell::get) { return f(0..n); }
+        if self.threads <= 1 || n <= min_chunk || BUSY.with(Cell::get) {
+            return f(0..n);
+        }
         let chunk = n.div_ceil(self.threads * 4).max(min_chunk);
-        if chunk >= n { return f(0..n); }
-        let Ok(guard) = self.call_lock.try_lock() else { return f(0..n); };
+        if chunk >= n {
+            return f(0..n);
+        }
+        let Ok(guard) = self.call_lock.try_lock() else {
+            return f(0..n);
+        };
 
         let fref: &(dyn Fn(Range<usize>) + Sync) = &f;
         // SAFETY: lifetime erasure only. We do not return before `done == total`, after which no
         // thread can reach the dereference in `run_chunks` (all chunk indices are claimed).
         let fref: &'static (dyn Fn(Range<usize>) + Sync) = unsafe { std::mem::transmute(fref) };
         let total = n.div_ceil(chunk);
-        let job = Arc::new(Job { f: FnPtr(fref as *const _), n, chunk, total, next: AtomicUsize::new(0), done: AtomicUsize::new(0),
-            failed: AtomicBool::new(false), panic: Mutex::new(None), fin: Mutex::new(false), cv: Condvar::new() });
+        let job = Arc::new(Job {
+            f: FnPtr(fref as *const _),
+            n,
+            chunk,
+            total,
+            next: AtomicUsize::new(0),
+            done: AtomicUsize::new(0),
+            failed: AtomicBool::new(false),
+            panic: Mutex::new(None),
+            fin: Mutex::new(false),
+            cv: Condvar::new(),
+        });
         {
             let mut g = lock(&self.shared.slot);
             g.job = Some(job.clone());
@@ -168,16 +234,25 @@ impl Pool {
         BUSY.with(|b| b.set(false));
         {
             let mut fin = lock(&job.fin);
-            while !*fin { fin = job.cv.wait(fin).unwrap_or_else(|e| e.into_inner()); }
+            while !*fin {
+                fin = job.cv.wait(fin).unwrap_or_else(|e| e.into_inner());
+            }
         }
         lock(&self.shared.slot).job = None;
         let payload = lock(&job.panic).take();
         drop(guard);
-        if let Some(p) = payload { resume_unwind(p); }
+        if let Some(p) = payload {
+            resume_unwind(p);
+        }
     }
 
     /// Like [`Pool::parallel_for`] but hands each chunk its own mutable sub-slice and its start index.
-    pub fn parallel_chunks_mut<T: Send, F: Fn(usize, &mut [T]) + Sync>(&self, data: &mut [T], min_chunk: usize, f: F) {
+    pub fn parallel_chunks_mut<T: Send, F: Fn(usize, &mut [T]) + Sync>(
+        &self,
+        data: &mut [T],
+        min_chunk: usize,
+        f: F,
+    ) {
         let n = data.len();
         let base = SendPtr(data.as_mut_ptr());
         self.parallel_for(n, min_chunk, |r| {
@@ -194,7 +269,9 @@ impl Drop for Pool {
         self.shared.quit.store(true, Ordering::Release);
         lock(&self.shared.slot).shutdown = true;
         self.shared.cv.notify_all();
-        for h in self.handles.drain(..) { let _ = h.join(); }
+        for h in self.handles.drain(..) {
+            let _ = h.join();
+        }
     }
 }
 
@@ -219,7 +296,9 @@ mod tests {
             pool.parallel_for(n, 3, |r| {
                 total.fetch_add(r.len(), Ordering::Relaxed);
                 let mut c = covered.lock().unwrap();
-                for i in r { c[i] += 1; }
+                for i in r {
+                    c[i] += 1;
+                }
             });
             assert_eq!(total.load(Ordering::Relaxed), n);
             assert!(covered.lock().unwrap().iter().all(|&c| c == 1), "n={n}");
@@ -231,7 +310,11 @@ mod tests {
     fn chunks_mut_writes_every_element_once() {
         let pool = Pool::new(3);
         let mut v = vec![0u64; 100_003];
-        pool.parallel_chunks_mut(&mut v, 64, |start, s| { for (i, x) in s.iter_mut().enumerate() { *x = (start + i) as u64 * 2; } });
+        pool.parallel_chunks_mut(&mut v, 64, |start, s| {
+            for (i, x) in s.iter_mut().enumerate() {
+                *x = (start + i) as u64 * 2;
+            }
+        });
         assert!(v.iter().enumerate().all(|(i, &x)| x == i as u64 * 2));
         let serial: u64 = (0..100_003u64).map(|i| i * 2).sum();
         assert_eq!(v.iter().sum::<u64>(), serial);
@@ -243,7 +326,9 @@ mod tests {
         let total = AtomicUsize::new(0);
         pool.parallel_for(64, 1, |outer| {
             for _ in outer {
-                pool.parallel_for(100, 1, |inner| { total.fetch_add(inner.len(), Ordering::Relaxed); });
+                pool.parallel_for(100, 1, |inner| {
+                    total.fetch_add(inner.len(), Ordering::Relaxed);
+                });
             }
         });
         assert_eq!(total.load(Ordering::Relaxed), 64 * 100);
@@ -252,11 +337,19 @@ mod tests {
     #[test]
     fn a_panic_reaches_the_caller_and_the_pool_survives() {
         let pool = Pool::new(4);
-        let r = catch_unwind(AssertUnwindSafe(|| pool.parallel_for(1000, 1, |r| { if r.contains(&500) { panic!("boom"); } })));
+        let r = catch_unwind(AssertUnwindSafe(|| {
+            pool.parallel_for(1000, 1, |r| {
+                if r.contains(&500) {
+                    panic!("boom");
+                }
+            })
+        }));
         let msg = r.expect_err("panic must propagate");
         assert_eq!(msg.downcast_ref::<&str>(), Some(&"boom"));
         let n = AtomicUsize::new(0);
-        pool.parallel_for(1000, 1, |r| { n.fetch_add(r.len(), Ordering::Relaxed); });
+        pool.parallel_for(1000, 1, |r| {
+            n.fetch_add(r.len(), Ordering::Relaxed);
+        });
         assert_eq!(n.load(Ordering::Relaxed), 1000);
     }
 
@@ -276,7 +369,11 @@ mod tests {
         let n = usize::MAX - 5;
         let total = AtomicUsize::new(0);
         let calls = AtomicUsize::new(0);
-        pool.parallel_for(n, 1, |r| { assert!(r.start < r.end && r.end <= n); total.fetch_add(r.len(), Ordering::Relaxed); calls.fetch_add(1, Ordering::Relaxed); });
+        pool.parallel_for(n, 1, |r| {
+            assert!(r.start < r.end && r.end <= n);
+            total.fetch_add(r.len(), Ordering::Relaxed);
+            calls.fetch_add(1, Ordering::Relaxed);
+        });
         assert_eq!(total.load(Ordering::Relaxed), n);
         assert!(calls.load(Ordering::Relaxed) <= 8 * 4 + 1);
     }
@@ -286,35 +383,55 @@ mod tests {
         let pool = Pool::new(4);
         let ids = Mutex::new(HashSet::new());
         for _ in 0..300 {
-            pool.parallel_for(256, 1, |_| { ids.lock().unwrap().insert(std::thread::current().id()); });
+            pool.parallel_for(256, 1, |_| {
+                ids.lock().unwrap().insert(std::thread::current().id());
+            });
         }
-        assert!(ids.lock().unwrap().len() <= pool.threads(), "{} ids", ids.lock().unwrap().len());
+        assert!(
+            ids.lock().unwrap().len() <= pool.threads(),
+            "{} ids",
+            ids.lock().unwrap().len()
+        );
     }
 
     #[test]
     fn concurrent_callers_are_all_served_correctly() {
         let pool = Arc::new(Pool::new(4));
-        let hs: Vec<_> = (0..4).map(|t| { let p = pool.clone(); std::thread::spawn(move || {
-            for _ in 0..200 {
-                let s = AtomicU64::new(0);
-                p.parallel_for(1000, 8, |r| { s.fetch_add(r.map(|i| i as u64 + t).sum::<u64>(), Ordering::Relaxed); });
-                assert_eq!(s.load(Ordering::Relaxed), 499_500 + 1000 * t);
-            }
-        }) }).collect();
-        for h in hs { h.join().unwrap(); }
+        let hs: Vec<_> = (0..4)
+            .map(|t| {
+                let p = pool.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        let s = AtomicU64::new(0);
+                        p.parallel_for(1000, 8, |r| {
+                            s.fetch_add(r.map(|i| i as u64 + t).sum::<u64>(), Ordering::Relaxed);
+                        });
+                        assert_eq!(s.load(Ordering::Relaxed), 499_500 + 1000 * t);
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
     }
 
     #[test]
     fn dropping_a_pool_joins_its_workers() {
         let t = std::time::Instant::now();
-        for _ in 0..20 { let p = Pool::new(6); p.parallel_for(1000, 1, |_| {}); }
+        for _ in 0..20 {
+            let p = Pool::new(6);
+            p.parallel_for(1000, 1, |_| {});
+        }
         assert!(t.elapsed().as_secs() < 10);
     }
 
     #[test]
     fn the_global_pool_exists_and_works() {
         let n = AtomicUsize::new(0);
-        global().parallel_for(5000, 16, |r| { n.fetch_add(r.len(), Ordering::Relaxed); });
+        global().parallel_for(5000, 16, |r| {
+            n.fetch_add(r.len(), Ordering::Relaxed);
+        });
         assert_eq!(n.load(Ordering::Relaxed), 5000);
     }
 
@@ -325,11 +442,26 @@ mod tests {
         let mut v = vec![1.0f32; 1 << 20];
         let t = std::time::Instant::now();
         let iters = 2000;
-        for _ in 0..iters { pool.parallel_chunks_mut(&mut v, 4096, |_, s| for x in s { *x = *x * 1.0000001 + 1e-9; }); }
+        for _ in 0..iters {
+            pool.parallel_chunks_mut(&mut v, 4096, |_, s| {
+                for x in s {
+                    *x = *x * 1.0000001 + 1e-9;
+                }
+            });
+        }
         let per = t.elapsed().as_secs_f64() / iters as f64;
-        println!("{} threads: {:.1} us per 1M-element pass", pool.threads(), per * 1e6);
+        println!(
+            "{} threads: {:.1} us per 1M-element pass",
+            pool.threads(),
+            per * 1e6
+        );
         let t = std::time::Instant::now();
-        for _ in 0..20_000 { pool.parallel_for(pool.threads() * 4, 1, |_| {}); }
-        println!("empty dispatch: {:.2} us", t.elapsed().as_secs_f64() / 20_000.0 * 1e6);
+        for _ in 0..20_000 {
+            pool.parallel_for(pool.threads() * 4, 1, |_| {});
+        }
+        println!(
+            "empty dispatch: {:.2} us",
+            t.elapsed().as_secs_f64() / 20_000.0 * 1e6
+        );
     }
 }

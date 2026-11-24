@@ -11,16 +11,27 @@ fn main() {
         ("default (k40,p.95,minp.05)", "{}"),
         ("temp only", r#"{"top_k":0,"top_p":1,"min_p":0}"#),
         ("top_p only", r#"{"top_k":0,"top_p":0.9,"min_p":0}"#),
-        ("full (penalties+dry+typ+xtc)", r#"{"repeat_penalty":1.1,"dry_multiplier":0.8,"typical_p":0.9,"xtc_probability":0.5,"seed":1}"#),
+        (
+            "full (penalties+dry+typ+xtc)",
+            r#"{"repeat_penalty":1.1,"dry_multiplier":0.8,"typical_p":0.9,"xtc_probability":0.5,"seed":1}"#,
+        ),
         ("mirostat2", r#"{"mirostat":2,"top_k":0}"#),
     ];
     for (name, js) in cases {
         let mut c = SamplerChain::new(SamplerParams::from_json(js).unwrap());
-        for _ in 0..20 { c.sample(&l, &hist); }
+        for _ in 0..20 {
+            c.sample(&l, &hist);
+        }
         let it = 300;
         let t = Instant::now();
-        for _ in 0..it { std::hint::black_box(c.sample(&l, &hist)); }
+        for _ in 0..it {
+            std::hint::black_box(c.sample(&l, &hist));
+        }
         let s = t.elapsed().as_secs_f64();
-        println!("{name:<32} {:>9.0} samples/s  ({:.0} us)", it as f64 / s, s / it as f64 * 1e6);
+        println!(
+            "{name:<32} {:>9.0} samples/s  ({:.0} us)",
+            it as f64 / s,
+            s / it as f64 * 1e6
+        );
     }
 }

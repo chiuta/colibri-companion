@@ -3,17 +3,17 @@ use companion_engine::arch::{self, Spec, Support};
 use companion_engine::gguf::Gguf;
 use companion_engine::hub::{self, Downloader, Hub, RepoSpec, Select};
 use companion_engine::hw::{HardwareProfile, Tuning};
-use corbul::args::Args;
-use corbul::outln;
-use corbul::cmds;
-use corbul::load::{self, resolve, LoadCfg, Source};
+use corbul::args::{Args, parse_size};
 use corbul::auth::KeyStore;
+use corbul::cmds;
+use corbul::load::{self, LoadCfg, Source, resolve};
+use corbul::outln;
 use corbul::registry::{self, RegCfg, Registry};
 use corbul::serve::{self, App, LogSink, ServeConfig};
 use corbul::shutdown;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 const HELP: &str = "corbul — local language-model runner (clean-room engine)
@@ -29,7 +29,7 @@ USAGE
   corbul capabilities [--json]                                            what works, what does not
   corbul worker   <model> --key SECRET [--bind 0.0.0.0:7471]              serve layers to a mesh coordinator
   corbul run      <model> --workers h:p,h:p | --discover --key SECRET     generate across machines (= generate)
-  corbul verify-receipt <receipt.json> [--key K] [--model M]              check a generation receipt
+  corbul verify-receipt <receipt.json> [--key K|--key-file F] [--model M]            check a generation receipt
   corbul replay   <receipt.json> --model M [--key K]                      re-run it and compare
   corbul lang     detect|normalize TEXT | --file F                        language id; Romanian diacritics, mojibake, quotes
   corbul search   <model> --prompt T --method beam|best-of-n|vote         spend more computation for a better answer
@@ -63,7 +63,7 @@ OPTIONS (generate / chat)
   --lang CODE        keep the reply in one language (hard mask on foreign scripts; Romanian: no ş ţ)
   --governor         slow down or drop threads when the machine runs hot or low on memory (--verbose shows why)
   --reproducible     bit-identical results on every machine (slower)
-  --receipt FILE     sign what was generated (--receipt-key K, --receipt-topk N, --keep-steps, --leaves)
+  --receipt FILE     sign what was generated (--receipt-key K | --receipt-key-file F, --receipt-topk N, --keep-steps, --leaves)
   --draft MODEL | --lookahead | --self-spec [--skip-layers auto|4,6,8-11] [--draft-len N]   speculative decoding (generate only):
                      same greedy answer, same sampling distribution, fewer full passes; text appears at the end;
                      only --temperature/--top-k/--top-p; not with structured output, receipts, sessions or the mesh
@@ -80,7 +80,9 @@ SERVE
   --alias NAME=MODEL      another name for a model (repeatable)
   --max-loaded N          keep at most N models in memory (least recently used go first)
   --sleep-idle-seconds S  unload a model after S seconds without requests
-  --token T               one shared bearer token (or CORBUL_TOKEN)
+  --token T               one shared bearer token (or CORBUL_TOKEN); --token-file FILE reads it from a file (keeps it out of `ps`)
+  --allow-admin           let API-key holders use /api/create, /api/delete, /models/load, /models/unload (default: master token only)
+  --max-kv SIZE           refuse requests whose KV cache would exceed SIZE (default 8g)   --max-heavy N  concurrent tokenize/template/verify requests (4)
   --keys-file FILE        API keys with per-key model lists and rate limits (JSON)
   --cors ORIGINS          allow browsers from these origins (comma separated, or `*`)
   --log-prompts           include prompt text in the request log (off by default)
@@ -91,21 +93,41 @@ SERVE
 Hugging Face access: set HF_TOKEN for gated repos, HF_ENDPOINT for a mirror.
 A model is a folder with config.json + *.safetensors + tokenizer.json, or a .gguf file.";
 
-fn gib(b: u64) -> String { format!("{:.2} GiB", b as f64 / (1u64 << 30) as f64) }
+fn gib(b: u64) -> String {
+    format!("{:.2} GiB", b as f64 / (1u64 << 30) as f64)
+}
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let code = match run(&argv) { Ok(()) => 0, Err(e) => { eprintln!("corbul: {e}"); 1 } };
+    let code = match run(&argv) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("corbul: {e}");
+            1
+        }
+    };
     std::process::exit(code);
 }
 
 fn run(argv: &[String]) -> Result<(), String> {
-    let Some(cmd) = argv.first() else { outln!("{HELP}"); return Ok(()) };
+    let Some(cmd) = argv.first() else {
+        outln!("{HELP}");
+        return Ok(());
+    };
     let args = Args::parse(&argv[1..]);
-    if args.flag("help") { outln!("{HELP}"); return Ok(()); }
+    if args.flag("help") {
+        outln!("{HELP}");
+        return Ok(());
+    }
     match cmd.as_str() {
-        "help" | "-h" | "--help" => { outln!("{HELP}"); Ok(()) }
-        "version" | "-V" | "--version" => { outln!("corbul {}", env!("CARGO_PKG_VERSION")); Ok(()) }
+        "help" | "-h" | "--help" => {
+            outln!("{HELP}");
+            Ok(())
+        }
+        "version" | "-V" | "--version" => {
+            outln!("corbul {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         "inspect" => inspect(&args),
         "download" => download(&args),
         "generate" | "run" => cmds::generate(&args),
@@ -135,45 +157,108 @@ fn describe(spec: &Spec, weights: Option<u64>, budget_from: Option<&Path>) {
     outln!("family        {}", spec.family);
     match &spec.support {
         Support::Standard => outln!("support       full"),
-        Support::Moe => outln!("support       mixture-of-experts (not wired into the runner yet)"),
-        Support::Recurrent => outln!("support       recurrent (no attention, no KV cache) — runs through the family loader"),
-        Support::Hybrid => outln!("support       hybrid attention + state-space — runs through the family loader"),
+        Support::Moe => outln!("support       mixture-of-experts — runs through the family loader"),
+        Support::Recurrent => outln!(
+            "support       recurrent (no attention, no KV cache) — runs through the family loader"
+        ),
+        Support::Hybrid => {
+            outln!("support       hybrid attention + state-space — runs through the family loader")
+        }
         Support::Partial(why) => outln!("support       partial — {why}"),
         Support::Planned(why) => outln!("support       planned — {why}"),
     }
-    outln!("layers        {}  hidden {}  heads {} (kv {})  head_dim {}  ffn {}", spec.layers, spec.hidden, spec.heads, spec.kv_heads, spec.head_dim, spec.ffn);
+    outln!(
+        "layers        {}  hidden {}  heads {} (kv {})  head_dim {}  ffn {}",
+        spec.layers,
+        spec.hidden,
+        spec.heads,
+        spec.kv_heads,
+        spec.head_dim,
+        spec.ffn
+    );
     outln!("vocab         {}  context {}", spec.vocab, spec.context);
-    if spec.experts > 1 { outln!("experts       {} (used {}, shared {})", spec.experts, spec.experts_used, spec.shared_experts); }
+    if spec.experts > 1 {
+        outln!(
+            "experts       {} (used {}, shared {})",
+            spec.experts,
+            spec.experts_used,
+            spec.shared_experts
+        );
+    }
     let kv = spec.kv_bytes(spec.context.min(8192));
-    outln!("kv cache      {} per {} tokens (f16)", gib(kv), spec.context.min(8192));
+    outln!(
+        "kv cache      {} per {} tokens (f16)",
+        gib(kv),
+        spec.context.min(8192)
+    );
     if let Some(w) = weights {
         outln!("weights       {}", gib(w));
         let hp = HardwareProfile::detect(budget_from);
         let t = Tuning::recommend(&hp, w, kv);
-        outln!("\nthis machine  {} {} · {} threads · RAM {} free of {}", hp.os, hp.arch, hp.usable_threads,
-            hp.available_ram.map_or("?".into(), gib), hp.total_ram.map_or("?".into(), gib));
-        outln!("isa           {}", if hp.cpu.isa.is_empty() { "baseline".to_string() } else { hp.cpu.isa.join(" ") });
-        outln!("advice        threads {} · prefill batch {} · kv {:?} · mmap {} · RAM budget {}", t.threads, t.prefill_batch, t.kv_precision, t.use_mmap, gib(t.ram_budget));
-        for n in t.explain() { outln!("              - {n}"); }
-        if w > t.ram_budget { outln!("note          the weights are larger than the RAM budget; with mmap they stream from disk and run slowly"); }
+        outln!(
+            "\nthis machine  {} {} · {} threads · RAM {} free of {}",
+            hp.os,
+            hp.arch,
+            hp.usable_threads,
+            hp.available_ram.map_or("?".into(), gib),
+            hp.total_ram.map_or("?".into(), gib)
+        );
+        outln!(
+            "isa           {}",
+            if hp.cpu.isa.is_empty() {
+                "baseline".to_string()
+            } else {
+                hp.cpu.isa.join(" ")
+            }
+        );
+        outln!(
+            "advice        threads {} · prefill batch {} · kv {:?} · mmap {} · RAM budget {}",
+            t.threads,
+            t.prefill_batch,
+            t.kv_precision,
+            t.use_mmap,
+            gib(t.ram_budget)
+        );
+        for n in t.explain() {
+            outln!("              - {n}");
+        }
+        if w > t.ram_budget {
+            outln!(
+                "note          the weights are larger than the RAM budget; with mmap they stream from disk and run slowly"
+            );
+        }
     }
 }
 
 fn inspect(args: &Args) -> Result<(), String> {
-    let target = args.pos.first().ok_or("inspect: give a folder, a .gguf file or owner/repo")?;
+    let target = args
+        .pos
+        .first()
+        .ok_or("inspect: give a folder, a .gguf file or owner/repo")?;
     let p = Path::new(target);
     if p.exists() {
         match resolve(p)? {
             Source::HfDir(dir) => {
-                let cfg = std::fs::read_to_string(dir.join("config.json")).map_err(|e| e.to_string())?;
+                let cfg =
+                    std::fs::read_to_string(dir.join("config.json")).map_err(|e| e.to_string())?;
                 let spec = arch::from_hf_config(&cfg).map_err(|e| e.to_string())?;
-                let bytes: u64 = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.filter_map(Result::ok)
-                    .filter(|e| e.path().extension().is_some_and(|x| x == "safetensors")).filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum();
+                let bytes: u64 = std::fs::read_dir(&dir)
+                    .map_err(|e| e.to_string())?
+                    .filter_map(Result::ok)
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "safetensors"))
+                    .filter_map(|e| e.metadata().ok())
+                    .map(|m| m.len())
+                    .sum();
                 outln!("{}", dir.display());
                 describe(&spec, Some(bytes), Some(&dir));
             }
             Source::Gguf(f) => {
-                let g = Gguf::parse(std::io::BufReader::new(std::fs::File::open(&f).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())?;
+                let g = {
+                    let fh = std::fs::File::open(&f).map_err(|e| e.to_string())?;
+                    let n = fh.metadata().map_err(|e| e.to_string())?.len();
+                    Gguf::parse_with_len(std::io::BufReader::new(fh), n)
+                        .map_err(|e| e.to_string())?
+                };
                 let spec = arch::from_gguf(&g).map_err(|e| e.to_string())?;
                 outln!("{}", f.display());
                 describe(&spec, Some(g.total_tensor_bytes()), f.parent());
@@ -186,12 +271,32 @@ fn inspect(args: &Args) -> Result<(), String> {
     let dl = downloader()?;
     let cancel = AtomicBool::new(false);
     let files = dl.list_files(&spec, &cancel).map_err(|e| e.to_string())?;
-    outln!("{}@{}  ({} files, {})", spec.repo, spec.revision, files.len(), gib(hub::estimate_bytes(&files)));
-    let sel = Select { format: parse_format(args)?, quants: args.get("quant").map(|q| vec![q.to_string()]).unwrap_or_else(|| Select::default().quants) };
+    outln!(
+        "{}@{}  ({} files, {})",
+        spec.repo,
+        spec.revision,
+        files.len(),
+        gib(hub::estimate_bytes(&files))
+    );
+    let sel = Select {
+        format: parse_format(args)?,
+        quants: args
+            .get("quant")
+            .map(|q| vec![q.to_string()])
+            .unwrap_or_else(|| Select::default().quants),
+    };
     let chosen = hub::select_files(&files, &sel).map_err(|e| e.to_string())?;
-    outln!("would download {} files, {}:", chosen.len(), gib(hub::estimate_bytes(&chosen)));
-    for f in chosen.iter().take(40) { outln!("  {:>10}  {}", gib(f.size), f.path); }
-    if chosen.len() > 40 { outln!("  … and {} more", chosen.len() - 40); }
+    outln!(
+        "would download {} files, {}:",
+        chosen.len(),
+        gib(hub::estimate_bytes(&chosen))
+    );
+    for f in chosen.iter().take(40) {
+        outln!("  {:>10}  {}", gib(f.size), f.path);
+    }
+    if chosen.len() > 40 {
+        outln!("  … and {} more", chosen.len() - 40);
+    }
     Ok(())
 }
 
@@ -205,8 +310,13 @@ fn parse_format(args: &Args) -> Result<hub::Format, String> {
 }
 
 fn downloader() -> Result<Downloader, String> {
-    let token = std::env::var("HF_TOKEN").or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN")).ok().filter(|t| !t.is_empty());
-    Ok(Downloader::new(Hub::from_env()).map_err(|e| e.to_string())?.with_token(token))
+    let token = std::env::var("HF_TOKEN")
+        .or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN"))
+        .ok()
+        .filter(|t| !t.is_empty());
+    Ok(Downloader::new(Hub::from_env())
+        .map_err(|e| e.to_string())?
+        .with_token(token))
 }
 
 // ------------------------------------------------------------------------------ download
@@ -218,18 +328,51 @@ fn download(args: &Args) -> Result<(), String> {
     let cancel = AtomicBool::new(false);
     eprintln!("listing {}@{} …", spec.repo, spec.revision);
     let files = dl.list_files(&spec, &cancel).map_err(|e| e.to_string())?;
-    let sel = Select { format: parse_format(args)?, quants: args.get("quant").map(|q| vec![q.to_string()]).unwrap_or_else(|| Select::default().quants) };
+    let sel = Select {
+        format: parse_format(args)?,
+        quants: args
+            .get("quant")
+            .map(|q| vec![q.to_string()])
+            .unwrap_or_else(|| Select::default().quants),
+    };
     let chosen = hub::select_files(&files, &sel).map_err(|e| e.to_string())?;
-    let dest: PathBuf = match args.get("dest") { Some(d) => PathBuf::from(d), None => PathBuf::from("models").join(spec.repo.replace('/', "--")) };
-    eprintln!("{} files, {} → {}", chosen.len(), gib(hub::estimate_bytes(&chosen)), dest.display());
+    let dest: PathBuf = match args.get("dest") {
+        Some(d) => PathBuf::from(d),
+        None => PathBuf::from("models").join(spec.repo.replace('/', "--")),
+    };
+    eprintln!(
+        "{} files, {} → {}",
+        chosen.len(),
+        gib(hub::estimate_bytes(&chosen)),
+        dest.display()
+    );
     let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
-    let paths = dl.download_all(&spec, &chosen, &dest, &cancel, &mut |p| {
-        if last.elapsed().as_millis() >= 250 || (p.file_total > 0 && p.file_done >= p.file_total) {
-            last = std::time::Instant::now();
-            let pct = if p.total > 0 { p.done as f64 * 100.0 / p.total as f64 } else { 0.0 };
-            eprint!("\r  {pct:5.1}%  {}  {}   ", gib(p.done), p.file.chars().rev().take(48).collect::<Vec<_>>().into_iter().rev().collect::<String>());
-        }
-    }).map_err(|e| e.to_string())?;
+    let paths = dl
+        .download_all(&spec, &chosen, &dest, &cancel, &mut |p| {
+            if last.elapsed().as_millis() >= 250
+                || (p.file_total > 0 && p.file_done >= p.file_total)
+            {
+                last = std::time::Instant::now();
+                let pct = if p.total > 0 {
+                    p.done as f64 * 100.0 / p.total as f64
+                } else {
+                    0.0
+                };
+                eprint!(
+                    "\r  {pct:5.1}%  {}  {}   ",
+                    gib(p.done),
+                    p.file
+                        .chars()
+                        .rev()
+                        .take(48)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect::<String>()
+                );
+            }
+        })
+        .map_err(|e| e.to_string())?;
     eprintln!("\ndone: {} files in {}", paths.len(), dest.display());
     outln!("{}", dest.display());
     Ok(())
@@ -237,7 +380,12 @@ fn download(args: &Args) -> Result<(), String> {
 
 // ------------------------------------------------------------------------------ loading and sampling options
 
-struct Sampling { max_tokens: usize, temperature: f32, top_p: f32, top_k: usize }
+struct Sampling {
+    max_tokens: usize,
+    temperature: f32,
+    top_p: f32,
+    top_k: usize,
+}
 fn sampling(args: &Args, default_temp: f32) -> Result<Sampling, String> {
     Ok(Sampling {
         max_tokens: args.num("max-tokens")?.unwrap_or(512),
@@ -248,14 +396,30 @@ fn sampling(args: &Args, default_temp: f32) -> Result<Sampling, String> {
 }
 
 fn open_model(args: &Args) -> Result<load::Loaded, String> {
-    let path = args.pos.first().ok_or("give a model folder or .gguf file")?;
+    let path = args
+        .pos
+        .first()
+        .ok_or("give a model folder or .gguf file")?;
     let cfg = cmds::load_cfg(args)?;
     let t = std::time::Instant::now();
     let mut l = load::load(Path::new(path), &cfg)?;
-    if let Some(n) = args.num::<usize>("threads")? { l.model.set_threads(n); }
-    if let Some(c) = args.num::<u64>("ctx")?.filter(|c| *c > 0) { l.model.spec.context = l.model.spec.context.min(c as _); }
-    eprintln!("loaded {} in {:.1}s ({}, context {}, template: {})", l.name, t.elapsed().as_secs_f64(), gib(l.model.weight_bytes() as u64), l.model.spec.context, l.builtin.name());
-    for w in &l.warnings { eprintln!("warning: {w}"); }
+    if let Some(n) = args.num::<usize>("threads")? {
+        l.model.set_threads(n);
+    }
+    if let Some(c) = args.num::<u64>("ctx")?.filter(|c| *c > 0) {
+        l.model.spec.context = l.model.spec.context.min(c as _);
+    }
+    eprintln!(
+        "loaded {} in {:.1}s ({}, context {}, template: {})",
+        l.name,
+        t.elapsed().as_secs_f64(),
+        gib(l.model.weight_bytes() as u64),
+        l.model.spec.context,
+        l.builtin.name()
+    );
+    for w in &l.warnings {
+        eprintln!("warning: {w}");
+    }
     Ok(l)
 }
 
@@ -266,27 +430,65 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
     let reg_cfg = RegCfg {
         load: load_cfg,
         max_loaded: args.num("max-loaded")?.unwrap_or(0),
-        idle: args.num::<u64>("sleep-idle-seconds")?.filter(|s| *s > 0).map(Duration::from_secs),
+        idle: args
+            .num::<u64>("sleep-idle-seconds")?
+            .filter(|s| *s > 0)
+            .map(Duration::from_secs),
         threads: args.num("threads")?,
         ctx: args.num::<usize>("ctx")?.filter(|c| *c > 0),
     };
     let models_dir = args.get("models-dir").map(PathBuf::from);
-    if args.pos.is_empty() && models_dir.is_none() { return Err("serve: give a model, or --models-dir DIR".into()); }
+    if args.pos.is_empty() && models_dir.is_none() {
+        return Err("serve: give a model, or --models-dir DIR".into());
+    }
     let mut cfg = ServeConfig::default();
-    if let Some(h) = args.get("host") { cfg.host = h.to_string(); }
-    if let Some(p) = args.num("port")? { cfg.port = p; }
-    cfg.token = args.get("token").map(str::to_string).or_else(|| std::env::var("CORBUL_TOKEN").ok().filter(|t| !t.is_empty()));
-    if let Some(f) = args.get("keys-file") { cfg.keys = Some(KeyStore::load(Path::new(f))?); }
-    if let Some(c) = args.get("cors") { cfg.cors = Some(c.split(',').map(|o| o.trim().trim_end_matches('/').to_string()).filter(|o| !o.is_empty()).collect()); }
+    if let Some(h) = args.get("host") {
+        cfg.host = h.to_string();
+    }
+    if let Some(p) = args.num("port")? {
+        cfg.port = p;
+    }
+    cfg.token = args.secret("token", "token-file", Some("CORBUL_TOKEN"))?;
+    if let Some(t) = &cfg.token
+        && let Some(w) = cmds::weak_secret_warning("token", t)
+    {
+        eprintln!("{w}");
+    }
+    cfg.allow_admin = args.flag("allow-admin");
+    if let Some(n) = args.num::<usize>("max-heavy")? {
+        cfg.max_heavy = n.max(1);
+    }
+    if let Some(s) = args.get("max-kv") {
+        cfg.max_kv_bytes = parse_size(s)?;
+    }
+    if let Some(f) = args.get("keys-file") {
+        cfg.keys = Some(KeyStore::load(Path::new(f))?);
+    }
+    if let Some(c) = args.get("cors") {
+        cfg.cors = Some(
+            c.split(',')
+                .map(|o| o.trim().trim_end_matches('/').to_string())
+                .filter(|o| !o.is_empty())
+                .collect(),
+        );
+    }
     let s = sampling(args, 0.7)?;
-    (cfg.max_tokens, cfg.temperature, cfg.top_p, cfg.top_k) = (s.max_tokens, s.temperature, s.top_p, s.top_k);
+    (cfg.max_tokens, cfg.temperature, cfg.top_p, cfg.top_k) =
+        (s.max_tokens, s.temperature, s.top_p, s.top_k);
     cfg.model_id = args.get("model-name").map(str::to_string);
     cfg.log_prompts = args.flag("log-prompts");
-    if let Some(d) = args.num::<u64>("drain-seconds")? { cfg.drain = Duration::from_secs(d); }
-    if !args.flag("no-log") { cfg.log = Some(LogSink(Arc::new(|l: &str| eprintln!("{l}")))); }
+    if let Some(d) = args.num::<u64>("drain-seconds")? {
+        cfg.drain = Duration::from_secs(d);
+    }
+    if !args.flag("no-log") {
+        cfg.log = Some(LogSink(Arc::new(|l: &str| eprintln!("{l}"))));
+    }
     let loopback = matches!(cfg.host.as_str(), "127.0.0.1" | "localhost" | "::1");
     if !loopback && cfg.token.is_none() && cfg.keys.is_none() {
-        eprintln!("warning: listening on {} without --token or --keys-file; anyone who can reach this port can use the models", cfg.host);
+        eprintln!(
+            "warning: listening on {} without --token or --keys-file; anyone who can reach this port can use the models",
+            cfg.host
+        );
     }
     let registry = match args.pos.first() {
         Some(_) => {
@@ -297,10 +499,15 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
         None => Registry::new(reg_cfg),
     };
     if let Some(d) = &models_dir {
-        let n = registry.scan_dir(d).map_err(|e| format!("--models-dir: {e}"))?;
+        let n = registry
+            .scan_dir(d)
+            .map_err(|e| format!("--models-dir: {e}"))?;
         eprintln!("found {n} model(s) in {}", d.display());
     }
-    let config_dir = args.get("config-dir").map(PathBuf::from).or_else(registry::default_config_dir);
+    let config_dir = args
+        .get("config-dir")
+        .map(PathBuf::from)
+        .or_else(registry::default_config_dir);
     if let Some(c) = &config_dir
         && let Ok(n) = registry.set_config_dir(c)
         && n > 0
@@ -308,18 +515,36 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
         eprintln!("found {n} Modelfile(s) in {}", c.display());
     }
     for a in args.all("alias") {
-        let (alias, target) = a.split_once('=').ok_or_else(|| format!("--alias: `{a}` is not NAME=MODEL"))?;
+        let (alias, target) = a
+            .split_once('=')
+            .ok_or_else(|| format!("--alias: `{a}` is not NAME=MODEL"))?;
         registry.alias(alias.trim(), target.trim())?;
     }
-    if registry.is_empty() { return Err("no models found".into()); }
-    if let Some(d) = args.get("default-model") { registry.set_default(d); }
+    if registry.is_empty() {
+        return Err("no models found".into());
+    }
+    if let Some(d) = args.get("default-model") {
+        registry.set_default(d);
+    }
     let names = registry.names();
     let app = Arc::new(App::with_registry(registry, cfg));
     let h = serve::spawn(app).map_err(|e| format!("cannot listen: {e}"))?;
     shutdown::install();
-    eprintln!("serving {} on http://{}", if names.len() == 1 { names[0].clone() } else { format!("{} models", names.len()) }, h.addr);
-    eprintln!("  OpenAI: /v1/chat/completions /v1/completions /v1/models · Anthropic: /v1/messages · Ollama: /api/chat /api/generate /api/tags · /metrics /props /slots /tokenize");
-    while !shutdown::requested() { std::thread::sleep(Duration::from_millis(100)); }
+    eprintln!(
+        "serving {} on http://{}",
+        if names.len() == 1 {
+            names[0].clone()
+        } else {
+            format!("{} models", names.len())
+        },
+        h.addr
+    );
+    eprintln!(
+        "  OpenAI: /v1/chat/completions /v1/completions /v1/models · Anthropic: /v1/messages · Ollama: /api/chat /api/generate /api/tags · /metrics /props /slots /tokenize"
+    );
+    while !shutdown::requested() {
+        std::thread::sleep(Duration::from_millis(100));
+    }
     eprintln!("shutting down (waiting for running requests) …");
     h.stop();
     Ok(())

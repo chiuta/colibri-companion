@@ -12,7 +12,8 @@ pub const ATTN_WG: u32 = 256;
 pub const ELEM_WG: u32 = 64;
 
 /// Uniform block of the matvec kernels (8 × u32).
-pub const MATVEC_PARAMS: &str = "rows, cols, row_words, n_items, row_off, out_stride, x_stride, nwgx";
+pub const MATVEC_PARAMS: &str =
+    "rows, cols, row_words, n_items, row_off, out_stride, x_stride, nwgx";
 
 const MATVEC_HEAD: &str = r#"
 struct P { rows: u32, cols: u32, row_words: u32, n_items: u32, row_off: u32, out_stride: u32, x_stride: u32, nwgx: u32 };
@@ -65,7 +66,8 @@ fn main(@builtin(local_invocation_index) t: u32, @builtin(workgroup_id) wid: vec
 
 fn item_dot(f: Format) -> &'static str {
     match f {
-        Format::F32 => r#"
+        Format::F32 => {
+            r#"
 fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
     var s = 0.0;
     for (var j = 0u; j < 32u; j = j + 1u) {
@@ -73,8 +75,10 @@ fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
         if (e < p.cols) { s = s + bitcast<f32>(w[base + e]) * x[xo + e]; }
     }
     return s;
-}"#,
-        Format::F16 => r#"
+}"#
+        }
+        Format::F16 => {
+            r#"
 fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
     var s = 0.0;
     for (var j = 0u; j < 32u; j = j + 1u) {
@@ -85,8 +89,10 @@ fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
         }
     }
     return s;
-}"#,
-        Format::Q8_0 => r#"
+}"#
+        }
+        Format::Q8_0 => {
+            r#"
 fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
     let b = base + it * 9u;
     let d = bitcast<f32>(w[b]);
@@ -95,8 +101,10 @@ fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
         s = s + f32(sbyte(w[b + 1u + (j >> 2u)], j & 3u)) * x[xo + it * 32u + j];
     }
     return d * s;
-}"#,
-        Format::Q4_0 => r#"
+}"#
+        }
+        Format::Q4_0 => {
+            r#"
 fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
     let b = base + it * 5u;
     let d = bitcast<f32>(w[b]);
@@ -108,8 +116,10 @@ fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
         s = s + lo * x[xo + it * 32u + j] + hi * x[xo + it * 32u + 16u + j];
     }
     return d * s;
-}"#,
-        Format::Q4K => r#"
+}"#
+        }
+        Format::Q4K => {
+            r#"
 fn sc_min(sb: u32, j: u32) -> vec2<u32> {
     if (j < 4u) { return vec2<u32>(wbyte(sb, j) & 63u, wbyte(sb, j + 4u) & 63u); }
     let a = wbyte(sb, j + 4u);
@@ -133,8 +143,10 @@ fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
         sx = sx + xv;
     }
     return dd.x * f32(sm.x) * sq - dd.y * f32(sm.y) * sx;
-}"#,
-        Format::Q6K => r#"
+}"#
+        }
+        Format::Q6K => {
+            r#"
 fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
     let blk = it >> 4u;
     let g = it & 15u;
@@ -153,13 +165,16 @@ fn item_dot(base: u32, it: u32, xo: u32) -> f32 {
         s = s + f32(q) * x[xo + blk * 256u + g * 16u + (l - is * 16u)];
     }
     return d * sc * s;
-}"#,
+}"#
+        }
     }
 }
 
 /// Matrix–vector kernel for one weight format. Dispatch: `ceil(rows / 2)` workgroups over x/y,
 /// `batch` over z.
-pub fn matvec(f: Format) -> String { format!("{MATVEC_HEAD}{}{MATVEC_MAIN}", item_dot(f)) }
+pub fn matvec(f: Format) -> String {
+    format!("{MATVEC_HEAD}{}{MATVEC_MAIN}", item_dot(f))
+}
 
 /// RMS norm over `n` values per workgroup (one workgroup per batch row).
 pub const RMSNORM: &str = r#"
@@ -300,8 +315,19 @@ fn main(@builtin(local_invocation_index) t: u32, @builtin(workgroup_id) wid: vec
 
 /// Every kernel with its name, for validation and for the runner's pipeline table.
 pub fn all() -> Vec<(String, String)> {
-    let mut v: Vec<(String, String)> = crate::layout::ALL.iter().map(|f| (format!("matvec_{}", f.name()), matvec(*f))).collect();
-    for (n, s) in [("rmsnorm", RMSNORM), ("rope", ROPE), ("silu_mul", SILU_MUL), ("add", ADD), ("attention", ATTENTION)] { v.push((n.to_string(), s.to_string())); }
+    let mut v: Vec<(String, String)> = crate::layout::ALL
+        .iter()
+        .map(|f| (format!("matvec_{}", f.name()), matvec(*f)))
+        .collect();
+    for (n, s) in [
+        ("rmsnorm", RMSNORM),
+        ("rope", ROPE),
+        ("silu_mul", SILU_MUL),
+        ("add", ADD),
+        ("attention", ATTENTION),
+    ] {
+        v.push((n.to_string(), s.to_string()));
+    }
     v
 }
 
@@ -310,25 +336,42 @@ mod tests {
     use super::*;
 
     fn validate(name: &str, src: &str) {
-        let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(src)));
-        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
-            .validate(&module).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        assert!(module.entry_points.iter().any(|e| e.name == "main" && e.stage == naga::ShaderStage::Compute), "{name}: no compute entry point");
+        let module = naga::front::wgsl::parse_str(src)
+            .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(src)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        assert!(
+            module
+                .entry_points
+                .iter()
+                .any(|e| e.name == "main" && e.stage == naga::ShaderStage::Compute),
+            "{name}: no compute entry point"
+        );
     }
 
     #[test]
     fn every_kernel_parses_and_validates() {
         let all = all();
         assert_eq!(all.len(), 11);
-        for (n, s) in &all { validate(n, s); }
+        for (n, s) in &all {
+            validate(n, s);
+        }
     }
 
     #[test]
     fn workgroup_sizes_in_the_source_match_the_constants() {
-        for f in crate::layout::ALL { assert!(matvec(f).contains(&format!("@workgroup_size({MATVEC_WG})"))); }
+        for f in crate::layout::ALL {
+            assert!(matvec(f).contains(&format!("@workgroup_size({MATVEC_WG})")));
+        }
         assert!(RMSNORM.contains(&format!("@workgroup_size({NORM_WG})")));
         assert!(ATTENTION.contains(&format!("@workgroup_size({ATTN_WG})")));
-        for s in [ROPE, SILU_MUL, ADD] { assert!(s.contains(&format!("@workgroup_size({ELEM_WG})"))); }
+        for s in [ROPE, SILU_MUL, ADD] {
+            assert!(s.contains(&format!("@workgroup_size({ELEM_WG})")));
+        }
         assert_eq!(MATVEC_WG as usize, ROW_LANES * MATVEC_ROWS_PER_WG as usize);
     }
 
@@ -338,7 +381,12 @@ mod tests {
         let bad = "@compute @workgroup_size(1)\nfn main() { let z = 1.0 + 1u; }";
         let refused = match naga::front::wgsl::parse_str(bad) {
             Err(_) => true,
-            Ok(m) => naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&m).is_err(),
+            Ok(m) => naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::empty(),
+            )
+            .validate(&m)
+            .is_err(),
         };
         assert!(refused);
         assert!(naga::front::wgsl::parse_str("fn main( {").is_err());

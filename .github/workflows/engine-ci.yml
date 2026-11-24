@@ -122,7 +122,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with: { shared-key: "engine-test-${{ matrix.name }}" }
+      - name: Fetch the real tokenizer vocabularies (llama.cpp, MIT)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          tools/fetch_vocab.sh "$RUNNER_TEMP/vocab"
+          echo "ENGINE_VOCAB_DIR=$RUNNER_TEMP/vocab" >> "$GITHUB_ENV"
+          echo "ENGINE_REQUIRE_VOCAB=1" >> "$GITHUB_ENV"
       - name: Tests of the three crates (debug build)
+        env:
+          ENGINE_REQUIRE_TOOLS: ${{ runner.os == 'Linux' && '1' || '' }}
         run: cargo test $ENGINE_PKGS --locked
 
   simd-variants:

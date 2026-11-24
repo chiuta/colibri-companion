@@ -10,7 +10,7 @@
 //! MESSAGE user Hello
 //! ```
 //! Instructions are case-insensitive, `#` starts a comment line, and values may be wrapped in `"""` to span lines.
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Modelfile {
@@ -27,55 +27,98 @@ const MAX_BYTES: usize = 1 << 20;
 
 fn unquote(s: &str) -> String {
     let s = s.trim();
-    if let Some(i) = s.strip_prefix("\"\"\"").and_then(|r| r.strip_suffix("\"\"\"")) { return i.to_string(); }
-    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') { return s[1..s.len() - 1].replace("\\\"", "\""); }
+    if let Some(i) = s
+        .strip_prefix("\"\"\"")
+        .and_then(|r| r.strip_suffix("\"\"\""))
+    {
+        return i.to_string();
+    }
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        return s[1..s.len() - 1].replace("\\\"", "\"");
+    }
     s.to_string()
 }
 
 impl Modelfile {
     pub fn parse(text: &str) -> Result<Modelfile, String> {
-        if text.len() > MAX_BYTES { return Err("the Modelfile is too large".into()); }
+        if text.len() > MAX_BYTES {
+            return Err("the Modelfile is too large".into());
+        }
         let mut m = Modelfile::default();
         let mut lines = text.lines().enumerate().peekable();
         while let Some((n, raw)) = lines.next() {
             let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
-            let (word, rest) = line.split_once(char::is_whitespace).map_or((line, ""), |(a, b)| (a, b.trim_start()));
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (word, rest) = line
+                .split_once(char::is_whitespace)
+                .map_or((line, ""), |(a, b)| (a, b.trim_start()));
             let word = word.to_ascii_lowercase();
             // a value opening with """ continues until the closing """
             let mut value = rest.to_string();
             if rest.starts_with("\"\"\"") && !(rest.len() >= 6 && rest.ends_with("\"\"\"")) {
                 loop {
-                    let Some((_, next)) = lines.next() else { return Err(format!("line {}: unterminated \"\"\" block", n + 1)) };
+                    let Some((_, next)) = lines.next() else {
+                        return Err(format!("line {}: unterminated \"\"\" block", n + 1));
+                    };
                     value.push('\n');
                     value.push_str(next);
-                    if next.trim_end().ends_with("\"\"\"") { break; }
+                    if next.trim_end().ends_with("\"\"\"") {
+                        break;
+                    }
                 }
             }
             let v = unquote(&value);
             let at = |msg: &str| format!("line {}: {msg}", n + 1);
             match word.as_str() {
-                "from" => { if v.is_empty() { return Err(at("FROM needs a model")); }
-                    if !m.from.is_empty() { return Err(at("FROM given twice")); } m.from = v; }
+                "from" => {
+                    if v.is_empty() {
+                        return Err(at("FROM needs a model"));
+                    }
+                    if !m.from.is_empty() {
+                        return Err(at("FROM given twice"));
+                    }
+                    m.from = v;
+                }
                 "parameter" => {
-                    let (k, val) = rest.split_once(char::is_whitespace).ok_or_else(|| at("PARAMETER needs a name and a value"))?;
+                    let (k, val) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or_else(|| at("PARAMETER needs a name and a value"))?;
                     let val = unquote(val);
-                    if val.is_empty() { return Err(at("PARAMETER needs a value")); }
+                    if val.is_empty() {
+                        return Err(at("PARAMETER needs a value"));
+                    }
                     m.params.push((k.to_ascii_lowercase(), val));
                 }
                 "template" => m.template = Some(v),
                 "system" => m.system = Some(v),
-                "adapter" => { if v.is_empty() { return Err(at("ADAPTER needs a path")); } m.adapters.push(v); }
+                "adapter" => {
+                    if v.is_empty() {
+                        return Err(at("ADAPTER needs a path"));
+                    }
+                    m.adapters.push(v);
+                }
                 "license" => m.license = Some(v),
                 "message" => {
-                    let (role, content) = v.split_once(char::is_whitespace).ok_or_else(|| at("MESSAGE needs a role and text"))?;
-                    if !matches!(role.to_ascii_lowercase().as_str(), "system" | "user" | "assistant") { return Err(at("MESSAGE role must be system, user or assistant")); }
-                    m.messages.push((role.to_ascii_lowercase(), unquote(content)));
+                    let (role, content) = v
+                        .split_once(char::is_whitespace)
+                        .ok_or_else(|| at("MESSAGE needs a role and text"))?;
+                    if !matches!(
+                        role.to_ascii_lowercase().as_str(),
+                        "system" | "user" | "assistant"
+                    ) {
+                        return Err(at("MESSAGE role must be system, user or assistant"));
+                    }
+                    m.messages
+                        .push((role.to_ascii_lowercase(), unquote(content)));
                 }
                 other => return Err(at(&format!("unknown instruction `{other}`"))),
             }
         }
-        if m.from.is_empty() { return Err("a Modelfile needs a FROM line".into()); }
+        if m.from.is_empty() {
+            return Err("a Modelfile needs a FROM line".into());
+        }
         Ok(m)
     }
 
@@ -84,10 +127,22 @@ impl Modelfile {
         let mut o = Map::new();
         for (k, v) in &self.params {
             if k == "stop" {
-                if let Value::Array(a) = o.entry("stop").or_insert_with(|| json!([])) { a.push(json!(v)); }
+                if let Value::Array(a) = o.entry("stop").or_insert_with(|| json!([])) {
+                    a.push(json!(v));
+                }
                 continue;
             }
-            let val = if let Ok(i) = v.parse::<i64>() { json!(i) } else if let Some(f) = v.parse::<f64>().ok().filter(|f| f.is_finite()) { json!(f) } else { match v.as_str() { "true" => json!(true), "false" => json!(false), s => json!(s) } };
+            let val = if let Ok(i) = v.parse::<i64>() {
+                json!(i)
+            } else if let Some(f) = v.parse::<f64>().ok().filter(|f| f.is_finite()) {
+                json!(f)
+            } else {
+                match v.as_str() {
+                    "true" => json!(true),
+                    "false" => json!(false),
+                    s => json!(s),
+                }
+            };
             o.insert(k.clone(), val);
         }
         o
@@ -105,7 +160,13 @@ mod tests {
         assert_eq!(m.system.as_deref(), Some("You are terse.\nVery."));
         assert_eq!(m.template.as_deref(), Some("\n{{ messages }}\n"));
         assert_eq!(m.adapters, vec!["./lora"]);
-        assert_eq!(m.messages, vec![("user".into(), "Hi there".into()), ("assistant".into(), "Hello".into())]);
+        assert_eq!(
+            m.messages,
+            vec![
+                ("user".into(), "Hi there".into()),
+                ("assistant".into(), "Hello".into())
+            ]
+        );
         let o = m.options();
         assert_eq!(o["temperature"], json!(0.2));
         assert_eq!(o["num_ctx"], json!(4096));
@@ -120,7 +181,18 @@ mod tests {
 
     #[test]
     fn errors() {
-        for bad in ["", "# only a comment", "PARAMETER a 1", "FROM", "FROM a\nFROM b", "FROM a\nBOGUS x", "FROM a\nSYSTEM \"\"\"open", "FROM a\nPARAMETER x", "FROM a\nMESSAGE robot hi", "FROM a\nADAPTER"] {
+        for bad in [
+            "",
+            "# only a comment",
+            "PARAMETER a 1",
+            "FROM",
+            "FROM a\nFROM b",
+            "FROM a\nBOGUS x",
+            "FROM a\nSYSTEM \"\"\"open",
+            "FROM a\nPARAMETER x",
+            "FROM a\nMESSAGE robot hi",
+            "FROM a\nADAPTER",
+        ] {
             assert!(Modelfile::parse(bad).is_err(), "{bad:?}");
         }
         assert!(Modelfile::parse(&format!("FROM a\nSYSTEM {}", "x".repeat(MAX_BYTES))).is_err());
@@ -128,12 +200,33 @@ mod tests {
 
     #[test]
     fn fuzz_never_panics() {
-        let parts = ["FROM ", "PARAMETER ", "SYSTEM ", "TEMPLATE ", "\"\"\"", "\"", "\n", " ", "a", "stop", "#", "MESSAGE user ", "ADAPTER "];
+        let parts = [
+            "FROM ",
+            "PARAMETER ",
+            "SYSTEM ",
+            "TEMPLATE ",
+            "\"\"\"",
+            "\"",
+            "\n",
+            " ",
+            "a",
+            "stop",
+            "#",
+            "MESSAGE user ",
+            "ADAPTER ",
+        ];
         let mut s = 99u64;
         for _ in 0..3000 {
             let mut t = String::new();
-            for _ in 0..(s % 12) { s ^= s << 13; s ^= s >> 7; s ^= s << 17; t.push_str(parts[(s % parts.len() as u64) as usize]); }
-            s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+            for _ in 0..(s % 12) {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                t.push_str(parts[(s % parts.len() as u64) as usize]);
+            }
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
             let _ = Modelfile::parse(&t).map(|m| m.options());
         }
     }

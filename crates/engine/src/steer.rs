@@ -28,13 +28,15 @@
 //!   (ring) layers have no summary.
 //! * After an `Err` from any function taking `&mut State`, discard that state.
 //! * Nothing here was run on a real checkpoint; the tests use small synthetic models.
-use crate::hub::{hex, Sha256};
-use crate::model::{GenerateOptions, GenerateStats, Model, ModelError, Sampler, State, StopReason, PREFILL_CHUNK};
-use serde_json::{json, Value};
+use crate::hub::{Sha256, hex};
+use crate::model::{
+    GenerateOptions, GenerateStats, Model, ModelError, PREFILL_CHUNK, Sampler, State, StopReason,
+};
+use serde_json::{Value, json};
 use std::ops::Range;
 use std::path::Path;
-use std::time::Instant;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 /// Largest hidden size a control-vector file may declare.
 pub const MAX_HIDDEN: usize = 1 << 17;
@@ -74,7 +76,11 @@ impl std::fmt::Display for SteerError {
     }
 }
 impl std::error::Error for SteerError {}
-impl From<ModelError> for SteerError { fn from(e: ModelError) -> Self { SteerError::Model(e) } }
+impl From<ModelError> for SteerError {
+    fn from(e: ModelError) -> Self {
+        SteerError::Model(e)
+    }
+}
 
 // ------------------------------------------------------------------ layer-by-layer runner
 
@@ -84,26 +90,44 @@ type Hook<'a> = &'a mut dyn FnMut(usize, &[f32], usize, usize, bool);
 
 /// Feed `tokens` through `model` one layer at a time, like `forward_batch` (same chunking, same
 /// state bookkeeping), optionally steering and observing. Returns the hidden state of the last token.
-fn run_layerwise(model: &Model, st: &mut State, tokens: &[usize], steer: Option<&Steering>, hook: Hook) -> Result<Vec<f32>, SteerError> {
+fn run_layerwise(
+    model: &Model,
+    st: &mut State,
+    tokens: &[usize],
+    steer: Option<&Steering>,
+    hook: Hook,
+) -> Result<Vec<f32>, SteerError> {
     let s = &model.spec;
     let h = s.hidden as usize;
-    if tokens.is_empty() { return Err(ModelError::NoTokens.into()); }
-    if let Some(&t) = tokens.iter().find(|&&t| t >= s.vocab as usize) { return Err(ModelError::Token(t).into()); }
-    if st.pos + tokens.len() > s.context as usize { return Err(ModelError::ContextFull(s.context as usize).into()); }
+    if tokens.is_empty() {
+        return Err(ModelError::NoTokens.into());
+    }
+    if let Some(&t) = tokens.iter().find(|&&t| t >= s.vocab as usize) {
+        return Err(ModelError::Token(t).into());
+    }
+    if st.pos + tokens.len() > s.context as usize {
+        return Err(ModelError::ContextFull(s.context as usize).into());
+    }
     let layers = model.w.layers.len();
     let n_chunks = tokens.len().div_ceil(PREFILL_CHUNK);
     let mut last = vec![];
     for (ci, c) in tokens.chunks(PREFILL_CHUNK).enumerate() {
         let (b, pos0) = (c.len(), st.pos);
         let mut x = Vec::with_capacity(b * h);
-        for &t in c { x.extend(model.embed_token(t)?); }
+        for &t in c {
+            x.extend(model.embed_token(t)?);
+        }
         for li in 0..layers {
             model.run_layers_batch(st, li..li + 1, &mut x, pos0)?;
-            if let Some(sv) = steer { sv.apply(li, &mut x); }
+            if let Some(sv) = steer {
+                sv.apply(li, &mut x);
+            }
             hook(li, &x, b, pos0, ci + 1 == n_chunks);
         }
         model.finish_batch(st, c);
-        if ci + 1 == n_chunks { last = x[(b - 1) * h..b * h].to_vec(); }
+        if ci + 1 == n_chunks {
+            last = x[(b - 1) * h..b * h].to_vec();
+        }
     }
     Ok(last)
 }
@@ -115,9 +139,17 @@ pub fn capture_last(model: &Model, tokens: &[usize]) -> Result<Vec<Vec<f32>>, St
     let h = model.spec.hidden as usize;
     let mut out = vec![vec![0.0f32; h]; model.w.layers.len()];
     let mut st = model.new_state();
-    let mut hook = |li: usize, x: &[f32], b: usize, _: usize, last: bool| { if last { out[li].copy_from_slice(&x[(b - 1) * h..b * h]); } };
+    let mut hook = |li: usize, x: &[f32], b: usize, _: usize, last: bool| {
+        if last {
+            out[li].copy_from_slice(&x[(b - 1) * h..b * h]);
+        }
+    };
     run_layerwise(model, &mut st, tokens, None, &mut hook)?;
-    if out.iter().flatten().any(|v| !v.is_finite()) { return Err(SteerError::Param("the model produced non-finite activations".into())); }
+    if out.iter().flatten().any(|v| !v.is_finite()) {
+        return Err(SteerError::Param(
+            "the model produced non-finite activations".into(),
+        ));
+    }
     Ok(out)
 }
 
@@ -135,9 +167,28 @@ pub enum Method {
     Custom,
 }
 impl Method {
-    fn code(self) -> u8 { match self { Method::MeanDiff => 0, Method::Pca => 1, Method::Custom => 2 } }
-    fn from_code(c: u8) -> Option<Method> { match c { 0 => Some(Method::MeanDiff), 1 => Some(Method::Pca), 2 => Some(Method::Custom), _ => None } }
-    pub fn name(self) -> &'static str { match self { Method::MeanDiff => "mean-diff", Method::Pca => "pca", Method::Custom => "custom" } }
+    fn code(self) -> u8 {
+        match self {
+            Method::MeanDiff => 0,
+            Method::Pca => 1,
+            Method::Custom => 2,
+        }
+    }
+    fn from_code(c: u8) -> Option<Method> {
+        match c {
+            0 => Some(Method::MeanDiff),
+            1 => Some(Method::Pca),
+            2 => Some(Method::Custom),
+            _ => None,
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Method::MeanDiff => "mean-diff",
+            Method::Pca => "pca",
+            Method::Custom => "custom",
+        }
+    }
 }
 
 /// One direction per layer in the residual stream, to be added after that layer's output.
@@ -156,37 +207,91 @@ pub struct ControlVector {
     pub layers: Vec<Option<Vec<f32>>>,
 }
 
-fn norm(v: &[f32]) -> f64 { v.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>().sqrt() }
-fn dot(a: &[f32], b: &[f32]) -> f64 { a.iter().zip(b).map(|(&x, &y)| f64::from(x) * f64::from(y)).sum() }
+fn norm(v: &[f32]) -> f64 {
+    v.iter()
+        .map(|&x| f64::from(x) * f64::from(x))
+        .sum::<f64>()
+        .sqrt()
+}
+fn dot(a: &[f32], b: &[f32]) -> f64 {
+    a.iter()
+        .zip(b)
+        .map(|(&x, &y)| f64::from(x) * f64::from(y))
+        .sum()
+}
 
 impl ControlVector {
     /// Wrap hand-made per-layer vectors for `model` (for example an embedding row, to push towards a word).
-    pub fn from_layers(model: &Model, name: &str, layers: Vec<Option<Vec<f32>>>) -> Result<ControlVector, SteerError> {
+    pub fn from_layers(
+        model: &Model,
+        name: &str,
+        layers: Vec<Option<Vec<f32>>>,
+    ) -> Result<ControlVector, SteerError> {
         let h = model.spec.hidden as usize;
-        if name.len() > MAX_NAME { return Err(SteerError::Param("name longer than 256 bytes".into())); }
-        if layers.len() != model.w.layers.len() { return Err(SteerError::Mismatch(format!("{} layers given, the model has {}", layers.len(), model.w.layers.len()))); }
-        for v in layers.iter().flatten() {
-            if v.len() != h { return Err(SteerError::Mismatch(format!("a vector has {} values, the model's hidden size is {h}", v.len()))); }
-            if v.iter().any(|x| !x.is_finite()) { return Err(SteerError::Param("non-finite value".into())); }
+        if name.len() > MAX_NAME {
+            return Err(SteerError::Param("name longer than 256 bytes".into()));
         }
-        Ok(ControlVector { name: name.into(), method: Method::Custom, fingerprint: model.fingerprint(), hidden: h, positive_prompts: 0, negative_prompts: 0, layers })
+        if layers.len() != model.w.layers.len() {
+            return Err(SteerError::Mismatch(format!(
+                "{} layers given, the model has {}",
+                layers.len(),
+                model.w.layers.len()
+            )));
+        }
+        for v in layers.iter().flatten() {
+            if v.len() != h {
+                return Err(SteerError::Mismatch(format!(
+                    "a vector has {} values, the model's hidden size is {h}",
+                    v.len()
+                )));
+            }
+            if v.iter().any(|x| !x.is_finite()) {
+                return Err(SteerError::Param("non-finite value".into()));
+            }
+        }
+        Ok(ControlVector {
+            name: name.into(),
+            method: Method::Custom,
+            fingerprint: model.fingerprint(),
+            hidden: h,
+            positive_prompts: 0,
+            negative_prompts: 0,
+            layers,
+        })
     }
 
     /// Keep only the layers in `range` (a vector tuned for the middle of the network, say).
     pub fn restrict(&mut self, range: Range<usize>) {
-        for (i, l) in self.layers.iter_mut().enumerate() { if !range.contains(&i) { *l = None; } }
+        for (i, l) in self.layers.iter_mut().enumerate() {
+            if !range.contains(&i) {
+                *l = None;
+            }
+        }
     }
 
     /// Weighted sum of vectors made on the same model, for example `formal - casual + brief`.
-    pub fn combine(parts: &[(&ControlVector, f32)], name: &str) -> Result<ControlVector, SteerError> {
-        let first = parts.first().ok_or_else(|| SteerError::Param("nothing to combine".into()))?.0;
-        if name.len() > MAX_NAME { return Err(SteerError::Param("name longer than 256 bytes".into())); }
+    pub fn combine(
+        parts: &[(&ControlVector, f32)],
+        name: &str,
+    ) -> Result<ControlVector, SteerError> {
+        let first = parts
+            .first()
+            .ok_or_else(|| SteerError::Param("nothing to combine".into()))?
+            .0;
+        if name.len() > MAX_NAME {
+            return Err(SteerError::Param("name longer than 256 bytes".into()));
+        }
         let mut layers: Vec<Option<Vec<f32>>> = vec![None; first.layers.len()];
         for (cv, w) in parts {
-            if cv.fingerprint != first.fingerprint || cv.hidden != first.hidden || cv.layers.len() != first.layers.len() {
+            if cv.fingerprint != first.fingerprint
+                || cv.hidden != first.hidden
+                || cv.layers.len() != first.layers.len()
+            {
                 return Err(SteerError::Mismatch("vectors from different models".into()));
             }
-            if !w.is_finite() { return Err(SteerError::Param("non-finite weight".into())); }
+            if !w.is_finite() {
+                return Err(SteerError::Param("non-finite weight".into()));
+            }
             for (slot, v) in layers.iter_mut().zip(&cv.layers) {
                 if let Some(v) = v {
                     let acc = slot.get_or_insert_with(|| vec![0.0; first.hidden]);
@@ -194,29 +299,55 @@ impl ControlVector {
                 }
             }
         }
-        if layers.iter().flatten().flatten().any(|x| !x.is_finite()) { return Err(SteerError::Param("the sum overflowed".into())); }
-        Ok(ControlVector { name: name.into(), method: Method::Custom, fingerprint: first.fingerprint, hidden: first.hidden, positive_prompts: 0, negative_prompts: 0, layers })
+        if layers.iter().flatten().flatten().any(|x| !x.is_finite()) {
+            return Err(SteerError::Param("the sum overflowed".into()));
+        }
+        Ok(ControlVector {
+            name: name.into(),
+            method: Method::Custom,
+            fingerprint: first.fingerprint,
+            hidden: first.hidden,
+            positive_prompts: 0,
+            negative_prompts: 0,
+            layers,
+        })
     }
 
     /// `Ok` when this vector was made for `model` (same fingerprint, hidden size and layer count).
     pub fn check_model(&self, model: &Model) -> Result<(), SteerError> {
-        if self.fingerprint != model.fingerprint() { return Err(SteerError::Mismatch("made for another model (fingerprint differs)".into())); }
+        if self.fingerprint != model.fingerprint() {
+            return Err(SteerError::Mismatch(
+                "made for another model (fingerprint differs)".into(),
+            ));
+        }
         if self.hidden != model.spec.hidden as usize || self.layers.len() != model.w.layers.len() {
-            return Err(SteerError::Mismatch("hidden size or layer count differs".into()));
+            return Err(SteerError::Mismatch(
+                "hidden size or layer count differs".into(),
+            ));
         }
         Ok(())
     }
 
     /// L2 norm of each layer's vector (0 where there is none).
-    pub fn norms(&self) -> Vec<f32> { self.layers.iter().map(|l| l.as_ref().map_or(0.0, |v| norm(v) as f32)).collect() }
+    pub fn norms(&self) -> Vec<f32> {
+        self.layers
+            .iter()
+            .map(|l| l.as_ref().map_or(0.0, |v| norm(v) as f32))
+            .collect()
+    }
 
     /// Cosine similarity of each layer's vector with the previous layer's (`None` where undefined).
     pub fn adjacent_cosines(&self) -> Vec<Option<f32>> {
-        (0..self.layers.len()).map(|i| {
-            let (a, b) = (self.layers.get(i.wrapping_sub(1))?.as_ref()?, self.layers[i].as_ref()?);
-            let d = norm(a) * norm(b);
-            (d > 1e-20).then(|| (dot(a, b) / d) as f32)
-        }).collect()
+        (0..self.layers.len())
+            .map(|i| {
+                let (a, b) = (
+                    self.layers.get(i.wrapping_sub(1))?.as_ref()?,
+                    self.layers[i].as_ref()?,
+                );
+                let d = norm(a) * norm(b);
+                (d > 1e-20).then(|| (dot(a, b) / d) as f32)
+            })
+            .collect()
     }
 
     /// Serialise: header, per-layer vectors, SHA-256 of everything before it. All little-endian.
@@ -225,16 +356,32 @@ impl ControlVector {
         o.extend_from_slice(MAGIC);
         o.extend_from_slice(&VERSION.to_le_bytes());
         o.extend_from_slice(&self.fingerprint);
-        for n in [self.hidden, self.layers.len(), self.positive_prompts, self.negative_prompts] { o.extend_from_slice(&(n as u32).to_le_bytes()); }
+        for n in [
+            self.hidden,
+            self.layers.len(),
+            self.positive_prompts,
+            self.negative_prompts,
+        ] {
+            o.extend_from_slice(&(n as u32).to_le_bytes());
+        }
         o.push(self.method.code());
         let name = self.name.as_bytes();
-        let name = &name[..name.len().min(MAX_NAME)];
+        let mut cut = name.len().min(MAX_NAME);
+        while !self.name.is_char_boundary(cut) {
+            cut -= 1;
+        } // never split a UTF-8 character
+        let name = &name[..cut];
         o.extend_from_slice(&(name.len() as u16).to_le_bytes());
         o.extend_from_slice(name);
         for l in &self.layers {
             match l {
                 None => o.push(0),
-                Some(v) => { o.push(1); for x in v { o.extend_from_slice(&x.to_le_bytes()); } }
+                Some(v) => {
+                    o.push(1);
+                    for x in v {
+                        o.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
             }
         }
         let mut sh = Sha256::new();
@@ -246,51 +393,101 @@ impl ControlVector {
     /// Parse and validate a file. Every failure is an `Err`; nothing here panics on hostile input.
     pub fn from_bytes(data: &[u8]) -> Result<ControlVector, SteerError> {
         let bad = |m: &str| SteerError::Format(m.into());
-        if data.len() < 4 + 4 + 32 + 16 + 1 + 2 + 32 { return Err(bad("too short")); }
+        if data.len() < 4 + 4 + 32 + 16 + 1 + 2 + 32 {
+            return Err(bad("too short"));
+        }
         let (body, sum) = data.split_at(data.len() - 32);
         let mut sh = Sha256::new();
         sh.update(body);
-        if sh.finish().as_slice() != sum { return Err(bad("checksum mismatch (damaged or edited)")); }
+        if sh.finish().as_slice() != sum {
+            return Err(bad("checksum mismatch (damaged or edited)"));
+        }
         let mut r = Reader { d: body, at: 0 };
-        if r.take(4)? != MAGIC { return Err(bad("not a control-vector file")); }
+        if r.take(4)? != MAGIC {
+            return Err(bad("not a control-vector file"));
+        }
         let version = r.u32()?;
-        if version != VERSION { return Err(SteerError::Format(format!("version {version} not supported"))); }
-        let fingerprint: [u8; 32] = r.take(32)?.try_into().map_err(|_| bad("short fingerprint"))?;
-        let (hidden, layers, pn, nn) = (r.u32()? as usize, r.u32()? as usize, r.u32()? as usize, r.u32()? as usize);
-        if hidden == 0 || hidden > MAX_HIDDEN { return Err(bad("hidden size out of range")); }
-        if layers == 0 || layers > MAX_LAYERS { return Err(bad("layer count out of range")); }
+        if version != VERSION {
+            return Err(SteerError::Format(format!(
+                "version {version} not supported"
+            )));
+        }
+        let fingerprint: [u8; 32] = r
+            .take(32)?
+            .try_into()
+            .map_err(|_| bad("short fingerprint"))?;
+        let (hidden, layers, pn, nn) = (
+            r.u32()? as usize,
+            r.u32()? as usize,
+            r.u32()? as usize,
+            r.u32()? as usize,
+        );
+        if hidden == 0 || hidden > MAX_HIDDEN {
+            return Err(bad("hidden size out of range"));
+        }
+        if layers == 0 || layers > MAX_LAYERS {
+            return Err(bad("layer count out of range"));
+        }
         let method = Method::from_code(r.take(1)?[0]).ok_or_else(|| bad("unknown method"))?;
         let nlen = r.u16()? as usize;
-        if nlen > MAX_NAME { return Err(bad("name too long")); }
-        let name = std::str::from_utf8(r.take(nlen)?).map_err(|_| bad("name is not UTF-8"))?.to_string();
+        if nlen > MAX_NAME {
+            return Err(bad("name too long"));
+        }
+        let name = std::str::from_utf8(r.take(nlen)?)
+            .map_err(|_| bad("name is not UTF-8"))?
+            .to_string();
         let mut out = Vec::with_capacity(layers);
         for _ in 0..layers {
             match r.take(1)?[0] {
                 0 => out.push(None),
                 1 => {
                     let raw = r.take(hidden.checked_mul(4).ok_or_else(|| bad("size overflow"))?)?;
-                    let v: Vec<f32> = raw.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-                    if v.iter().any(|x| !x.is_finite()) { return Err(bad("non-finite value")); }
+                    let v: Vec<f32> = raw
+                        .chunks_exact(4)
+                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                        .collect();
+                    if v.iter().any(|x| !x.is_finite()) {
+                        return Err(bad("non-finite value"));
+                    }
                     out.push(Some(v));
                 }
                 _ => return Err(bad("bad layer flag")),
             }
         }
-        if r.at != body.len() { return Err(bad("trailing bytes")); }
-        Ok(ControlVector { name, method, fingerprint, hidden, positive_prompts: pn, negative_prompts: nn, layers: out })
+        if r.at != body.len() {
+            return Err(bad("trailing bytes"));
+        }
+        Ok(ControlVector {
+            name,
+            method,
+            fingerprint,
+            hidden,
+            positive_prompts: pn,
+            negative_prompts: nn,
+            layers: out,
+        })
     }
 
     /// Write to `path` (temp file, then rename, so a crash never leaves half a file).
     pub fn save(&self, path: &Path) -> Result<(), SteerError> {
         let tmp = path.with_extension("cvec.tmp");
         std::fs::write(&tmp, self.to_bytes()).map_err(|e| SteerError::Io(e.to_string()))?;
-        std::fs::rename(&tmp, path).map_err(|e| { let _ = std::fs::remove_file(&tmp); SteerError::Io(e.to_string()) })
+        std::fs::rename(&tmp, path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            SteerError::Io(e.to_string())
+        })
     }
 
     pub fn load(path: &Path) -> Result<ControlVector, SteerError> {
         let cap = (MAX_LAYERS * (MAX_HIDDEN * 4 + 1) + 4096) as u64;
-        let len = std::fs::metadata(path).map_err(|e| SteerError::Io(e.to_string()))?.len();
-        if len > cap { return Err(SteerError::Format("file larger than any valid control vector".into())); }
+        let len = std::fs::metadata(path)
+            .map_err(|e| SteerError::Io(e.to_string()))?
+            .len();
+        if len > cap {
+            return Err(SteerError::Format(
+                "file larger than any valid control vector".into(),
+            ));
+        }
         ControlVector::from_bytes(&std::fs::read(path).map_err(|e| SteerError::Io(e.to_string()))?)
     }
 
@@ -312,16 +509,29 @@ impl ControlVector {
     }
 }
 
-struct Reader<'a> { d: &'a [u8], at: usize }
+struct Reader<'a> {
+    d: &'a [u8],
+    at: usize,
+}
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], SteerError> {
-        let end = self.at.checked_add(n).filter(|&e| e <= self.d.len()).ok_or_else(|| SteerError::Format("truncated".into()))?;
+        let end = self
+            .at
+            .checked_add(n)
+            .filter(|&e| e <= self.d.len())
+            .ok_or_else(|| SteerError::Format("truncated".into()))?;
         let s = &self.d[self.at..end];
         self.at = end;
         Ok(s)
     }
-    fn u32(&mut self) -> Result<u32, SteerError> { let b = self.take(4)?; Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]])) }
-    fn u16(&mut self) -> Result<u16, SteerError> { let b = self.take(2)?; Ok(u16::from_le_bytes([b[0], b[1]])) }
+    fn u32(&mut self) -> Result<u32, SteerError> {
+        let b = self.take(4)?;
+        Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+    fn u16(&mut self) -> Result<u16, SteerError> {
+        let b = self.take(2)?;
+        Ok(u16::from_le_bytes([b[0], b[1]]))
+    }
 }
 
 /// First principal component of `diffs` (uncentred power iteration), scaled by the mean projection
@@ -329,63 +539,174 @@ impl<'a> Reader<'a> {
 pub fn pca_direction(diffs: &[Vec<f32>]) -> Vec<f32> {
     let h = diffs.first().map_or(0, Vec::len);
     let mut mean = vec![0.0f64; h];
-    for d in diffs { mean.iter_mut().zip(d).for_each(|(m, &x)| *m += f64::from(x) / diffs.len() as f64); }
+    for d in diffs {
+        mean.iter_mut()
+            .zip(d)
+            .for_each(|(m, &x)| *m += f64::from(x) / diffs.len() as f64);
+    }
     let mut v: Vec<f64> = mean.clone();
     if v.iter().map(|x| x * x).sum::<f64>().sqrt() < 1e-12 {
         let mut s = 0x2545_f491_4f6c_dd1du64;
-        v = (0..h).map(|_| { s ^= s << 13; s ^= s >> 7; s ^= s << 17; (s >> 40) as f64 / (1u64 << 24) as f64 - 0.5 }).collect();
+        v = (0..h)
+            .map(|_| {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                (s >> 40) as f64 / (1u64 << 24) as f64 - 0.5
+            })
+            .collect();
     }
-    let unit = |v: &mut Vec<f64>| -> bool { let n = v.iter().map(|x| x * x).sum::<f64>().sqrt(); if n < 1e-30 { false } else { v.iter_mut().for_each(|x| *x /= n); true } };
-    if !unit(&mut v) { return vec![0.0; h]; }
+    let unit = |v: &mut Vec<f64>| -> bool {
+        let n = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        if n < 1e-30 {
+            false
+        } else {
+            v.iter_mut().for_each(|x| *x /= n);
+            true
+        }
+    };
+    if !unit(&mut v) {
+        return vec![0.0; h];
+    }
     for _ in 0..200 {
         let mut w = vec![0.0f64; h];
         for d in diffs {
             let p: f64 = d.iter().zip(&v).map(|(&x, y)| f64::from(x) * y).sum();
-            w.iter_mut().zip(d).for_each(|(a, &x)| *a += p * f64::from(x));
+            w.iter_mut()
+                .zip(d)
+                .for_each(|(a, &x)| *a += p * f64::from(x));
         }
-        if !unit(&mut w) { return vec![0.0; h]; }
-        let delta: f64 = w.iter().zip(&v).map(|(a, b)| (a - b) * (a - b)).sum::<f64>().sqrt();
+        if !unit(&mut w) {
+            return vec![0.0; h];
+        }
+        let delta: f64 = w
+            .iter()
+            .zip(&v)
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum::<f64>()
+            .sqrt();
         v = w;
-        if delta < 1e-9 { break; }
+        if delta < 1e-9 {
+            break;
+        }
     }
-    let mean_proj: f64 = diffs.iter().map(|d| d.iter().zip(&v).map(|(&x, y)| f64::from(x) * y).sum::<f64>()).sum::<f64>() / diffs.len() as f64;
-    let scale = if mean_proj < 0.0 { -mean_proj } else { mean_proj };
+    let mean_proj: f64 = diffs
+        .iter()
+        .map(|d| {
+            d.iter()
+                .zip(&v)
+                .map(|(&x, y)| f64::from(x) * y)
+                .sum::<f64>()
+        })
+        .sum::<f64>()
+        / diffs.len() as f64;
+    let scale = if mean_proj < 0.0 {
+        -mean_proj
+    } else {
+        mean_proj
+    };
     let sign = if mean_proj < 0.0 { -1.0 } else { 1.0 };
     v.iter().map(|&x| (x * sign * scale) as f32).collect()
 }
 
 /// Learn a control vector: run every prompt, take the residual stream at its last token after each
 /// layer, and compare the positive class with the negative one. Prompts are token ids.
-pub fn train(model: &Model, positive: &[Vec<usize>], negative: &[Vec<usize>], method: Method, name: &str) -> Result<ControlVector, SteerError> {
-    if method == Method::Custom { return Err(SteerError::Param("Method::Custom is not a training method".into())); }
-    if positive.is_empty() || negative.is_empty() { return Err(SteerError::Param("both prompt sets need at least one prompt".into())); }
-    if positive.len() > MAX_PROMPTS || negative.len() > MAX_PROMPTS { return Err(SteerError::Param(format!("at most {MAX_PROMPTS} prompts per class"))); }
-    if name.len() > MAX_NAME { return Err(SteerError::Param("name longer than 256 bytes".into())); }
+pub fn train(
+    model: &Model,
+    positive: &[Vec<usize>],
+    negative: &[Vec<usize>],
+    method: Method,
+    name: &str,
+) -> Result<ControlVector, SteerError> {
+    if method == Method::Custom {
+        return Err(SteerError::Param(
+            "Method::Custom is not a training method".into(),
+        ));
+    }
+    if positive.is_empty() || negative.is_empty() {
+        return Err(SteerError::Param(
+            "both prompt sets need at least one prompt".into(),
+        ));
+    }
+    if positive.len() > MAX_PROMPTS || negative.len() > MAX_PROMPTS {
+        return Err(SteerError::Param(format!(
+            "at most {MAX_PROMPTS} prompts per class"
+        )));
+    }
+    if name.len() > MAX_NAME {
+        return Err(SteerError::Param("name longer than 256 bytes".into()));
+    }
     let (h, nl) = (model.spec.hidden as usize, model.w.layers.len());
     let pca = method == Method::Pca;
     if pca {
-        if positive.len() != negative.len() { return Err(SteerError::Param("pca pairs prompts in order: both sets must have the same size".into())); }
-        if positive.len().saturating_mul(nl).saturating_mul(h) > MAX_PCA_FLOATS { return Err(SteerError::Param("too many prompts for pca at this model size".into())); }
+        if positive.len() != negative.len() {
+            return Err(SteerError::Param(
+                "pca pairs prompts in order: both sets must have the same size".into(),
+            ));
+        }
+        if positive.len().saturating_mul(nl).saturating_mul(h) > MAX_PCA_FLOATS {
+            return Err(SteerError::Param(
+                "too many prompts for pca at this model size".into(),
+            ));
+        }
     }
     let mut sum_p = vec![vec![0.0f64; h]; nl];
     let mut sum_n = vec![vec![0.0f64; h]; nl];
-    let mut diffs: Vec<Vec<Vec<f32>>> = if pca { vec![Vec::with_capacity(positive.len()); nl] } else { vec![] };
-    let add = |acc: &mut Vec<Vec<f64>>, c: &[Vec<f32>]| { for (a, v) in acc.iter_mut().zip(c) { a.iter_mut().zip(v).for_each(|(s, &x)| *s += f64::from(x)); } };
+    let mut diffs: Vec<Vec<Vec<f32>>> = if pca {
+        vec![Vec::with_capacity(positive.len()); nl]
+    } else {
+        vec![]
+    };
+    let add = |acc: &mut Vec<Vec<f64>>, c: &[Vec<f32>]| {
+        for (a, v) in acc.iter_mut().zip(c) {
+            a.iter_mut().zip(v).for_each(|(s, &x)| *s += f64::from(x));
+        }
+    };
     for i in 0..positive.len().max(negative.len()) {
-        let cp = positive.get(i).map(|p| capture_last(model, p)).transpose()?;
-        let cn = negative.get(i).map(|p| capture_last(model, p)).transpose()?;
-        if let Some(c) = &cp { add(&mut sum_p, c); }
-        if let Some(c) = &cn { add(&mut sum_n, c); }
+        let cp = positive
+            .get(i)
+            .map(|p| capture_last(model, p))
+            .transpose()?;
+        let cn = negative
+            .get(i)
+            .map(|p| capture_last(model, p))
+            .transpose()?;
+        if let Some(c) = &cp {
+            add(&mut sum_p, c);
+        }
+        if let Some(c) = &cn {
+            add(&mut sum_n, c);
+        }
         if let (true, Some(p), Some(n)) = (pca, &cp, &cn) {
-            for (l, (a, b)) in p.iter().zip(n).enumerate() { diffs[l].push(a.iter().zip(b).map(|(x, y)| x - y).collect()); }
+            for (l, (a, b)) in p.iter().zip(n).enumerate() {
+                diffs[l].push(a.iter().zip(b).map(|(x, y)| x - y).collect());
+            }
         }
     }
     let (np, nn) = (positive.len() as f64, negative.len() as f64);
-    let layers = (0..nl).map(|l| {
-        let v: Vec<f32> = if pca { pca_direction(&diffs[l]) } else { sum_p[l].iter().zip(&sum_n[l]).map(|(p, n)| (p / np - n / nn) as f32).collect() };
-        Some(v)
-    }).collect();
-    Ok(ControlVector { name: name.into(), method, fingerprint: model.fingerprint(), hidden: h, positive_prompts: positive.len(), negative_prompts: negative.len(), layers })
+    let layers = (0..nl)
+        .map(|l| {
+            let v: Vec<f32> = if pca {
+                pca_direction(&diffs[l])
+            } else {
+                sum_p[l]
+                    .iter()
+                    .zip(&sum_n[l])
+                    .map(|(p, n)| (p / np - n / nn) as f32)
+                    .collect()
+            };
+            Some(v)
+        })
+        .collect();
+    Ok(ControlVector {
+        name: name.into(),
+        method,
+        fingerprint: model.fingerprint(),
+        hidden: h,
+        positive_prompts: positive.len(),
+        negative_prompts: negative.len(),
+        layers,
+    })
 }
 
 // ------------------------------------------------------------------ applying a vector
@@ -394,76 +715,179 @@ pub fn train(model: &Model, positive: &[Vec<usize>], negative: &[Vec<usize>], me
 #[derive(Debug, Clone, PartialEq)]
 pub struct Profile(Vec<f32>);
 impl Profile {
-    pub fn new(strengths: Vec<f32>) -> Profile { Profile(strengths) }
-    pub fn zero(layers: usize) -> Profile { Profile(vec![0.0; layers]) }
+    pub fn new(strengths: Vec<f32>) -> Profile {
+        Profile(strengths)
+    }
+    pub fn zero(layers: usize) -> Profile {
+        Profile(vec![0.0; layers])
+    }
     /// The same strength on every layer in `range`, zero elsewhere.
     pub fn uniform(layers: usize, range: Range<usize>, strength: f32) -> Profile {
-        Profile((0..layers).map(|i| if range.contains(&i) { strength } else { 0.0 }).collect())
+        Profile(
+            (0..layers)
+                .map(|i| if range.contains(&i) { strength } else { 0.0 })
+                .collect(),
+        )
     }
     /// A Gaussian bump: `peak * exp(-((layer - center) / width)^2 / 2)`. A non-positive width gives a single layer.
     pub fn bell(layers: usize, center: f32, width: f32, peak: f32) -> Profile {
-        Profile((0..layers).map(|i| {
-            let d = i as f32 - center;
-            if width > 0.0 { peak * (-0.5 * (d / width) * (d / width)).exp() } else if d.abs() < 0.5 { peak } else { 0.0 }
-        }).collect())
+        Profile(
+            (0..layers)
+                .map(|i| {
+                    let d = i as f32 - center;
+                    if width > 0.0 {
+                        peak * (-0.5 * (d / width) * (d / width)).exp()
+                    } else if d.abs() < 0.5 {
+                        peak
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
+        )
     }
-    pub fn strengths(&self) -> &[f32] { &self.0 }
+    pub fn strengths(&self) -> &[f32] {
+        &self.0
+    }
     /// All strengths scaled by `k`.
-    pub fn scaled(&self, k: f32) -> Profile { Profile(self.0.iter().map(|s| s * k).collect()) }
+    pub fn scaled(&self, k: f32) -> Profile {
+        Profile(self.0.iter().map(|s| s * k).collect())
+    }
 }
 
 /// A control vector plus a strength profile, checked against the model it will run on.
-pub struct Steering<'a> { cv: &'a ControlVector, profile: Profile }
+pub struct Steering<'a> {
+    cv: &'a ControlVector,
+    profile: Profile,
+}
 impl<'a> Steering<'a> {
-    pub fn new(model: &Model, cv: &'a ControlVector, profile: Profile) -> Result<Steering<'a>, SteerError> {
+    pub fn new(
+        model: &Model,
+        cv: &'a ControlVector,
+        profile: Profile,
+    ) -> Result<Steering<'a>, SteerError> {
         cv.check_model(model)?;
-        if profile.0.len() != cv.layers.len() { return Err(SteerError::Mismatch(format!("profile has {} layers, the model has {}", profile.0.len(), cv.layers.len()))); }
-        if profile.0.iter().any(|s| !s.is_finite()) { return Err(SteerError::Param("non-finite strength".into())); }
+        if profile.0.len() != cv.layers.len() {
+            return Err(SteerError::Mismatch(format!(
+                "profile has {} layers, the model has {}",
+                profile.0.len(),
+                cv.layers.len()
+            )));
+        }
+        if profile.0.iter().any(|s| !s.is_finite()) {
+            return Err(SteerError::Param("non-finite strength".into()));
+        }
         Ok(Steering { cv, profile })
     }
     /// Same strength on every layer that has a vector.
-    pub fn uniform(model: &Model, cv: &'a ControlVector, strength: f32) -> Result<Steering<'a>, SteerError> {
-        Steering::new(model, cv, Profile::uniform(cv.layers.len(), 0..cv.layers.len(), strength))
+    pub fn uniform(
+        model: &Model,
+        cv: &'a ControlVector,
+        strength: f32,
+    ) -> Result<Steering<'a>, SteerError> {
+        Steering::new(
+            model,
+            cv,
+            Profile::uniform(cv.layers.len(), 0..cv.layers.len(), strength),
+        )
     }
     /// True when nothing would be added (every strength zero or no vector where one is nonzero).
-    pub fn is_neutral(&self) -> bool { self.profile.0.iter().zip(&self.cv.layers).all(|(s, v)| *s == 0.0 || v.is_none()) }
-    pub fn profile(&self) -> &Profile { &self.profile }
+    pub fn is_neutral(&self) -> bool {
+        self.profile
+            .0
+            .iter()
+            .zip(&self.cv.layers)
+            .all(|(s, v)| *s == 0.0 || v.is_none())
+    }
+    pub fn profile(&self) -> &Profile {
+        &self.profile
+    }
     /// Add the layer's steering to every row of `x`.
     fn apply(&self, li: usize, x: &mut [f32]) {
         let s = self.profile.0[li];
-        let Some(v) = self.cv.layers[li].as_deref().filter(|_| s != 0.0) else { return };
-        for row in x.chunks_mut(v.len()) { row.iter_mut().zip(v).for_each(|(a, b)| *a += s * b); }
+        let Some(v) = self.cv.layers[li].as_deref().filter(|_| s != 0.0) else {
+            return;
+        };
+        for row in x.chunks_mut(v.len()) {
+            row.iter_mut().zip(v).for_each(|(a, b)| *a += s * b);
+        }
     }
 }
 
 /// `forward_batch` with steering (`None` = none): feed `tokens`, return the logits after the last one.
 /// With `None`, or a neutral steering, the result is bit-identical to [`Model::forward_batch`].
-pub fn forward_steered(model: &Model, st: &mut State, tokens: &[usize], steering: Option<&Steering>) -> Result<Vec<f32>, SteerError> {
-    let last = run_layerwise(model, st, tokens, steering.filter(|s| !s.is_neutral()), &mut no_hook)?;
+pub fn forward_steered(
+    model: &Model,
+    st: &mut State,
+    tokens: &[usize],
+    steering: Option<&Steering>,
+) -> Result<Vec<f32>, SteerError> {
+    let last = run_layerwise(
+        model,
+        st,
+        tokens,
+        steering.filter(|s| !s.is_neutral()),
+        &mut no_hook,
+    )?;
     let logits = model.logits_from_hidden(&last);
-    if logits.is_empty() { return Err(SteerError::Model(ModelError::Shape("could not compute logits".into()))); }
+    if logits.is_empty() {
+        return Err(SteerError::Model(ModelError::Shape(
+            "could not compute logits".into(),
+        )));
+    }
     Ok(logits)
 }
 
 /// [`Model::generate`] with steering applied to the prompt and to every generated token.
-pub fn generate_steered(model: &Model, st: &mut State, prompt: &[usize], sampler: &mut Sampler, opts: &GenerateOptions,
-                        steering: Option<&Steering>, on_token: &mut dyn FnMut(usize) -> bool) -> Result<GenerateStats, SteerError> {
-    let mut stats = GenerateStats { prompt_tokens: prompt.len(), generated: 0, prefill_secs: 0.0, decode_secs: 0.0, stop: StopReason::MaxTokens };
+pub fn generate_steered(
+    model: &Model,
+    st: &mut State,
+    prompt: &[usize],
+    sampler: &mut Sampler,
+    opts: &GenerateOptions,
+    steering: Option<&Steering>,
+    on_token: &mut dyn FnMut(usize) -> bool,
+) -> Result<GenerateStats, SteerError> {
+    let mut stats = GenerateStats {
+        prompt_tokens: prompt.len(),
+        generated: 0,
+        prefill_secs: 0.0,
+        decode_secs: 0.0,
+        stop: StopReason::MaxTokens,
+    };
     let t0 = Instant::now();
     let mut logits = forward_steered(model, st, prompt, steering)?;
     stats.prefill_secs = t0.elapsed().as_secs_f64();
     sampler.observe_all(prompt);
     let t1 = Instant::now();
     loop {
-        if stats.generated >= opts.max_tokens { stats.stop = StopReason::MaxTokens; break; }
-        if opts.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) { stats.stop = StopReason::Cancelled; break; }
+        if stats.generated >= opts.max_tokens {
+            stats.stop = StopReason::MaxTokens;
+            break;
+        }
+        if opts.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            stats.stop = StopReason::Cancelled;
+            break;
+        }
         let tok = sampler.sample(&logits);
         sampler.observe(tok);
-        if opts.stop_tokens.contains(&tok) { stats.stop = StopReason::StopToken; break; }
+        if opts.stop_tokens.contains(&tok) {
+            stats.stop = StopReason::StopToken;
+            break;
+        }
         stats.generated += 1;
-        if !on_token(tok) { stats.stop = StopReason::Callback; break; }
-        if stats.generated >= opts.max_tokens { stats.stop = StopReason::MaxTokens; break; }
-        if st.pos >= model.spec.context as usize { stats.stop = StopReason::ContextFull; break; }
+        if !on_token(tok) {
+            stats.stop = StopReason::Callback;
+            break;
+        }
+        if stats.generated >= opts.max_tokens {
+            stats.stop = StopReason::MaxTokens;
+            break;
+        }
+        if st.pos >= model.spec.context as usize {
+            stats.stop = StopReason::ContextFull;
+            break;
+        }
         logits = forward_steered(model, st, &[tok], steering)?;
     }
     stats.decode_secs = t1.elapsed().as_secs_f64();
@@ -475,7 +899,11 @@ pub fn generate_steered(model: &Model, st: &mut State, prompt: &[usize], sampler
 /// Which positions of the fed tokens the lens analyses (decoding the residual stream through the
 /// output head costs `vocab * hidden` per layer per position).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LensPositions { Last, LastN(usize), All }
+pub enum LensPositions {
+    Last,
+    LastN(usize),
+    All,
+}
 
 pub struct LensOptions<'a> {
     pub top_k: usize,
@@ -485,7 +913,16 @@ pub struct LensOptions<'a> {
     /// Steer while analysing, to see where a control vector acts.
     pub steering: Option<&'a Steering<'a>>,
 }
-impl Default for LensOptions<'_> { fn default() -> Self { LensOptions { top_k: 5, positions: LensPositions::Last, attention: true, steering: None } } }
+impl Default for LensOptions<'_> {
+    fn default() -> Self {
+        LensOptions {
+            top_k: 5,
+            positions: LensPositions::Last,
+            attention: true,
+            steering: None,
+        }
+    }
+}
 
 /// What one layer would predict at one position.
 #[derive(Debug, Clone, PartialEq)]
@@ -541,24 +978,50 @@ pub struct LensReport {
 
 /// `(first_hit, commit)` layer from each layer's top-1 and the final answer (`tops` ends with it).
 pub fn commit_layers(tops: &[usize], final_top1: usize) -> (usize, usize) {
-    let first = tops.iter().position(|&t| t == final_top1).unwrap_or(tops.len().saturating_sub(1));
+    let first = tops
+        .iter()
+        .position(|&t| t == final_top1)
+        .unwrap_or(tops.len().saturating_sub(1));
     let mut commit = tops.len().saturating_sub(1);
-    while commit > 0 && tops[commit - 1] == final_top1 { commit -= 1; }
+    while commit > 0 && tops[commit - 1] == final_top1 {
+        commit -= 1;
+    }
     (first, commit)
 }
 
-struct Dist { lse: f64 }
+struct Dist {
+    lse: f64,
+}
 fn lse(l: &[f32]) -> Dist {
-    let m = l.iter().copied().filter(|x| x.is_finite()).fold(f32::NEG_INFINITY, f32::max);
-    if !m.is_finite() { return Dist { lse: f64::NEG_INFINITY }; }
-    Dist { lse: f64::from(m) + l.iter().filter(|x| x.is_finite()).map(|&x| (f64::from(x) - f64::from(m)).exp()).sum::<f64>().ln() }
+    let m = l
+        .iter()
+        .copied()
+        .filter(|x| x.is_finite())
+        .fold(f32::NEG_INFINITY, f32::max);
+    if !m.is_finite() {
+        return Dist {
+            lse: f64::NEG_INFINITY,
+        };
+    }
+    Dist {
+        lse: f64::from(m)
+            + l.iter()
+                .filter(|x| x.is_finite())
+                .map(|&x| (f64::from(x) - f64::from(m)).exp())
+                .sum::<f64>()
+                .ln(),
+    }
 }
 
 fn top_k(l: &[f32], k: usize) -> Vec<(usize, f32)> {
     let mut best: Vec<(f32, usize)> = Vec::with_capacity(k + 1);
     for (i, &x) in l.iter().enumerate() {
-        if !x.is_finite() { continue; }
-        if best.len() == k && x <= best[k - 1].0 { continue; }
+        if !x.is_finite() {
+            continue;
+        }
+        if best.len() == k && x <= best[k - 1].0 {
+            continue;
+        }
         let at = best.partition_point(|&(v, _)| v >= x);
         best.insert(at, (x, i));
         best.truncate(k);
@@ -566,37 +1029,91 @@ fn top_k(l: &[f32], k: usize) -> Vec<(usize, f32)> {
     best.into_iter().map(|(v, i)| (i, v)).collect()
 }
 
-fn analyse_layer(layer: usize, logits: &[f32], fin: &[f32], fin_lse: &Dist, fin_top1: usize, k: usize) -> LensLayer {
+fn analyse_layer(
+    layer: usize,
+    logits: &[f32],
+    fin: &[f32],
+    fin_lse: &Dist,
+    fin_top1: usize,
+    k: usize,
+) -> LensLayer {
     let d = lse(logits);
-    let p = |x: f32| if x.is_finite() && d.lse.is_finite() { (f64::from(x) - d.lse).exp() } else { 0.0 };
-    let top = top_k(logits, k).into_iter().map(|(i, x)| (i, p(x) as f32)).collect();
+    let p = |x: f32| {
+        if x.is_finite() && d.lse.is_finite() {
+            (f64::from(x) - d.lse).exp()
+        } else {
+            0.0
+        }
+    };
+    let top = top_k(logits, k)
+        .into_iter()
+        .map(|(i, x)| (i, p(x) as f32))
+        .collect();
     let (mut ent, mut kl) = (0.0f64, 0.0f64);
     for (&lx, &fx) in logits.iter().zip(fin) {
-        let (pl, pf) = (p(lx), if fx.is_finite() && fin_lse.lse.is_finite() { (f64::from(fx) - fin_lse.lse).exp() } else { 0.0 });
-        if pl > 0.0 { ent -= pl * pl.ln(); }
-        if pf > 0.0 { kl += pf * (pf.ln() - if pl > 0.0 { pl.ln() } else { -745.0 }); }
+        let (pl, pf) = (
+            p(lx),
+            if fx.is_finite() && fin_lse.lse.is_finite() {
+                (f64::from(fx) - fin_lse.lse).exp()
+            } else {
+                0.0
+            },
+        );
+        if pl > 0.0 {
+            ent -= pl * pl.ln();
+        }
+        if pf > 0.0 {
+            kl += pf * (pf.ln() - if pl > 0.0 { pl.ln() } else { -745.0 });
+        }
     }
     let fl = logits[fin_top1];
     LensLayer {
-        layer, top, final_prob: p(fl) as f32, final_rank: 1 + logits.iter().filter(|&&x| x > fl).count(),
-        entropy: ent as f32, kl_final_to_layer: kl.clamp(0.0, 1e6) as f32,
+        layer,
+        top,
+        final_prob: p(fl) as f32,
+        final_rank: 1 + logits.iter().filter(|&&x| x > fl).count(),
+        entropy: ent as f32,
+        kl_final_to_layer: kl.clamp(0.0, 1e6) as f32,
     }
 }
 
 fn attn_summary(scores: &[f32]) -> Option<AttnSummary> {
     let total: f64 = scores.iter().map(|&x| f64::from(x.max(0.0))).sum();
-    if scores.is_empty() || total <= 0.0 || !total.is_finite() { return None; }
-    let ent: f64 = scores.iter().map(|&x| f64::from(x.max(0.0)) / total).filter(|&p| p > 0.0).map(|p| -p * p.ln()).sum();
-    let norm = if scores.len() > 1 { ent / (scores.len() as f64).ln() } else { 0.0 };
+    if scores.is_empty() || total <= 0.0 || !total.is_finite() {
+        return None;
+    }
+    let ent: f64 = scores
+        .iter()
+        .map(|&x| f64::from(x.max(0.0)) / total)
+        .filter(|&p| p > 0.0)
+        .map(|p| -p * p.ln())
+        .sum();
+    let norm = if scores.len() > 1 {
+        ent / (scores.len() as f64).ln()
+    } else {
+        0.0
+    };
     let top = scores.iter().copied().fold(0.0f32, f32::max);
-    Some(AttnSummary { slots: scores.len(), entropy_norm: norm.clamp(0.0, 1.0) as f32, top_slot_share: (f64::from(top) / total) as f32, first_slot_share: (f64::from(scores[0].max(0.0)) / total) as f32 })
+    Some(AttnSummary {
+        slots: scores.len(),
+        entropy_norm: norm.clamp(0.0, 1.0) as f32,
+        top_slot_share: (f64::from(top) / total) as f32,
+        first_slot_share: (f64::from(scores[0].max(0.0)) / total) as f32,
+    })
 }
 
 /// Feed `tokens` through `model` (advancing `st`, like `forward_batch`) and decode the residual
 /// stream after every layer at the selected positions.
-pub fn lens(model: &Model, st: &mut State, tokens: &[usize], opts: &LensOptions) -> Result<LensReport, SteerError> {
+pub fn lens(
+    model: &Model,
+    st: &mut State,
+    tokens: &[usize],
+    opts: &LensOptions,
+) -> Result<LensReport, SteerError> {
     let (h, nl) = (model.spec.hidden as usize, model.w.layers.len());
-    if opts.top_k == 0 || opts.top_k > MAX_TOP_K { return Err(SteerError::Param(format!("top_k must be 1..={MAX_TOP_K}"))); }
+    if opts.top_k == 0 || opts.top_k > MAX_TOP_K {
+        return Err(SteerError::Param(format!("top_k must be 1..={MAX_TOP_K}")));
+    }
     let n = tokens.len();
     let selected: Vec<usize> = match opts.positions {
         _ if n == 0 => return Err(ModelError::NoTokens.into()),
@@ -604,57 +1121,123 @@ pub fn lens(model: &Model, st: &mut State, tokens: &[usize], opts: &LensOptions)
         LensPositions::LastN(k) => (n.saturating_sub(k.max(1))..n).collect(),
         LensPositions::All => (0..n).collect(),
     };
-    if selected.len() > MAX_LENS_POSITIONS { return Err(SteerError::Param(format!("at most {MAX_LENS_POSITIONS} positions per call"))); }
+    if selected.len() > MAX_LENS_POSITIONS {
+        return Err(SteerError::Param(format!(
+            "at most {MAX_LENS_POSITIONS} positions per call"
+        )));
+    }
     let start = st.pos;
     let was_tracking = st.tracks_scores();
-    if opts.attention { if was_tracking { st.clear_scores(); } else { st.track_scores(true); } }
+    if opts.attention {
+        if was_tracking {
+            st.clear_scores();
+        } else {
+            st.track_scores(true);
+        }
+    }
     let mut hidden: Vec<Vec<f32>> = vec![Vec::with_capacity(nl * h); selected.len()];
     let steer = opts.steering.filter(|s| !s.is_neutral());
     let mut hook = |_li: usize, x: &[f32], b: usize, pos0: usize, _last: bool| {
         let base = pos0 - start;
         for (slot, &idx) in selected.iter().enumerate() {
-            if idx >= base && idx < base + b { let r = idx - base; hidden[slot].extend_from_slice(&x[r * h..(r + 1) * h]); }
+            if idx >= base && idx < base + b {
+                let r = idx - base;
+                hidden[slot].extend_from_slice(&x[r * h..(r + 1) * h]);
+            }
         }
     };
     let run = run_layerwise(model, st, tokens, steer, &mut hook);
-    let attention: Vec<Option<AttnSummary>> = (0..nl).map(|li| if opts.attention { st.layer_scores(li).and_then(attn_summary) } else { None }).collect();
-    if opts.attention && !was_tracking { st.track_scores(false); }
+    let attention: Vec<Option<AttnSummary>> = (0..nl)
+        .map(|li| {
+            if opts.attention {
+                st.layer_scores(li).and_then(attn_summary)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if opts.attention && !was_tracking {
+        st.track_scores(false);
+    }
     let last = run?;
     let final_logits = model.logits_from_hidden(&last);
-    if final_logits.is_empty() { return Err(SteerError::Model(ModelError::Shape("could not compute logits".into()))); }
+    if final_logits.is_empty() {
+        return Err(SteerError::Model(ModelError::Shape(
+            "could not compute logits".into(),
+        )));
+    }
     let mut positions = Vec::with_capacity(selected.len());
     for (slot, &idx) in selected.iter().enumerate() {
         let rows = &hidden[slot];
-        if rows.len() != nl * h { return Err(SteerError::Param("internal: a layer was not observed".into())); }
+        if rows.len() != nl * h {
+            return Err(SteerError::Param(
+                "internal: a layer was not observed".into(),
+            ));
+        }
         let fin = model.logits_from_hidden(&rows[(nl - 1) * h..]);
-        let fin_top1 = top_k(&fin, 1).first().map(|t| t.0).ok_or_else(|| SteerError::Param("the final logits are not finite".into()))?;
+        let fin_top1 = top_k(&fin, 1)
+            .first()
+            .map(|t| t.0)
+            .ok_or_else(|| SteerError::Param("the final logits are not finite".into()))?;
         let fl = lse(&fin);
-        let layers: Vec<LensLayer> = (0..nl).map(|li| {
-            let lg = model.logits_from_hidden(&rows[li * h..(li + 1) * h]);
-            analyse_layer(li, &lg, &fin, &fl, fin_top1, opts.top_k)
-        }).collect();
-        let tops: Vec<usize> = layers.iter().map(|l| l.top.first().map_or(usize::MAX, |t| t.0)).collect();
+        let layers: Vec<LensLayer> = (0..nl)
+            .map(|li| {
+                let lg = model.logits_from_hidden(&rows[li * h..(li + 1) * h]);
+                analyse_layer(li, &lg, &fin, &fl, fin_top1, opts.top_k)
+            })
+            .collect();
+        let tops: Vec<usize> = layers
+            .iter()
+            .map(|l| l.top.first().map_or(usize::MAX, |t| t.0))
+            .collect();
         let (first_hit_layer, commit_layer) = commit_layers(&tops, fin_top1);
-        positions.push(LensPosition { index: idx, token: tokens[idx], final_top1: fin_top1, layers, first_hit_layer, commit_layer });
+        positions.push(LensPosition {
+            index: idx,
+            token: tokens[idx],
+            final_top1: fin_top1,
+            layers,
+            first_hit_layer,
+            commit_layer,
+        });
     }
-    Ok(LensReport { layers: nl, positions, attention, final_logits })
+    Ok(LensReport {
+        layers: nl,
+        positions,
+        attention,
+        final_logits,
+    })
 }
 
 impl LensReport {
     /// How many positions commit at each layer.
     pub fn commit_histogram(&self) -> Vec<usize> {
         let mut h = vec![0; self.layers];
-        for p in &self.positions { if let Some(c) = h.get_mut(p.commit_layer) { *c += 1; } }
+        for p in &self.positions {
+            if let Some(c) = h.get_mut(p.commit_layer) {
+                *c += 1;
+            }
+        }
         h
     }
     /// Mean of `(commit_layer + 1) / layers` over the positions: 1.0 = answers only appear at the last layer.
     pub fn mean_commit_depth(&self) -> f32 {
-        if self.positions.is_empty() || self.layers == 0 { return 0.0; }
-        self.positions.iter().map(|p| (p.commit_layer + 1) as f32 / self.layers as f32).sum::<f32>() / self.positions.len() as f32
+        if self.positions.is_empty() || self.layers == 0 {
+            return 0.0;
+        }
+        self.positions
+            .iter()
+            .map(|p| (p.commit_layer + 1) as f32 / self.layers as f32)
+            .sum::<f32>()
+            / self.positions.len() as f32
     }
     /// JSON for a UI. `decode` turns a token id into text (without it only ids are given).
     pub fn to_json_with(&self, decode: Option<&dyn Fn(usize) -> String>) -> Value {
-        let tok = |t: usize| -> Value { match decode { Some(f) => json!({ "id": t, "text": f(t) }), None => json!({ "id": t }) } };
+        let tok = |t: usize| -> Value {
+            match decode {
+                Some(f) => json!({ "id": t, "text": f(t) }),
+                None => json!({ "id": t }),
+            }
+        };
         let positions: Vec<Value> = self.positions.iter().map(|p| json!({
             "index": p.index, "token": tok(p.token), "final_top1": tok(p.final_top1),
             "first_hit_layer": p.first_hit_layer, "commit_layer": p.commit_layer,
@@ -672,18 +1255,55 @@ impl LensReport {
             "commit_histogram": self.commit_histogram(), "mean_commit_depth": self.mean_commit_depth(),
         })
     }
-    pub fn to_json(&self) -> Value { self.to_json_with(None) }
+    pub fn to_json(&self) -> Value {
+        self.to_json_with(None)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::tests::{base_spec, model_of, tiny};
-    use crate::model::Model;
+    #[test]
+    fn to_bytes_cuts_a_long_multibyte_name_on_a_char_boundary() {
+        for pad in ["", "a"] {
+            let name = format!("{pad}{}", "é".repeat(MAX_NAME));
+            let cv = ControlVector {
+                name,
+                method: Method::Custom,
+                fingerprint: [0; 32],
+                hidden: 2,
+                positive_prompts: 0,
+                negative_prompts: 0,
+                layers: vec![Some(vec![1.0, 2.0])],
+            };
+            let back =
+                ControlVector::from_bytes(&cv.to_bytes()).expect("a cut name still round-trips");
+            assert!(back.name.len() <= MAX_NAME && cv.name.starts_with(&back.name));
+            assert!(
+                back.name.len() + 1 >= MAX_NAME,
+                "cut no more than one character short"
+            );
+        }
+    }
 
-    fn model() -> Model { tiny(4, 2, true) }
-    fn prompt(n: usize, seed: usize) -> Vec<usize> { (0..n).map(|i| (i * 7 + seed * 3 + 1) % 20).collect() }
-    fn argmax(l: &[f32]) -> usize { l.iter().enumerate().fold((0, f32::NEG_INFINITY), |a, (i, &x)| if x > a.1 { (i, x) } else { a }).0 }
+    use super::*;
+    use crate::model::Model;
+    use crate::model::tests::{base_spec, model_of, tiny};
+
+    fn model() -> Model {
+        tiny(4, 2, true)
+    }
+    fn prompt(n: usize, seed: usize) -> Vec<usize> {
+        (0..n).map(|i| (i * 7 + seed * 3 + 1) % 20).collect()
+    }
+    fn argmax(l: &[f32]) -> usize {
+        l.iter()
+            .enumerate()
+            .fold(
+                (0, f32::NEG_INFINITY),
+                |a, (i, &x)| if x > a.1 { (i, x) } else { a },
+            )
+            .0
+    }
     fn softmax_of(l: &[f32], t: usize) -> f64 {
         let m = l.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let z: f64 = l.iter().map(|&x| f64::from(x - m).exp()).sum();
@@ -702,7 +1322,10 @@ mod tests {
             assert_eq!(a.pos, b.pos);
             assert_eq!(a.tokens(), b.tokens());
             // and the cache they leave behind behaves identically for the next token
-            assert_eq!(m.forward(&mut a, 5).unwrap(), forward_steered(&m, &mut b, &[5], None).unwrap());
+            assert_eq!(
+                m.forward(&mut a, 5).unwrap(),
+                forward_steered(&m, &mut b, &[5], None).unwrap()
+            );
         }
     }
 
@@ -722,13 +1345,26 @@ mod tests {
     fn strength_zero_is_bit_identical() {
         let m = model();
         let toks = prompt(9, 3);
-        let cv = train(&m, &[prompt(5, 1), prompt(6, 2)], &[prompt(5, 3), prompt(4, 4)], Method::MeanDiff, "t").unwrap();
+        let cv = train(
+            &m,
+            &[prompt(5, 1), prompt(6, 2)],
+            &[prompt(5, 3), prompt(4, 4)],
+            Method::MeanDiff,
+            "t",
+        )
+        .unwrap();
         let mut a = m.new_state();
         let want = m.forward_batch(&mut a, &toks).unwrap();
-        for steer in [Steering::uniform(&m, &cv, 0.0).unwrap(), Steering::new(&m, &cv, Profile::zero(3)).unwrap()] {
+        for steer in [
+            Steering::uniform(&m, &cv, 0.0).unwrap(),
+            Steering::new(&m, &cv, Profile::zero(3)).unwrap(),
+        ] {
             assert!(steer.is_neutral());
             let mut b = m.new_state();
-            assert_eq!(want, forward_steered(&m, &mut b, &toks, Some(&steer)).unwrap());
+            assert_eq!(
+                want,
+                forward_steered(&m, &mut b, &toks, Some(&steer)).unwrap()
+            );
         }
         // a real strength changes the result
         let s1 = Steering::uniform(&m, &cv, 1.0).unwrap();
@@ -748,20 +1384,38 @@ mod tests {
             let mut layers = vec![None; 3];
             layers[layer] = Some(row.clone());
             let cv = ControlVector::from_layers(&m, "push", layers).unwrap();
-            let probs: Vec<f64> = [0.0f32, 1.0, 2.0, 4.0, 8.0, 16.0, 40.0].iter().map(|&a| {
-                let steer = Steering::new(&m, &cv, Profile::uniform(3, layer..layer + 1, a)).unwrap();
-                let mut st = m.new_state();
-                softmax_of(&forward_steered(&m, &mut st, &toks, Some(&steer)).unwrap(), target)
-            }).collect();
-            for w in probs.windows(2) { assert!(w[1] > w[0], "layer {layer}: {probs:?}"); }
-            let steer = Steering::new(&m, &cv, Profile::uniform(3, layer..layer + 1, 40.0)).unwrap();
+            let probs: Vec<f64> = [0.0f32, 1.0, 2.0, 4.0, 8.0, 16.0, 40.0]
+                .iter()
+                .map(|&a| {
+                    let steer =
+                        Steering::new(&m, &cv, Profile::uniform(3, layer..layer + 1, a)).unwrap();
+                    let mut st = m.new_state();
+                    softmax_of(
+                        &forward_steered(&m, &mut st, &toks, Some(&steer)).unwrap(),
+                        target,
+                    )
+                })
+                .collect();
+            for w in probs.windows(2) {
+                assert!(w[1] > w[0], "layer {layer}: {probs:?}");
+            }
+            let steer =
+                Steering::new(&m, &cv, Profile::uniform(3, layer..layer + 1, 40.0)).unwrap();
             let mut st = m.new_state();
-            assert_eq!(argmax(&forward_steered(&m, &mut st, &toks, Some(&steer)).unwrap()), target);
+            assert_eq!(
+                argmax(&forward_steered(&m, &mut st, &toks, Some(&steer)).unwrap()),
+                target
+            );
             // the opposite sign pushes the other way
             let neg = Steering::new(&m, &cv, Profile::uniform(3, layer..layer + 1, -16.0)).unwrap();
             let (mut a, mut b) = (m.new_state(), m.new_state());
             let base = softmax_of(&forward_steered(&m, &mut a, &toks, None).unwrap(), target);
-            assert!(softmax_of(&forward_steered(&m, &mut b, &toks, Some(&neg)).unwrap(), target) < base);
+            assert!(
+                softmax_of(
+                    &forward_steered(&m, &mut b, &toks, Some(&neg)).unwrap(),
+                    target
+                ) < base
+            );
         }
     }
 
@@ -777,7 +1431,22 @@ mod tests {
             let mut st = m.new_state();
             let mut sm = Sampler::new(0.0, 1, 1);
             let mut out = vec![];
-            generate_steered(&m, &mut st, &prompt(4, 1), &mut sm, &GenerateOptions { max_tokens: 6, ..Default::default() }, s, &mut |t| { out.push(t); true }).unwrap();
+            generate_steered(
+                &m,
+                &mut st,
+                &prompt(4, 1),
+                &mut sm,
+                &GenerateOptions {
+                    max_tokens: 6,
+                    ..Default::default()
+                },
+                s,
+                &mut |t| {
+                    out.push(t);
+                    true
+                },
+            )
+            .unwrap();
             out
         };
         assert!(run(Some(&steer)).iter().all(|&t| t == target));
@@ -785,17 +1454,43 @@ mod tests {
         let mut st = m.new_state();
         let mut sm = Sampler::new(0.0, 1, 1);
         let mut want = vec![];
-        m.generate(&mut st, &prompt(4, 1), &mut sm, &GenerateOptions { max_tokens: 6, ..Default::default() }, &mut |t| { want.push(t); true }).unwrap();
+        m.generate(
+            &mut st,
+            &prompt(4, 1),
+            &mut sm,
+            &GenerateOptions {
+                max_tokens: 6,
+                ..Default::default()
+            },
+            &mut |t| {
+                want.push(t);
+                true
+            },
+        )
+        .unwrap();
         assert_eq!(run(None), want);
     }
 
     #[test]
     fn training_matches_an_independent_mean_difference() {
         let m = model();
-        let (pos, neg) = (vec![prompt(5, 1), prompt(7, 2), prompt(3, 3)], vec![prompt(4, 4), prompt(6, 5)]);
+        let (pos, neg) = (
+            vec![prompt(5, 1), prompt(7, 2), prompt(3, 3)],
+            vec![prompt(4, 4), prompt(6, 5)],
+        );
         let cv = train(&m, &pos, &neg, Method::MeanDiff, "x").unwrap();
-        assert_eq!((cv.positive_prompts, cv.negative_prompts, cv.layers.len(), cv.hidden), (3, 2, 3, 16));
-        let cap = |ps: &[Vec<usize>]| -> Vec<Vec<Vec<f32>>> { ps.iter().map(|p| capture_last(&m, p).unwrap()).collect() };
+        assert_eq!(
+            (
+                cv.positive_prompts,
+                cv.negative_prompts,
+                cv.layers.len(),
+                cv.hidden
+            ),
+            (3, 2, 3, 16)
+        );
+        let cap = |ps: &[Vec<usize>]| -> Vec<Vec<Vec<f32>>> {
+            ps.iter().map(|p| capture_last(&m, p).unwrap()).collect()
+        };
         let (cp, cn) = (cap(&pos), cap(&neg));
         for l in 0..3 {
             let v = cv.layers[l].as_ref().unwrap();
@@ -814,9 +1509,15 @@ mod tests {
         let base: Vec<Vec<usize>> = (0..6).map(|i| prompt(4 + i % 3, i)).collect();
         let pos: Vec<Vec<usize>> = base.iter().map(|b| [b.clone(), vec![3]].concat()).collect();
         let neg: Vec<Vec<usize>> = base.iter().map(|b| [b.clone(), vec![9]].concat()).collect();
-        let (md, pc) = (train(&m, &pos, &neg, Method::MeanDiff, "m").unwrap(), train(&m, &pos, &neg, Method::Pca, "p").unwrap());
+        let (md, pc) = (
+            train(&m, &pos, &neg, Method::MeanDiff, "m").unwrap(),
+            train(&m, &pos, &neg, Method::Pca, "p").unwrap(),
+        );
         for l in 0..3 {
-            let (a, b) = (md.layers[l].as_ref().unwrap(), pc.layers[l].as_ref().unwrap());
+            let (a, b) = (
+                md.layers[l].as_ref().unwrap(),
+                pc.layers[l].as_ref().unwrap(),
+            );
             assert!(dot(a, b) / (norm(a) * norm(b)) > 0.9, "layer {l}");
         }
         assert!(train(&m, &pos, &neg[..3], Method::Pca, "p").is_err());
@@ -826,23 +1527,50 @@ mod tests {
 
     #[test]
     fn pca_direction_finds_the_dominant_axis_and_fixes_the_sign() {
-        let u: Vec<f32> = (0..16).map(|i| if i % 2 == 0 { 0.5 } else { -0.25 }).collect();
+        let u: Vec<f32> = (0..16)
+            .map(|i| if i % 2 == 0 { 0.5 } else { -0.25 })
+            .collect();
         let mut s = 7u64;
-        let mut r = move || { s ^= s << 13; s ^= s >> 7; s ^= s << 17; ((s >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.05 };
-        let diffs: Vec<Vec<f32>> = (0..40).map(|i| u.iter().map(|&x| x * (1.0 + (i % 5) as f32 * 0.2) + r()).collect()).collect();
+        let mut r = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            ((s >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.05
+        };
+        let diffs: Vec<Vec<f32>> = (0..40)
+            .map(|i| {
+                u.iter()
+                    .map(|&x| x * (1.0 + (i % 5) as f32 * 0.2) + r())
+                    .collect()
+            })
+            .collect();
         let v = pca_direction(&diffs);
         assert!(dot(&v, &u) / (norm(&v) * norm(&u)) > 0.99);
-        let flipped: Vec<Vec<f32>> = diffs.iter().map(|d| d.iter().map(|x| -x).collect()).collect();
+        let flipped: Vec<Vec<f32>> = diffs
+            .iter()
+            .map(|d| d.iter().map(|x| -x).collect())
+            .collect();
         let w = pca_direction(&flipped);
         assert!(dot(&w, &v) < 0.0, "sign follows the mean");
-        assert!(pca_direction(&[vec![0.0; 4], vec![0.0; 4]]).iter().all(|&x| x == 0.0));
+        assert!(
+            pca_direction(&[vec![0.0; 4], vec![0.0; 4]])
+                .iter()
+                .all(|&x| x == 0.0)
+        );
         assert!(pca_direction(&[]).is_empty());
     }
 
     #[test]
     fn file_round_trips_and_checks_the_model() {
         let m = model();
-        let mut cv = train(&m, &[prompt(5, 1)], &[prompt(5, 2)], Method::MeanDiff, "polite · rude").unwrap();
+        let mut cv = train(
+            &m,
+            &[prompt(5, 1)],
+            &[prompt(5, 2)],
+            Method::MeanDiff,
+            "polite · rude",
+        )
+        .unwrap();
         cv.restrict(1..3);
         assert!(cv.layers[0].is_none());
         let bytes = cv.to_bytes();
@@ -868,18 +1596,38 @@ mod tests {
         let cv = train(&m, &[prompt(4, 1)], &[prompt(4, 2)], Method::MeanDiff, "n").unwrap();
         let good = cv.to_bytes();
         // every truncation
-        for n in 0..good.len() { assert!(ControlVector::from_bytes(&good[..n]).is_err(), "prefix {n}"); }
+        for n in 0..good.len() {
+            assert!(ControlVector::from_bytes(&good[..n]).is_err(), "prefix {n}");
+        }
         // every single-byte change is caught by the checksum
-        for i in 0..good.len() { let mut b = good.clone(); b[i] ^= 0x5a; assert!(ControlVector::from_bytes(&b).is_err(), "byte {i}"); }
+        for i in 0..good.len() {
+            let mut b = good.clone();
+            b[i] ^= 0x5a;
+            assert!(ControlVector::from_bytes(&b).is_err(), "byte {i}");
+        }
         // forged files with a *valid* checksum: bad magic, version, sizes, flags, floats, trailing bytes
-        let seal = |mut body: Vec<u8>| { let mut sh = Sha256::new(); sh.update(&body); body.extend_from_slice(&sh.finish()); body };
+        let seal = |mut body: Vec<u8>| {
+            let mut sh = Sha256::new();
+            sh.update(&body);
+            body.extend_from_slice(&sh.finish());
+            body
+        };
         let body = &good[..good.len() - 32];
         let edits: Vec<(usize, Vec<u8>)> = vec![
-            (0, b"XXXX".to_vec()), (4, 9u32.to_le_bytes().to_vec()), (40, 0u32.to_le_bytes().to_vec()),
-            (40, u32::MAX.to_le_bytes().to_vec()), (44, 0u32.to_le_bytes().to_vec()), (44, u32::MAX.to_le_bytes().to_vec()),
-            (56, vec![77]), (57, vec![0xff, 0xff]),
+            (0, b"XXXX".to_vec()),
+            (4, 9u32.to_le_bytes().to_vec()),
+            (40, 0u32.to_le_bytes().to_vec()),
+            (40, u32::MAX.to_le_bytes().to_vec()),
+            (44, 0u32.to_le_bytes().to_vec()),
+            (44, u32::MAX.to_le_bytes().to_vec()),
+            (56, vec![77]),
+            (57, vec![0xff, 0xff]),
         ];
-        for (at, bytes) in edits { let mut b = body.to_vec(); b[at..at + bytes.len()].copy_from_slice(&bytes); assert!(ControlVector::from_bytes(&seal(b)).is_err(), "edit at {at}"); }
+        for (at, bytes) in edits {
+            let mut b = body.to_vec();
+            b[at..at + bytes.len()].copy_from_slice(&bytes);
+            assert!(ControlVector::from_bytes(&seal(b)).is_err(), "edit at {at}");
+        }
         let mut nan = body.to_vec();
         let first_float = nan.len() - 3 * (1 + 16 * 4) + 1;
         nan[first_float..first_float + 4].copy_from_slice(&f32::NAN.to_le_bytes());
@@ -894,7 +1642,14 @@ mod tests {
         // random garbage, sealed and unsealed
         let mut s = 0x1234_5678u64;
         for len in [0usize, 1, 31, 32, 100, 300, 2000] {
-            let junk: Vec<u8> = (0..len).map(|_| { s ^= s << 13; s ^= s >> 7; s ^= s << 17; (s >> 33) as u8 }).collect();
+            let junk: Vec<u8> = (0..len)
+                .map(|_| {
+                    s ^= s << 13;
+                    s ^= s >> 7;
+                    s ^= s << 17;
+                    (s >> 33) as u8
+                })
+                .collect();
             assert!(ControlVector::from_bytes(&junk).is_err());
             let _ = ControlVector::from_bytes(&seal(junk));
         }
@@ -914,10 +1669,25 @@ mod tests {
         let c = ControlVector::combine(&[(&a, 1.0), (&b, -0.5)], "a-b/2").unwrap();
         assert_eq!(c.method, Method::Custom);
         for l in 0..3 {
-            for j in 0..16 { assert!((c.layers[l].as_ref().unwrap()[j] - (a.layers[l].as_ref().unwrap()[j] - 0.5 * b.layers[l].as_ref().unwrap()[j])).abs() < 1e-5); }
+            for j in 0..16 {
+                assert!(
+                    (c.layers[l].as_ref().unwrap()[j]
+                        - (a.layers[l].as_ref().unwrap()[j]
+                            - 0.5 * b.layers[l].as_ref().unwrap()[j]))
+                        .abs()
+                        < 1e-5
+                );
+            }
         }
         let other = model_of(base_spec(2, 1, true), false);
-        let foreign = train(&other, &[prompt(4, 1)], &[prompt(4, 2)], Method::MeanDiff, "f").unwrap();
+        let foreign = train(
+            &other,
+            &[prompt(4, 1)],
+            &[prompt(4, 2)],
+            Method::MeanDiff,
+            "f",
+        )
+        .unwrap();
         assert!(ControlVector::combine(&[(&a, 1.0), (&foreign, 1.0)], "x").is_err());
         assert!(ControlVector::combine(&[], "x").is_err());
         assert!(ControlVector::combine(&[(&a, f32::INFINITY)], "x").is_err());
@@ -925,12 +1695,25 @@ mod tests {
 
     #[test]
     fn profiles_have_the_shapes_they_claim() {
-        assert_eq!(Profile::uniform(5, 1..3, 2.0).strengths(), &[0.0, 2.0, 2.0, 0.0, 0.0]);
+        assert_eq!(
+            Profile::uniform(5, 1..3, 2.0).strengths(),
+            &[0.0, 2.0, 2.0, 0.0, 0.0]
+        );
         let b = Profile::bell(9, 4.0, 1.5, 3.0);
         assert!((b.strengths()[4] - 3.0).abs() < 1e-6);
-        assert!(b.strengths()[0] < b.strengths()[2] && b.strengths()[2] < b.strengths()[4] && (b.strengths()[3] - b.strengths()[5]).abs() < 1e-6);
-        assert_eq!(Profile::bell(4, 2.0, 0.0, 1.0).strengths(), &[0.0, 0.0, 1.0, 0.0]);
-        assert_eq!(Profile::uniform(3, 0..3, 1.0).scaled(2.0).strengths(), &[2.0, 2.0, 2.0]);
+        assert!(
+            b.strengths()[0] < b.strengths()[2]
+                && b.strengths()[2] < b.strengths()[4]
+                && (b.strengths()[3] - b.strengths()[5]).abs() < 1e-6
+        );
+        assert_eq!(
+            Profile::bell(4, 2.0, 0.0, 1.0).strengths(),
+            &[0.0, 0.0, 1.0, 0.0]
+        );
+        assert_eq!(
+            Profile::uniform(3, 0..3, 1.0).scaled(2.0).strengths(),
+            &[2.0, 2.0, 2.0]
+        );
     }
 
     #[test]
@@ -940,7 +1723,17 @@ mod tests {
         let mut a = m.new_state();
         let want = m.forward_batch(&mut a, &toks).unwrap();
         let mut b = m.new_state();
-        let rep = lens(&m, &mut b, &toks, &LensOptions { top_k: 4, positions: LensPositions::All, ..Default::default() }).unwrap();
+        let rep = lens(
+            &m,
+            &mut b,
+            &toks,
+            &LensOptions {
+                top_k: 4,
+                positions: LensPositions::All,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(rep.final_logits, want);
         assert_eq!((rep.layers, rep.positions.len()), (3, 10));
         assert_eq!(a.pos, b.pos);
@@ -954,7 +1747,12 @@ mod tests {
             for l in &p.layers {
                 assert_eq!(l.top.len(), 4);
                 assert!(l.top.windows(2).all(|w| w[0].1 >= w[1].1));
-                assert!(l.entropy >= 0.0 && l.entropy <= (20f32).ln() + 1e-4 && l.kl_final_to_layer >= 0.0 && l.final_rank >= 1);
+                assert!(
+                    l.entropy >= 0.0
+                        && l.entropy <= (20f32).ln() + 1e-4
+                        && l.kl_final_to_layer >= 0.0
+                        && l.final_rank >= 1
+                );
                 assert!((l.top.iter().map(|t| t.1).sum::<f32>() - 1.0) < 1e-4);
             }
         }
@@ -962,11 +1760,34 @@ mod tests {
         assert!(rep.mean_commit_depth() > 0.0 && rep.mean_commit_depth() <= 1.0);
         // the final position equals the last-position-only report
         let mut c = m.new_state();
-        let one = lens(&m, &mut c, &toks, &LensOptions { top_k: 4, ..Default::default() }).unwrap();
+        let one = lens(
+            &m,
+            &mut c,
+            &toks,
+            &LensOptions {
+                top_k: 4,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(one.positions.len(), 1);
         assert_eq!(one.positions[0], rep.positions[9]);
         let mut d = m.new_state();
-        assert_eq!(lens(&m, &mut d, &toks, &LensOptions { positions: LensPositions::LastN(3), ..Default::default() }).unwrap().positions.len(), 3);
+        assert_eq!(
+            lens(
+                &m,
+                &mut d,
+                &toks,
+                &LensOptions {
+                    positions: LensPositions::LastN(3),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .positions
+            .len(),
+            3
+        );
     }
 
     #[test]
@@ -976,8 +1797,21 @@ mod tests {
         let m = model_of(sp, false);
         let toks = prompt(PREFILL_CHUNK + 20, 4);
         let mut a = m.new_state();
-        let rep = lens(&m, &mut a, &toks, &LensOptions { positions: LensPositions::LastN(30), attention: false, ..Default::default() }).unwrap();
-        assert_eq!(rep.positions.iter().map(|p| p.index).collect::<Vec<_>>(), (toks.len() - 30..toks.len()).collect::<Vec<_>>());
+        let rep = lens(
+            &m,
+            &mut a,
+            &toks,
+            &LensOptions {
+                positions: LensPositions::LastN(30),
+                attention: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            rep.positions.iter().map(|p| p.index).collect::<Vec<_>>(),
+            (toks.len() - 30..toks.len()).collect::<Vec<_>>()
+        );
         let mut b = m.new_state();
         assert_eq!(m.forward_batch(&mut b, &toks).unwrap(), rep.final_logits);
         assert!(rep.attention.iter().all(Option::is_none));
@@ -998,7 +1832,11 @@ mod tests {
         assert_eq!(rep.attention.len(), 3);
         for a in rep.attention.iter().flatten() {
             assert_eq!(a.slots, 12);
-            assert!((0.0..=1.0).contains(&a.entropy_norm) && a.top_slot_share >= 1.0 / 12.0 - 1e-6 && a.first_slot_share <= 1.0);
+            assert!(
+                (0.0..=1.0).contains(&a.entropy_norm)
+                    && a.top_slot_share >= 1.0 / 12.0 - 1e-6
+                    && a.first_slot_share <= 1.0
+            );
         }
         assert!(rep.attention.iter().any(Option::is_some));
         // a caller that already tracks keeps tracking
@@ -1024,12 +1862,34 @@ mod tests {
         let toks = prompt(6, 5);
         let (mut a, mut b) = (m.new_state(), m.new_state());
         let plain = lens(&m, &mut a, &toks, &LensOptions::default()).unwrap();
-        let pushed = lens(&m, &mut b, &toks, &LensOptions { steering: Some(&steer), ..Default::default() }).unwrap();
+        let pushed = lens(
+            &m,
+            &mut b,
+            &toks,
+            &LensOptions {
+                steering: Some(&steer),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(pushed.positions[0].final_top1, target);
-        assert_eq!(pushed.positions[0].layers[1].top[0].0, target, "the target already leads at the steered layer");
-        assert_ne!(plain.positions[0].layers[1].top, pushed.positions[0].layers[1].top);
-        let (p0, q0) = (&plain.positions[0].layers[0], &pushed.positions[0].layers[0]);
-        assert_eq!((&p0.top, p0.entropy), (&q0.top, q0.entropy), "layers before the injection are untouched");
+        assert_eq!(
+            pushed.positions[0].layers[1].top[0].0, target,
+            "the target already leads at the steered layer"
+        );
+        assert_ne!(
+            plain.positions[0].layers[1].top,
+            pushed.positions[0].layers[1].top
+        );
+        let (p0, q0) = (
+            &plain.positions[0].layers[0],
+            &pushed.positions[0].layers[0],
+        );
+        assert_eq!(
+            (&p0.top, p0.entropy),
+            (&q0.top, q0.entropy),
+            "layers before the injection are untouched"
+        );
     }
 
     #[test]
@@ -1050,16 +1910,41 @@ mod tests {
         assert_eq!(j["name"], "j");
         assert_eq!(j["per_layer"].as_array().unwrap().len(), 3);
         assert!(j["per_layer"][0].get("vector").is_none());
-        assert_eq!(cv.to_json(true)["per_layer"][1]["vector"].as_array().unwrap().len(), 16);
+        assert_eq!(
+            cv.to_json(true)["per_layer"][1]["vector"]
+                .as_array()
+                .unwrap()
+                .len(),
+            16
+        );
         let s = serde_json::to_string(&cv.to_json(true)).unwrap();
         assert!(serde_json::from_str::<Value>(&s).is_ok());
         let mut st = m.new_state();
-        let rep = lens(&m, &mut st, &prompt(5, 1), &LensOptions { positions: LensPositions::All, ..Default::default() }).unwrap();
+        let rep = lens(
+            &m,
+            &mut st,
+            &prompt(5, 1),
+            &LensOptions {
+                positions: LensPositions::All,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let dec = |t: usize| format!("<{t}>");
         let j = rep.to_json_with(Some(&dec));
         assert_eq!(j["positions"].as_array().unwrap().len(), 5);
-        assert_eq!(j["positions"][0]["layers"][0]["top"][0]["text"].as_str().unwrap().chars().next(), Some('<'));
-        assert!(j["positions"][0]["commit_layer"].is_u64() && j["attention"].as_array().unwrap().len() == 3);
+        assert_eq!(
+            j["positions"][0]["layers"][0]["top"][0]["text"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .next(),
+            Some('<')
+        );
+        assert!(
+            j["positions"][0]["commit_layer"].is_u64()
+                && j["attention"].as_array().unwrap().len() == 3
+        );
         assert!(rep.to_json()["positions"][0]["token"].get("text").is_none());
         assert!(serde_json::from_str::<Value>(&serde_json::to_string(&j).unwrap()).is_ok());
     }
@@ -1070,13 +1955,41 @@ mod tests {
         let mut st = m.new_state();
         assert!(forward_steered(&m, &mut st, &[], None).is_err());
         assert!(forward_steered(&m, &mut st, &[999], None).is_err());
-        assert!(forward_steered(&m, &mut st, &vec![1; 40], None).is_err(), "context is 32");
-        assert!(lens(&m, &mut m.new_state(), &[1, 2], &LensOptions { top_k: 0, ..Default::default() }).is_err());
-        assert!(lens(&m, &mut m.new_state(), &[1, 2], &LensOptions { top_k: MAX_TOP_K + 1, ..Default::default() }).is_err());
+        assert!(
+            forward_steered(&m, &mut st, &vec![1; 40], None).is_err(),
+            "context is 32"
+        );
+        assert!(
+            lens(
+                &m,
+                &mut m.new_state(),
+                &[1, 2],
+                &LensOptions {
+                    top_k: 0,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            lens(
+                &m,
+                &mut m.new_state(),
+                &[1, 2],
+                &LensOptions {
+                    top_k: MAX_TOP_K + 1,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
         assert!(lens(&m, &mut m.new_state(), &[], &LensOptions::default()).is_err());
         assert!(ControlVector::from_layers(&m, "x", vec![None; 2]).is_err());
         assert!(ControlVector::from_layers(&m, "x", vec![Some(vec![0.0; 3]), None, None]).is_err());
-        assert!(ControlVector::from_layers(&m, "x", vec![Some(vec![f32::NAN; 16]), None, None]).is_err());
+        assert!(
+            ControlVector::from_layers(&m, "x", vec![Some(vec![f32::NAN; 16]), None, None])
+                .is_err()
+        );
         assert!(ControlVector::from_layers(&m, &"n".repeat(300), vec![None; 3]).is_err());
     }
 
