@@ -32,6 +32,20 @@ Models: keep several on the computer, switch between them or add more from one w
 
 The app does not include colibri. It runs colibri's JSON commands (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) and talks to its OpenAI-compatible gateway on `127.0.0.1`. It never installs system packages: if something is missing, it shows you the command to copy. Your data (settings, conversations) stays local in the user data folder; `COLIBRI_COMPANION_HOME` can change it.
 
+## corbul: the clean-room engine (alpha)
+
+Besides the desktop app, the repository contains an inference engine written from scratch in Rust, and `corbul`, its command line and local server (OpenAI, Ollama and Anthropic styles, with a web interface at `/`). It does not replace colibri in the app.
+
+```bash
+cargo build --release -p colibri-rs-cli      # target/release/corbul
+corbul capabilities                          # what works and what does not
+corbul generate ./model --prompt "Hello"     # a folder with safetensors or a .gguf file
+```
+
+**Honest status:** tested on tiny synthetic models and on tokenizer reference files only (12 model families, 46 of 46 cases equal to llama.cpp's reference data). No real downloaded model, no GPU and no Windows, macOS or ARM machine has run it yet; speeds are estimates. Dense and mixture-of-experts models are loaded; Mamba, RWKV and Jamba/Bamba run as plain continuation; DeepSeek-style attention, images, sound, embeddings and the GPU are not available in `corbul`. i-quants and BERT-style models are not supported.
+
+Documentation (English for now, translations in preparation): [what it is and what it does not do](docs/engine/ENGINE.md) · [quick start and every flag](docs/engine/QUICKSTART.md) · [features that are different](docs/engine/INNOVATIONS.md) · [clean-room process](docs/engine/CLEANROOM.md) · [security changes](docs/engine/CHANGES-SECURITY.md).
+
 ## Licences
 
 - This project: Apache-2.0 (`LICENSE`, `NOTICE`), like colibri.

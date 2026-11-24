@@ -922,6 +922,7 @@ dialog img{border-radius:14px;width:100%}
       <a href="#videos" data-i="nav_videos">Videos</a>
       <a href="#features" data-i="nav_features">Features</a>
       <a href="#download" data-i="nav_dl">Download</a>
+      <a href="#corbul" data-i="nav_corbul">Engine</a>
       <a href="#faq" data-i="nav_faq">Help</a>
     </nav>
     <select class="langsel" id="lang" aria-label="Language">
@@ -1053,6 +1054,17 @@ dialog img{border-radius:14px;width:100%}
   <p class="vnote" data-i="shots_note">Screenshots in this section's videos and in the tutorial are captured from the real window, running against a stand-in engine with example models.</p>
 </div></section>
 
+<section id="corbul"><div class="wrap">
+  <div class="sec-head"><h2 data-i="cb_title">corbul: an engine written from scratch, still an early alpha</h2><p data-i="cb_sub">Separate from the app: a command-line program and local server written in Rust that runs models without colibri. It has only been tested on tiny synthetic models and tokenizer reference files. No real downloaded model, no graphics card, and no Windows, macOS or ARM computer has run it yet.</p></div>
+  <div class="grid">
+    <div class="feat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg><h3 data-i="cb_1_t">Reads real model files</h3><p data-i="cb_1_d">GGUF and safetensors (also split into several files), 14 quantisation types, a tokenizer for 12 model families that matches llama.cpp's reference files in all 46 test cases, and a downloader for Hugging Face. i-quants and BERT-style models are not supported.</p></div>
+    <div class="feat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h2M7 14h6"/></svg><h3 data-i="cb_2_t">Ordinary and giant models</h3><p data-i="cb_2_d">Chat models and mixture-of-experts models run on the processor; models larger than your memory are read from disk (slow, limited by the disk) or shared across computers on your network (authenticated, not encrypted). DeepSeek-style models, images and sound are not available in corbul yet.</p></div>
+    <div class="feat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg><h3 data-i="cb_3_t">A local server with its own web page</h3><p data-i="cb_3_d">Speaks the OpenAI, Ollama and Anthropic styles, with tool calling and structured output (JSON, schema, regular expression, grammar). Embedding endpoints are not implemented.</p></div>
+    <div class="feat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4 10-10"/></svg><h3 data-i="cb_4_t">Checks you can inspect</h3><p data-i="cb_4_d">Quotes marked « » must be copied word for word from your sources, a generation can be sealed in a receipt and replayed, text can be watermarked, and a planner tells you before loading whether a model will fit. Also Romanian text tools, search, quantisation, merging, steering and local retrieval.</p></div>
+  </div>
+  <p class="vnote" data-i="cb_note">Speeds are estimates; nothing was benchmarked. The command list and every limit are in docs/engine (ENGINE.md, QUICKSTART.md, INNOVATIONS.md, CHANGES-SECURITY.md); run corbul capabilities for the limits of the program you have. Translations of those pages are still being prepared.</p>
+  <p><a href="https://github.com/chiuta/colibri-companion/blob/main/docs/engine/ENGINE.md" data-i="cb_link">Read the engine documentation</a></p>
+</div></section>
 <section id="shots"><div class="wrap">
   <div class="sec-head"><h2 data-i="shots_title">A look inside</h2></div>
   <div class="gal">

@@ -24,6 +24,20 @@ Chat: Antworten im Datenstrom, sofortiger Stopp, Markdown, einklappbares Denken,
 
 Die App enthält colibri nicht. Sie führt die JSON-Befehle von colibri aus (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) und spricht mit dessen OpenAI-kompatiblem Gateway auf `127.0.0.1`. Sie installiert nie Systempakete: Fehlt etwas, zeigt sie dir den Befehl zum Kopieren. Deine Daten (Einstellungen, Unterhaltungen) bleiben lokal im Datenordner des Benutzers; `COLIBRI_COMPANION_HOME` kann ihn ändern.
 
+## corbul: die Clean-Room-Engine (Alpha)
+
+Neben der Desktop-App enthält das Repository eine von Grund auf in Rust geschriebene Inferenz-Engine und `corbul`, ihre Kommandozeile und ihren lokalen Server (im Stil von OpenAI, Ollama und Anthropic, mit einer Weboberfläche unter `/`). Sie ersetzt colibri in der App nicht.
+
+```bash
+cargo build --release -p colibri-rs-cli      # target/release/corbul
+corbul capabilities                          # was funktioniert und was nicht
+corbul generate ./model --prompt "Hello"     # ein Ordner mit safetensors oder eine .gguf-Datei
+```
+
+**Ehrlicher Stand:** nur mit winzigen synthetischen Modellen und mit Tokenizer-Referenzdateien getestet (12 Modellfamilien, 46 von 46 Fällen gleich den Referenzdaten von llama.cpp). Kein echtes heruntergeladenes Modell, keine GPU und kein Windows-, macOS- oder ARM-Rechner hat sie bisher ausgeführt; die Geschwindigkeiten sind Schätzungen. Dichte Modelle und Mixture-of-Experts-Modelle werden geladen; Mamba, RWKV und Jamba/Bamba laufen als reine Fortsetzung; Attention im DeepSeek-Stil, Bilder, Ton, Embeddings und die GPU sind in `corbul` nicht verfügbar. i-Quants und Modelle im BERT-Stil werden nicht unterstützt.
+
+Dokumentation (auch auf Deutsch): [was sie ist und was sie nicht kann](docs/engine/ENGINE.de.md) · [Schnellstart und jedes Flag](docs/engine/QUICKSTART.de.md) · [Funktionen, die anders sind](docs/engine/INNOVATIONS.de.md) · [Clean-Room-Prozess](docs/engine/CLEANROOM.de.md) · [Sicherheitsänderungen](docs/engine/CHANGES-SECURITY.de.md).
+
 ## Lizenzen
 
 - Dieses Projekt: Apache-2.0 (`LICENSE`, `NOTICE`), wie colibri.

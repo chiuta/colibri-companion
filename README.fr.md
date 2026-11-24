@@ -24,6 +24,20 @@ Conversation : réponses en flux, Arrêt immédiat, Markdown, raisonnement repli
 
 L'application n'inclut pas colibri. Elle lance les commandes JSON de colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) et dialogue avec sa passerelle compatible OpenAI sur `127.0.0.1`. Elle n'installe jamais de paquets système : s'il manque quelque chose, elle affiche la commande à copier. Tes données (réglages, conversations) restent en local dans le dossier de données de l'utilisateur ; `COLIBRI_COMPANION_HOME` permet de le changer.
 
+## corbul : le moteur clean-room (alpha)
+
+Outre l'application de bureau, le dépôt contient un moteur d'inférence écrit de zéro en Rust, et `corbul`, sa ligne de commande et son serveur local (styles OpenAI, Ollama et Anthropic, avec une interface web sur `/`). Il ne remplace pas colibri dans l'application.
+
+```bash
+cargo build --release -p colibri-rs-cli      # target/release/corbul
+corbul capabilities                          # what works and what does not
+corbul generate ./model --prompt "Hello"     # a folder with safetensors or a .gguf file
+```
+
+**État honnête :** testé uniquement sur de minuscules modèles synthétiques et sur des fichiers de référence de tokenizer (12 familles de modèles, 46 cas sur 46 identiques aux données de référence de llama.cpp). Aucun vrai modèle téléchargé, aucun GPU et aucune machine Windows, macOS ou ARM ne l'a encore exécuté ; les vitesses sont des estimations. Les modèles denses et à mélange d'experts sont chargés ; Mamba, RWKV et Jamba/Bamba s'exécutent en simple continuation ; l'attention de style DeepSeek, les images, le son, les embeddings et le GPU ne sont pas disponibles dans `corbul`. Les i-quants et les modèles de type BERT ne sont pas pris en charge.
+
+Documentation : [ce que c'est et ce que ça ne fait pas](docs/engine/ENGINE.fr.md) · [démarrage rapide et toutes les options](docs/engine/QUICKSTART.fr.md) · [fonctions différentes](docs/engine/INNOVATIONS.fr.md) · [processus clean-room](docs/engine/CLEANROOM.fr.md) · [changements de sécurité](docs/engine/CHANGES-SECURITY.fr.md).
+
 ## Licences
 
 - Ce projet : Apache-2.0 (`LICENSE`, `NOTICE`), comme colibri.

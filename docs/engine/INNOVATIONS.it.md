@@ -1,41 +1,83 @@
-# Che cosa rende diverso questo motore
+# Che cosa c'è di diverso in questo motore
 
 [English](INNOVATIONS.md) · [Română](INNOVATIONS.ro.md) · [Français](INNOVATIONS.fr.md) · [Italiano](INNOVATIONS.it.md) · [Español](INNOVATIONS.es.md) · [Português](INNOVATIONS.pt.md) · [Deutsch](INNOVATIONS.de.md) · [Magyar](INNOVATIONS.hu.md)
 
-Note in linguaggio semplice sulle funzioni che gli altri motori locali per lo più non hanno. Ogni funzione dice che cosa può fare e che cosa no. Tutto è stato provato solo su modelli sintetici; nulla è girato su un checkpoint reale. «In `corbul`» significa che puoi usarla oggi dalla riga di comando; «solo libreria» significa che esiste come codice Rust ma non è ancora collegata. Vedi [ENGINE.it.md](ENGINE.it.md) e [QUICKSTART.it.md](QUICKSTART.it.md).
+Note in linguaggio semplice sulle funzioni che la maggior parte degli altri motori locali non ha. Ognuna dice che cosa fa, dove si raggiunge e che cosa non può fare. Tutte sono state provate solo su modelli sintetici; nessuna è stata eseguita dagli autori su un checkpoint reale. «In `corbul`» significa che oggi esiste un comando o un'opzione (`corbul help`); «solo libreria» significa codice Rust senza comando. Vedi [ENGINE.it.md](ENGINE.it.md) e [QUICKSTART.it.md](QUICKSTART.it.md).
 
-## Ondata 1: integrità, hardware e memoria
+## Integrità, hardware e memoria
 
-**Mesh LAN** (`mesh`; in `corbul`: `worker`, `generate --workers`, `--discover`). Un modello troppo grande per una macchina viene tagliato in intervalli di strati, uno per computer. Tra loro viaggia solo lo stato nascosto (qualche decina di KB per token). Le macchine dimostrano di appartenere alla stessa mesh con una chiave condivisa (HMAC-SHA256 reciproco), ogni frame è autenticato, un worker caduto viene escluso e i suoi strati ridistribuiti, e i logit sono identici bit per bit a quelli di una macchina sola. *Non può:* cifrare (usa una rete fidata o una VPN); provata solo in loopback; non abbiamo misurato se sia più veloce di una macchina sola.
+### Mesh in rete locale
 
-**Streaming degli strati** (`stream_layers`; in `corbul`: `--stream-layers --ram-budget DIMENSIONE`). Esegue un modello denso più grande della RAM tenendo in memoria una piccola finestra di strati e precaricando i successivi su un thread in background. I risultati sono uguali a quelli del modello in RAM. *Non può:* la decodifica legge ogni strato per ogni token, quindi è limitata dalla velocità del disco (circa velocità del disco ÷ dimensione del modello). Solo strati densi; gli strati MoE non si trasmettono così.
+Modulo `mesh`. In `corbul`: `worker`, `generate --workers`, `--discover`, `--key`, `--wire-f16`. Un modello troppo grande per una sola macchina viene diviso in intervalli di livelli, uno per computer. Tra le macchine viaggia solo lo stato nascosto. Le macchine dimostrano di condividere una chiave (HMAC-SHA256 reciproco), ogni frame porta un MAC, le dimensioni dell'handshake sono limitate, un worker morto viene escluso e i suoi livelli ridistribuiti. I logit f32 densi sono uguali a quelli di una singola macchina. La scoperta UDP è opzionale: un worker risponde alle sonde solo se avviato con `--discovery` o `--discovery-port` (`--no-discovery` la forza a spenta), e `--discover` del coordinatore trasmette una sonda e attende le risposte dai worker che hanno lo stesso modello. *Non può:* cifrare (usa una rete locale fidata o una VPN); è stato provato solo in loopback; la velocità rispetto a una singola macchina non è stata misurata.
 
-**Citazioni bloccate** (`quotelock`; in `corbul`: `--sources FILE`, nel server `sources` e `/v1/quotes/verify`). Durante la decodifica, tutto ciò che il modello scrive tra « e » deve essere un passaggio esatto di una delle tue fonti (tollerante a maiuscole, spazi, stili di virgolette e diacritici rumeni). `[S3]«` limita la citazione alla fonte 3. Poi un verificatore classifica ogni citazione (esatta, fonte sbagliata, troncata, alterata, fusa, non supportata) e valuta le frasi fuori dalle citazioni. *Non può:* garantire che la prosa intorno sia vera, solo che il testo citato esiste nelle fonti; le risposte in streaming non portano il blocco delle citazioni.
+### Streaming dei livelli
 
-**Autopilota, governatore, contatore di energia** (`governor`; in `corbul`: `plan`, `doctor`, `--governor`). Prima del caricamento dice se un modello ci sta, gira lento, viene letto dal disco o non gira affatto, con velocità stimata e suggerimenti. Durante l'esecuzione un governatore legge temperatura, memoria e batteria (Linux) e consiglia thread, dimensione del lotto e rallentamenti senza oscillare. Un contatore di energia riporta joule per token e grammi di CO₂. *Non può:* le velocità sono stime di tipo roofline, non misure (`--calibrate` cronometra brevemente la macchina); l'energia è un'ipotesi se non si legge un contatore RAPL; l'intensità di carbonio (400 g/kWh) è un valore provvisorio.
+Modulo `stream_layers`. In `corbul`: `--stream-layers`, `--ram-budget`, `--stream-window`, `--disk-mbps` (per le stime). Esegue un modello denso più grande della RAM tenendo in memoria una piccola finestra di livelli e precaricando in un thread in background. I risultati sono uguali a quelli del modello in RAM. *Non può:* evitare che ogni token legga ogni livello, quindi la velocità è limitata da quella del disco; solo livelli densi (i modelli mixture-of-experts leggono invece in streaming i propri esperti instradati, con `--ram-budget`).
 
-**Politiche della cache KV e istantanee di sessione** (`kvpolicy`, `snapshot`; in `corbul`: `--kv-policy streaming|h2o|snapkv --kv-budget N`, `--session DIR`). Tengono le conversazioni lunghe in un budget di memoria fisso (attention sink, heavy hitter, compressione del prompt) e salvano o riprendono una conversazione da un file con checksum, riusando il più lungo prefisso di prompt salvato. *Non può:* lo sfratto perde informazione per costruzione; le due opzioni non si combinano in `corbul`; le cache lato acceleratore non si possono salvare; chat molto lunghe possono spingere le posizioni RoPE oltre il contesto di addestramento.
+### Citazioni vincolate alla fonte
 
-**Modalità riproducibile e ricevute** (`simd::set_reproducible`, `receipt`; in `corbul`: `--reproducible`, `generate --receipt`, `verify-receipt`, `replay`). Un interruttore rende i numeri identici bit per bit su ogni variante di kernel x86 e numero di thread. Una ricevuta è un piccolo JSON che registra quale modello (impronta di Merkle dei pesi), tokenizer, impostazioni di campionamento, prompt e output, con una catena di hash sui passi, sigillata con SHA-256 e una chiave HMAC facoltativa. `replay` la riesegue e verifica. I pesi danneggiati sono localizzati fino al tensore e al blocco. *Non può:* dimostrare qualcosa a un estraneo senza la chiave HMAC o una riesecuzione (niente firme a chiave pubblica); i modelli MoE sono rifiutati; ARM non provato; la modalità riproducibile costa velocità (i kernel ricchi di `exp` sono più volte più lenti nei micro-test, un piccolo modello ha decodificato circa il 15% più lento, misura rumorosa).
+Modulo `quotelock`. In `corbul`: `--sources FILE` (ripetibile), `--no-lock`, `--citations FILE`; il server accetta `sources` e offre `POST /v1/quotes/verify`. Durante la decodifica, il testo tra « e » deve essere un passaggio letterale di una fonte (tollerante a maiuscole, spaziatura, stili di virgolette e segni diacritici rumeni); `[S3]«` limita una citazione alla fonte 3. Un verificatore classifica poi ogni citazione (letterale, fonte sbagliata, troncata, alterata, fusa, non supportata) e dà un punteggio alle frasi fuori dalle citazioni; il rapporto indica quando è stato raggiunto un limite di lavoro (`limit_hit`). *Non può:* rendere vero il testo attorno alle citazioni; le risposte in streaming non contengono un blocco di citazioni.
 
-**Strumenti linguistici con il rumeno al primo posto** (`lang`; solo libreria). Normalizza ș/ț e ş/ţ (nei due sensi, esattamente reversibile), ripara il mojibake, identifica 27 lingue comprese le otto del prodotto, può bloccare la risposta su una lingua o uno script durante la decodifica, formatta numeri, importi e date rumeni e ripristina i diacritici mancanti segnalando ogni parola incerta. *Non può:* il ripristino parte da un lessico di circa 650 forme accentate e non è stato misurato su un corpus; le parole ambigue (`sa`, `ca`, `fata`…) si risolvono solo con poche regole di contesto; l'identificazione della lingua richiede circa cinque parole.
+### Pianificatore, regolatore e contatore di energia
 
-**Analisi dell'incertezza** (`confidence`; solo libreria). Statistiche per token, parola, frase e risposta per una mappa di calore, un'euristica trasparente del rischio di allucinazione, punteggi di autoconsistenza e strumenti di calibrazione. *Non può:* il punteggio di rischio è un'euristica, non un rilevatore di verità.
+Modulo `governor` (e `plan`, `hw`). In `corbul`: `plan`, `doctor`, `--governor`, `--no-governor`, `--verbose`, `--calibrate`. Prima del caricamento dice se il modello ci sta, va in streaming, gira lentamente o non può girare, con una velocità stimata. In esecuzione, il regolatore legge temperatura, memoria e batteria (Linux) e consiglia thread e pause senza oscillare. *Non può:* dare altro che stime di velocità (`--calibrate` cronometra la tua macchina per circa un secondo); l'energia è un'ipotesi a meno che un contatore RAPL sia leggibile; l'intensità di carbonio (400 g/kWh) è un valore provvisorio.
 
-## Ondata 2: calcolo in inferenza, taratura, recupero
+### Politiche della cache KV e snapshot di sessione
 
-Implementate e provate su modelli sintetici, ancora in rifinitura, per ora **solo libreria**; le API possono cambiare.
+Moduli `kvpolicy`, `snapshot`. In `corbul`: `--kv-policy streaming|h2o|snapkv`, `--kv-budget`, `--kv-sinks`, `--session DIR`, `--session-cap`, `--compress`. Mantengono le chat lunghe entro un budget di memoria (attention sink, heavy hitter, compressione del prompt) e salvano o riprendono una conversazione da un file con checksum, riutilizzando il prefisso salvato più lungo. Gli snapshot possono portare un HMAC a chiave. *Non può:* evitare le perdite (l'espulsione è con perdita per progetto); `--kv-policy` e `--session` non si possono combinare; chat molto lunghe possono superare il contesto di addestramento.
 
-**Ricerca e lookahead** (`search`). Beam search, best-of-N e voto di autoconsistenza, un albero di conversazione ramificato e decodifica speculativa con ricerca di n-grammi nel prompt, senza modello bozza. Il lookahead in modalità greedy produce ciò che produce la decodifica greedy semplice, a meno dell'arrotondamento lotto-contro-singolo. *Non può:* il lookahead aiuta solo quando il testo ripete testo precedente (citazione, modifica, codice); il best-of-N richiede un buon valutatore.
+### Modalità riproducibile e ricevute
 
-**Decodifica auto-speculativa** (`selfspec`). Lo stesso modello scrive la bozza con una parte dei suoi strati e verifica tutte le bozze in un passaggio completo; l'output resta esatto. Un calibratore sceglie quali strati saltare e uno stimatore prevede l'accelerazione. *Non può:* nessun guadagno è promesso; torna ai passi semplici per anelli a finestra scorrevole che si chiuderebbero, cache compattate e strati spostati su acceleratore.
+Moduli `simd` (interruttore), `receipt`. In `corbul`: `--reproducible`, `--receipt FILE`, `--receipt-key`, `--receipt-key-file`, `--receipt-topk`, `--keep-steps`, `--leaves`, `verify-receipt`, `replay`. Una ricevuta registra il modello (un'impronta di Merkle dei pesi), il tokenizer, le impostazioni del campionatore, il prompt e l'output con una catena di hash, sigillata con SHA-256 e una chiave HMAC facoltativa; `replay` la riesegue. I pesi danneggiati vengono localizzati fino a un tensore e a un blocco. *Non può:* dimostrare nulla a un estraneo senza la chiave HMAC o una nuova esecuzione (niente firme a chiave pubblica); i modelli MoE e a spazi di stato sono rifiutati; ARM non provato; la modalità riproducibile costa velocità.
 
-**Quantizzazione mista automatica** (`autoquant`). Misura quanto ogni gruppo di tensori danneggia l'output in ogni formato e sceglie i formati entro un budget di dimensione o RAM (zaino esatto o greedy), con proxy più economici per modelli enormi e un modello di velocità facoltativo. Produce una ricetta per il quantizzatore e un rapporto. *Non può:* assume che i danni si sommino tra gruppi; la sonda per un vero `Model` non è ancora scritta, quindi è girato solo su una piccola rete sintetica.
+### Strumenti linguistici pensati prima di tutto per il rumeno
 
-**Vettori di controllo e logit lens** (`steer`). Impara una direzione (per esempio cortese contro scortese) da due insiemi di prompt e la somma al flusso residuo durante la generazione, senza toccare i pesi; e mostra che cosa ogni strato prevederebbe e a quale strato la risposta si fissa. *Non può:* un vettore fatto su un fine-tune è accettato da un altro con le stesse forme (l'impronta copre le forme, non i pesi); i riassunti di attenzione sono grossolani; l'esecuzione strato per strato su acceleratore è lenta.
+Modulo `lang`. In `corbul`: `lang detect`, `lang normalize`, `--lang CODE` (non nel server). Normalizza ș/ț e ş/ţ, ripara il mojibake, identifica 27 lingue, vieta le scritture straniere durante la decodifica (rumeno: niente ş ţ), formatta numeri, importi e date rumeni, ripristina i segni diacritici mancanti segnalando ogni parola incerta. *Non può:* andare oltre un lessico di circa 650 forme per il ripristino, non misurato su un corpus; le parole ambigue sono risolte da poche regole di contesto; l'identificazione della lingua richiede circa cinque parole.
 
-**Recupero locale** (`rag`). Embedding da qualsiasi modello o da un embedder senza modello basato su hash, suddivisione attenta al rumeno, un indice HNSW in Rust puro (forza bruta esatta per i controlli, file con checksum), BM25 con piegatura dei diacritici, fusione di classifiche e passaggi numerati `[S1]…` che si collegano direttamente alle citazioni bloccate. *Non può:* gli embedding valgono quanto il modello (un modello generativo dà vettori utilizzabili ma deboli).
+### Analisi dell'incertezza
 
-**Fusione di modelli** (`merge`). Lineare, SLERP, aritmetica dei compiti, TIES, DARE (con seme) e «frankenmerge» per fette di strati, un tensore alla volta, così la memoria necessaria è qualche copia del tensore più grande, non del modello. Forme, architetture e intervalli sono controllati prima di scrivere qualsiasi cosa. *Non può:* una fusione è una ricetta, non una garanzia di qualità; l'output è safetensors, mai quantizzato.
+Modulo `confidence`. Solo libreria (esempio dimostrativo `confidence_demo`). Statistiche per token, parola, frase e risposta per una mappa di calore, un'euristica trasparente del rischio di allucinazione, punteggi di auto-coerenza e strumenti di calibrazione. *Non può:* essere altro che un'euristica: il punteggio di rischio non è un rilevatore di verità.
 
-**Filigrana di testo** (`watermark`). Una spinta a «lista verde» con chiave durante il campionamento e un rilevatore che restituisce uno z-score e un p-value. *Non può:* è prova statistica, non certezza; i testi brevi (sotto circa 100 token), il codice, le citazioni e i fatti portano poco segnale; parafrasare o rigenerare la cancella; chi ha la chiave può falsificarla, e l'assenza del segno non prova un autore umano.
+## Calcolo in fase di inferenza, messa a punto, recupero
+
+### Ricerca e lookahead
+
+Modulo `search`. In `corbul`: `search --method beam|best-of-n|vote` (`--width`, `--samples`, `--answer number|text`, `--length-penalty`, `--all`, `--explain`, `--json`) e `--lookahead` su `generate` (`--ngram-min`, `--ngram-max`). Beam search, best-of-N, votazione per auto-coerenza, un albero di conversazione (libreria), decodifica speculativa per ricerca nel prompt. *Non può:* aiutare se il testo non ripete testo precedente (il lookahead); il best-of-N richiede un buon valutatore.
+
+### Decodifica speculativa
+
+Moduli `spec`, `selfspec`. In `corbul`: `--draft MODEL`, `--lookahead`, `--self-spec`, `--skip-layers auto|LIST`, `--draft-len`. Stessa risposta greedy e stessa distribuzione di campionamento con meno passaggi completi; l'output compare alla fine. Solo `--temperature`, `--top-k`, `--top-p`; non con output strutturato, ricevute, sessioni o mesh. *Non può:* promettere un'accelerazione; l'auto-speculazione ricade su passi semplici per gli anelli a finestra scorrevole che si riavvolgerebbero, le cache compattate e i livelli scaricati.
+
+### Quantizzazione mista automatica e quantizzatore
+
+Moduli `autoquant`, `quantize`. In `corbul`: `autoquant FOLDER --budget 4.5bpw|6g|Q4_K` (`--recipe`, `--report`, `--candidates`, `--base`, `--imatrix`, `--sample-rows`) e `quantize IN OUT.gguf --type NAME | --recipe FILE`. Misura l'errore sui pesi per gruppo di tensori in ciascun formato e sceglie i formati entro un budget di dimensione (zaino esatto o greedy). *Non può:* stimare la qualità delle risposte, solo l'errore sui pesi; presume che i danni si sommino; le i-quant non esistono.
+
+### Vettori di guida e logit lens
+
+Modulo `steer`. In `corbul`: `steer train|apply|lens` (`--positive`, `--negative`, `--method mean-diff|pca`, `--out`, `--vector`, `--strength`, `--layers`, `--positions`, `--no-attention`). Apprende una direzione da due insiemi di prompt e la aggiunge al flusso residuo senza modificare i pesi; la lente mostra che cosa prevedrebbe ciascun livello. *Non può:* funzionare con modelli a spazi di stato, output strutturato, speculazione, ricevute o sessioni; un vettore ottenuto da un fine-tuning viene accettato da un altro con la stessa forma.
+
+### Recupero locale
+
+Modulo `rag`. In `corbul`: `rag add|search|ask` (`--query`, `--question`, `--k`, `--chunk-chars`, `--overlap`, `--embed-model`). Suddivisione adatta al rumeno, indice HNSW in Rust puro, BM25 con ripiegamento dei segni diacritici, fusione dei ranghi, passaggi numerati `[S1]…` che alimentano le citazioni vincolate alla fonte, file con checksum. *Non può:* fare di meglio dell'embedder predefinito, un embedder a hash (parole e parti di parole, non significato); `--embed-model` usa gli stati nascosti di un modello generativo (debole); la CLI reindicizza a ogni chiamata e legge testo semplice, non file PDF o Office (la libreria ha funzioni di supporto per l'ingestione).
+
+### Fusione di modelli
+
+Modulo `merge`. In `corbul`: `merge CONFIG.json` (`--out`, `--model`, `--dry-run`, `--max-memory`, `--overwrite`, `--verbose`). Lineare, SLERP, aritmetica dei compiti, TIES, DARE (con seme) e porzioni di livelli, un tensore alla volta. Forme e intervalli sono controllati prima della scrittura; i link simbolici non vengono seguiti. *Non può:* garantire la qualità; scrive solo pesi safetensors, mai quantizzati, e `config.json` e tokenizer li copi tu.
+
+### Filigrana di testo
+
+Modulo `watermark`. In `corbul`: `generate --watermark KEY` (`--wm-gamma`, `--wm-delta`, `--wm-context`) e `watermark detect MODEL --key K --text T | --file F` (`--no-dedup`). Un bias a «lista verde» con chiave e un rilevatore a punteggio z. *Non può:* fornire una prova; testi brevi, codice e citazioni portano poco segnale; la parafrasi lo rimuove; chi ha la chiave può falsificarlo; l'assenza di marchio non prova una scrittura umana.
+
+## Multimodale (solo libreria)
+
+### Visione
+
+Moduli `vision`, `imageio`. Un encoder in stile CLIP/SigLIP, un proiettore, la suddivisione in tessere e un aggancio `Model::forward_segments` per inserire embedding in un prompt; decoder per PNG, JPEG (baseline e progressivo), BMP e PNM scritti dalle specifiche, con limiti di dimensione. *Non può:* essere usato da `corbul` (solo testo); nessun checkpoint reale è stato eseguito.
+
+### Audio
+
+Modulo `audio`. Lettura e scrittura WAV, ricampionamento, FFT, caratteristiche log-mel, rilevamento dell'attività vocale, un esecutore con struttura Whisper. *Non può:* essere usato da `corbul`; nessun checkpoint Whisper reale è stato eseguito.
+
+## Spazi di stato, ibridi e GPU (vedi ENGINE.md)
+
+I moduli `ssm`, `hybrid`, `mla` e il crate `companion-engine-gpu` sono descritti, con i loro limiti, in ENGINE.md.

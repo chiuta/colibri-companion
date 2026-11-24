@@ -24,6 +24,20 @@ Chat: respuestas en flujo, Detener al instante, Markdown, razonamiento plegable,
 
 La aplicación no incluye colibri. Ejecuta los comandos JSON de colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) y se comunica con su pasarela compatible con OpenAI en `127.0.0.1`. Nunca instala paquetes del sistema: si falta algo, te muestra el comando para copiar. Tus datos (ajustes, conversaciones) se quedan en local, en la carpeta de datos del usuario; `COLIBRI_COMPANION_HOME` permite cambiarla.
 
+## corbul: el motor clean-room (alfa)
+
+Además de la aplicación de escritorio, el repositorio contiene un motor de inferencia escrito desde cero en Rust, y `corbul`, su línea de comandos y servidor local (estilos OpenAI, Ollama y Anthropic, con una interfaz web en `/`). No sustituye a colibri en la aplicación.
+
+```bash
+cargo build --release -p colibri-rs-cli      # target/release/corbul
+corbul capabilities                          # what works and what does not
+corbul generate ./model --prompt "Hello"     # a folder with safetensors or a .gguf file
+```
+
+**Estado honesto:** probado solo con modelos sintéticos diminutos y con archivos de referencia de tokenizadores (12 familias de modelos, 46 de 46 casos iguales a los datos de referencia de llama.cpp). Ningún modelo real descargado, ninguna GPU y ninguna máquina Windows, macOS o ARM lo ha ejecutado todavía; las velocidades son estimaciones. Se cargan modelos densos y de mezcla de expertos; Mamba, RWKV y Jamba/Bamba se ejecutan como continuación de texto plano; la atención al estilo DeepSeek, las imágenes, el sonido, los embeddings y la GPU no están disponibles en `corbul`. Las i-quants y los modelos de tipo BERT no se admiten.
+
+Documentación: [qué es y qué no hace](docs/engine/ENGINE.es.md) · [inicio rápido y todas las opciones](docs/engine/QUICKSTART.es.md) · [funciones distintas](docs/engine/INNOVATIONS.es.md) · [proceso clean-room](docs/engine/CLEANROOM.es.md) · [cambios de seguridad](docs/engine/CHANGES-SECURITY.es.md).
+
 ## Licencias
 
 - Este proyecto: Apache-2.0 (`LICENSE`, `NOTICE`), como colibri.

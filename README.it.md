@@ -24,6 +24,20 @@ Chat: risposte in streaming, Stop immediato, Markdown, ragionamento comprimibile
 
 L'app non include colibri. Esegue i comandi JSON di colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) e dialoga con il suo gateway compatibile OpenAI su `127.0.0.1`. Non installa mai pacchetti di sistema: se manca qualcosa, ti mostra il comando da copiare. I tuoi dati (impostazioni, conversazioni) restano in locale nella cartella dati dell'utente; `COLIBRI_COMPANION_HOME` può cambiarla.
 
+## corbul: il motore clean-room (alpha)
+
+Oltre all'app desktop, il repository contiene un motore di inferenza scritto da zero in Rust e `corbul`, la sua riga di comando e il suo server locale (stili OpenAI, Ollama e Anthropic, con un'interfaccia web su `/`). Non sostituisce colibri nell'app.
+
+```bash
+cargo build --release -p colibri-rs-cli      # target/release/corbul
+corbul capabilities                          # what works and what does not
+corbul generate ./model --prompt "Hello"     # a folder with safetensors or a .gguf file
+```
+
+**Stato, in tutta onestà:** provato solo su minuscoli modelli sintetici e su file di riferimento del tokenizer (12 famiglie di modelli, 46 casi su 46 uguali ai dati di riferimento di llama.cpp). Nessun modello reale scaricato, nessuna GPU e nessuna macchina Windows, macOS o ARM lo ha ancora eseguito; le velocità sono stime. I modelli densi e mixture-of-experts vengono caricati; Mamba, RWKV e Jamba/Bamba girano come semplice continuazione; l'attenzione in stile DeepSeek, le immagini, l'audio, gli embedding e la GPU non sono disponibili in `corbul`. Le i-quant e i modelli in stile BERT non sono supportati.
+
+Documentazione: [che cos'è e che cosa non fa](docs/engine/ENGINE.it.md) · [avvio rapido e tutte le opzioni](docs/engine/QUICKSTART.it.md) · [funzioni diverse](docs/engine/INNOVATIONS.it.md) · [processo clean-room](docs/engine/CLEANROOM.it.md) · [modifiche di sicurezza](docs/engine/CHANGES-SECURITY.it.md).
+
 ## Licenze
 
 - Questo progetto: Apache-2.0 (`LICENSE`, `NOTICE`), come colibri.

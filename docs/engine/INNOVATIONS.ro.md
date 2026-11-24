@@ -1,41 +1,83 @@
-# Ce e diferit la acest motor
+# Ce este diferit la acest motor
 
 [English](INNOVATIONS.md) · [Română](INNOVATIONS.ro.md) · [Français](INNOVATIONS.fr.md) · [Italiano](INNOVATIONS.it.md) · [Español](INNOVATIONS.es.md) · [Português](INNOVATIONS.pt.md) · [Deutsch](INNOVATIONS.de.md) · [Magyar](INNOVATIONS.hu.md)
 
-Note în limbaj simplu despre funcțiile pe care alte motoare locale în mare parte nu le au. Fiecare funcție spune ce poate face și ce nu. Toate au fost testate doar pe modele sintetice; niciuna nu a rulat pe un punct de control real. „În `corbul`” înseamnă că o poți folosi azi din linia de comandă; „doar bibliotecă” înseamnă că există ca cod Rust, dar nu e încă legată. Vezi [ENGINE.ro.md](ENGINE.ro.md) și [QUICKSTART.ro.md](QUICKSTART.ro.md).
+Note în limbaj simplu despre funcțiile pe care alte motoare locale nu le au, în mare parte. Fiecare spune ce face, unde ajungi la ea și ce nu poate face. Toate au fost testate doar pe modele sintetice; autorii nu au rulat niciuna pe un punct de control real. „În `corbul`” înseamnă că o comandă sau un flag există azi (`corbul help`); „doar bibliotecă” înseamnă cod Rust fără comandă. Vezi [ENGINE.md](ENGINE.md) și [QUICKSTART.md](QUICKSTART.md).
 
-## Valul 1: integritate, hardware și memorie
+## Integritate, hardware și memorie
 
-**Plasă LAN** (`mesh`; în `corbul`: `worker`, `generate --workers`, `--discover`). Un model prea mare pentru un singur calculator se taie în intervale de straturi, câte unul pe calculator. Între ele circulă doar starea ascunsă (câteva zeci de KB pe token). Mașinile dovedesc că aparțin aceleiași plase cu o cheie comună (HMAC-SHA256 reciproc), fiecare cadru e autentificat, un worker căzut e scos și straturile lui se redistribuie, iar logiturile sunt identice bit cu bit cu cele de pe o singură mașină. *Nu poate:* nu criptează (folosește o rețea de încredere sau un VPN), a fost testată doar pe loopback și nu am măsurat dacă e mai rapidă decât o singură mașină.
+### Mesh în rețeaua locală
 
-**Transmiterea straturilor** (`stream_layers`; în `corbul`: `--stream-layers --ram-budget MĂRIME`). Rulează un model dens mai mare decât RAM-ul păstrând în memorie o fereastră mică de straturi și citind următoarele în avans pe un fir de fundal. Rezultatele sunt identice cu cele ale modelului din RAM. *Nu poate:* decodarea citește fiecare strat pentru fiecare token, deci e limitată de viteza discului (aproximativ viteza discului ÷ mărimea modelului). Doar straturi dense; straturile MoE nu se transmit așa.
+Modulul `mesh`. În `corbul`: `worker`, `generate --workers`, `--discover`, `--key`, `--wire-f16`. Un model prea mare pentru o singură mașină este tăiat în intervale de straturi, câte unul pentru fiecare calculator. Între ele circulă doar starea ascunsă. Mașinile dovedesc că au aceeași cheie (HMAC-SHA256 reciproc), fiecare cadru poartă un MAC, dimensiunile strângerii de mână sunt plafonate, un worker căzut este scos, iar straturile lui sunt redistribuite. Logiții denși f32 sunt egali cu cei de pe o singură mașină. Descoperirea UDP este opțională: un worker răspunde la sonde doar dacă a fost pornit cu `--discovery` sau `--discovery-port` (`--no-discovery` o oprește forțat), iar `--discover` al coordonatorului trimite o sondă în difuzare și așteaptă răspunsuri de la workerii care au același model. *Nu poate:* cripta (folosește o rețea locală de încredere sau un VPN); a fost testat doar pe loopback; viteza față de o singură mașină nu a fost măsurată.
 
-**Citate blocate pe surse** (`quotelock`; în `corbul`: `--sources FIȘIER`, în server `sources` și `/v1/quotes/verify`). În timpul decodării, tot ce scrie modelul între « și » trebuie să fie un pasaj exact dintr-una din sursele tale (tolerant la majuscule, spații, stiluri de ghilimele și diacritice românești). `[S3]«` limitează citatul la sursa 3. Apoi un verificator clasifică fiecare citat (exact, sursă greșită, tăiat, alterat, îmbinat, nesusținut) și notează propozițiile din afara citatelor. *Nu poate:* garanta că proza din jur e adevărată, doar că textul citat există în surse; răspunsurile în flux nu poartă bloc de citări.
+### Transmiterea pe straturi
 
-**Autopilot, guvernator, contor de energie** (`governor`; în `corbul`: `plan`, `doctor`, `--governor`). Înainte de încărcare, spune dacă un model încape, rulează încet, se transmite de pe disc sau nu rulează deloc, cu viteză estimată și sugestii. În timpul rulării, un guvernator citește temperatura, memoria și bateria (Linux) și recomandă fire, mărime de lot și încetiniri, fără oscilații. Un contor de energie raportează jouli pe token și grame de CO₂. *Nu poate:* vitezele sunt estimări de tip roofline, nu măsurători (`--calibrate` cronometrează scurt mașina); energia e o presupunere dacă nu poate fi citit un contor RAPL; intensitatea de carbon (400 g/kWh) e un înlocuitor.
+Modulul `stream_layers`. În `corbul`: `--stream-layers`, `--ram-budget`, `--stream-window`, `--disk-mbps` (pentru estimări). Rulează un model dens mai mare decât RAM-ul, ținând în memorie o fereastră mică de straturi și preîncărcând pe un fir din fundal. Rezultatele sunt egale cu cele ale modelului aflat în RAM. *Nu poate:* ocoli faptul că fiecare token citește fiecare strat, deci viteza este limitată de viteza discului; doar straturi dense (modelele cu amestec de experți își transmit în schimb experții rutați, cu `--ram-budget`).
 
-**Politici pentru cache-ul KV și instantanee de sesiune** (`kvpolicy`, `snapshot`; în `corbul`: `--kv-policy streaming|h2o|snapkv --kv-budget N`, `--session DIR`). Țin conversațiile lungi într-un buget fix de memorie (puncte de atenție, „heavy hitters”, comprimarea promptului) și salvează sau reiau o conversație dintr-un fișier cu sumă de control, refolosind cel mai lung prefix de prompt salvat. *Nu poate:* evacuarea pierde informație prin construcție; cele două opțiuni nu se pot combina în `corbul`; cache-urile de pe acceleratoare nu se pot salva; conversațiile foarte lungi pot împinge pozițiile RoPE dincolo de contextul de antrenare.
+### Citări blocate pe citat
 
-**Mod reproductibil și chitanțe** (`simd::set_reproducible`, `receipt`; în `corbul`: `--reproducible`, `generate --receipt`, `verify-receipt`, `replay`). Un singur comutator face numerele identice bit cu bit pe orice variantă de nuclee x86 și orice număr de fire. O chitanță e un mic JSON care înregistrează ce model (o amprentă Merkle a greutăților), tokenizator, setări de eșantionare, prompt și ieșire, cu un lanț de hash-uri peste pași, sigilat cu SHA-256 și o cheie HMAC opțională. `replay` o reia și verifică. Greutățile deteriorate sunt localizate până la tensor și bucată. *Nu poate:* dovedi ceva unui străin fără cheia HMAC sau o reluare (nu există semnături cu cheie publică); modelele MoE sunt refuzate; ARM e netestat; modul reproductibil costă viteză (nucleele cu multe `exp` sunt de câteva ori mai lente în micro-teste, un model mic a decodat cu circa 15% mai lent, măsurat zgomotos).
+Modulul `quotelock`. În `corbul`: `--sources FILE` (repetabil), `--no-lock`, `--citations FILE`; serverul acceptă `sources` și oferă `POST /v1/quotes/verify`. În timpul decodării, textul dintre « și » trebuie să fie un pasaj întocmai dintr-o sursă (tolerant la majuscule, spațiere, stiluri de ghilimele și diacriticele românești); `[S3]«` limitează un citat la sursa 3. Apoi un verificator clasifică fiecare citat (întocmai, sursă greșită, trunchiat, modificat, îmbinat, nesusținut) și notează propozițiile din afara citatelor; raportul spune când s-a atins o limită de lucru (`limit_hit`). *Nu poate:* face adevărat textul din jurul citatelor; răspunsurile în flux nu conțin bloc de citări.
 
-**Unelte de limbă cu româna pe primul loc** (`lang`; doar bibliotecă). Normalizează ș/ț și ş/ţ (în ambele sensuri, exact reversibil), repară mojibake, identifică 27 de limbi, inclusiv cele opt ale produsului, poate bloca răspunsul pe o limbă sau un script în timpul decodării, formatează numere, bani și date românești și restaurează diacriticele lipsă, marcând fiecare cuvânt nesigur. *Nu poate:* restaurarea pornește de la un lexicon de circa 650 de forme cu diacritice și nu a fost măsurată pe un corpus; cuvintele ambigue (`sa`, `ca`, `fata`…) se rezolvă doar prin câteva reguli de context; identificarea limbii are nevoie de circa cinci cuvinte.
+### Planificator, guvernor și contor de energie
 
-**Analiza incertitudinii** (`confidence`; doar bibliotecă). Statistici pe token, cuvânt, propoziție și răspuns pentru o hartă termică, o euristică transparentă de risc de halucinație, scoruri de auto-consistență și unelte de calibrare. *Nu poate:* scorul de risc e o euristică, nu un detector de adevăr.
+Modulul `governor` (și `plan`, `hw`). În `corbul`: `plan`, `doctor`, `--governor`, `--no-governor`, `--verbose`, `--calibrate`. Înainte de încărcare, spune dacă modelul încape, se transmite pe straturi, rulează încet sau nu poate rula, cu o viteză estimată. În timpul rulării, guvernorul citește temperatura, memoria și bateria (Linux) și recomandă fire și pauze, fără oscilații. *Nu poate:* da viteze exacte, sunt estimări (`--calibrate` cronometrează calculatorul tău cam o secundă); energia este o presupunere, în afară de cazul în care se poate citi un contor RAPL; intensitatea carbonului (400 g/kWh) este o valoare provizorie.
 
-## Valul 2: calcul la inferență, reglaj, regăsire
+### Politici pentru cache-ul KV și instantanee de sesiune
 
-Sunt implementate și testate pe modele sintetice, încă în finalizare, deocamdată **doar bibliotecă**; API-urile se pot schimba.
+Modulele `kvpolicy`, `snapshot`. În `corbul`: `--kv-policy streaming|h2o|snapkv`, `--kv-budget`, `--kv-sinks`, `--session DIR`, `--session-cap`, `--compress`. Țin conversațiile lungi într-un buget de memorie (ancore de atenție, „heavy hitters”, comprimarea promptului) și salvează sau reiau o conversație dintr-un fișier cu sumă de control, refolosind cel mai lung prefix salvat. Instantaneele pot purta un HMAC cu cheie. *Nu poate:* evita pierderile, eliminarea pierde informație prin construcție; `--kv-policy` și `--session` nu pot fi combinate; conversațiile foarte lungi pot depăși contextul de antrenare.
 
-**Căutare și lookahead** (`search`). Beam search, best-of-N și vot de auto-consistență, un arbore de conversație cu ramuri și decodare speculativă prin căutare de n-grame în prompt, fără model-ciornă. Lookahead-ul în mod lacom produce ce produce decodarea lacomă simplă, până la rotunjirea lot-versus-singur. *Nu poate:* lookahead-ul ajută doar când textul repetă text anterior (citare, editare, cod); best-of-N are nevoie de un scorer bun.
+### Mod reproductibil și chitanțe
 
-**Decodare auto-speculativă** (`selfspec`). Același model scrie ciorna cu o parte din straturi și verifică toate ciornele într-o trecere completă; ieșirea rămâne exactă. Un calibrator alege ce straturi se sar, iar un estimator prezice accelerarea. *Nu poate:* nu promite niciun câștig; revine la pași simpli pentru inele cu fereastră glisantă care s-ar încheia, cache-uri compactate și straturi trimise pe accelerator.
+Modulele `simd` (comutatorul), `receipt`. În `corbul`: `--reproducible`, `--receipt FILE`, `--receipt-key`, `--receipt-key-file`, `--receipt-topk`, `--keep-steps`, `--leaves`, `verify-receipt`, `replay`. O chitanță înregistrează modelul (o amprentă Merkle a ponderilor), tokenizatorul, setările eșantionatorului, promptul și ieșirea, cu un lanț de hash-uri, sigilate cu SHA-256 și o cheie HMAC opțională; `replay` o rulează din nou. Ponderile deteriorate sunt localizate până la tensor și bucată. *Nu poate:* dovedi nimic unui străin fără cheia HMAC sau o nouă rulare (nu există semnături cu cheie publică); modelele MoE și cele cu spațiu de stare sunt refuzate; ARM netestat; modul reproductibil costă viteză.
 
-**Cuantizare mixtă automată** (`autoquant`). Măsoară cât strică fiecare grup de tensori ieșirea în fiecare format și alege formate într-un buget de mărime sau RAM (rucsac exact sau lacom), cu proxy-uri mai ieftine pentru modele uriașe și un model opțional de viteză. Produce o rețetă pentru cuantizator și un raport. *Nu poate:* presupune că daunele se adună între grupuri; sonda pentru un `Model` real nu e scrisă încă, deci a rulat doar pe o mică rețea sintetică.
+### Unelte lingvistice cu prioritate pentru română
 
-**Vectori de control și logit lens** (`steer`). Învață o direcție (de exemplu politicos versus nepoliticos) din două seturi de prompturi și o adaugă fluxului rezidual în timpul generării, fără a atinge greutățile; și arată ce ar prezice fiecare strat și la ce strat se fixează răspunsul. *Nu poate:* un vector făcut pe un fine-tune e acceptat de altul cu aceleași forme (amprenta acoperă formele, nu greutățile); rezumatele de atenție sunt grosiere; rularea strat cu strat pe accelerator e lentă.
+Modulul `lang`. În `corbul`: `lang detect`, `lang normalize`, `--lang CODE` (nu și în server). Normalizează ș/ț și ş/ţ, repară mojibake, recunoaște 27 de limbi, interzice scripturile străine în timpul decodării (română: fără ş ţ), formatează numere, sume de bani și date în stil românesc, restabilește diacriticele lipsă cu un semn pe fiecare cuvânt nesigur. *Nu poate:* restaurarea folosește un lexicon de aproximativ 650 de forme și nu a fost măsurată pe un corpus; cuvintele ambigue sunt rezolvate cu câteva reguli de context; recunoașterea limbii are nevoie de cam cinci cuvinte.
 
-**Regăsire locală** (`rag`). Embeddinguri din orice model sau dintr-un embedder fără model bazat pe hash, fragmentare atentă la română, un index HNSW în Rust simplu (forță brută exactă pentru verificări, fișiere cu sumă de control), BM25 cu normalizarea diacriticelor, fuziune de clasamente și pasaje numerotate `[S1]…` care se leagă direct de citatele blocate. *Nu poate:* embeddingurile sunt cât e modelul de bun (un model generativ dă vectori utilizabili, dar slabi).
+### Analiză a incertitudinii
 
-**Îmbinarea modelelor** (`merge`). Linear, SLERP, aritmetică de sarcini, TIES, DARE (cu sămânță) și „frankenmerge” pe felii de straturi, tensor cu tensor, deci memoria necesară e câteva copii ale celui mai mare tensor, nu ale modelului. Formele, arhitecturile și intervalele se verifică înainte de orice scriere. *Nu poate:* o îmbinare e o rețetă, nu o garanție de calitate; ieșirea e safetensors, niciodată cuantizată.
+Modulul `confidence`. Doar bibliotecă (exemplu demonstrativ `confidence_demo`). Statistici pe token, cuvânt, propoziție și răspuns pentru o hartă termică, o euristică transparentă de risc de halucinație, scoruri de autoconsistență și unelte de calibrare. *Nu poate:* scorul de risc este o euristică, nu un detector de adevăr.
 
-**Filigran de text** (`watermark`). O înclinare „green list” cu cheie în timpul eșantionării și un detector care dă un z-score și un p-value. *Nu poate:* e dovadă statistică, nu certitudine; textele scurte (sub circa 100 de tokeni), codul, citatele și faptele poartă puțin semnal; parafrazarea sau regenerarea îl șterge; oricine are cheia îl poate falsifica, iar lipsa semnului nu dovedește autor uman.
+## Calcul la momentul testării, reglaj, regăsire
+
+### Căutare și lookahead
+
+Modulul `search`. În `corbul`: `search --method beam|best-of-n|vote` (`--width`, `--samples`, `--answer number|text`, `--length-penalty`, `--all`, `--explain`, `--json`) și `--lookahead` la `generate` (`--ngram-min`, `--ngram-max`). Căutare beam, best-of-N, vot de autoconsistență, un arbore de conversație (bibliotecă), decodare speculativă prin căutare în prompt. *Nu poate:* lookahead ajută doar când textul repetă text anterior; best-of-N are nevoie de un bun evaluator.
+
+### Decodare speculativă
+
+Modulele `spec`, `selfspec`. În `corbul`: `--draft MODEL`, `--lookahead`, `--self-spec`, `--skip-layers auto|LIST`, `--draft-len`. Același răspuns greedy și aceeași distribuție de eșantionare, cu mai puține treceri complete; ieșirea apare la sfârșit. Doar `--temperature`, `--top-k`, `--top-p`; nu merge cu ieșire structurată, chitanțe, sesiuni sau mesh. *Nu poate:* promite o accelerare; auto-speculația revine la pași simpli pentru inelele cu fereastră glisantă care s-ar înfășura, pentru cache-uri compactate și pentru straturi descărcate.
+
+### Cuantizare mixtă automată și cuantizatorul
+
+Modulele `autoquant`, `quantize`. În `corbul`: `autoquant FOLDER --budget 4.5bpw|6g|Q4_K` (`--recipe`, `--report`, `--candidates`, `--base`, `--imatrix`, `--sample-rows`) și `quantize IN OUT.gguf --type NAME | --recipe FILE`. Măsoară eroarea ponderilor pe grupuri de tensori în fiecare format și alege formate într-un buget de dimensiune (rucsac exact sau lacom). *Nu poate:* estima calitatea răspunsurilor, doar eroarea ponderilor; presupune că daunele se adună; i-quant-urile nu există.
+
+### Vectori de direcționare și lentila de logiți
+
+Modulul `steer`. În `corbul`: `steer train|apply|lens` (`--positive`, `--negative`, `--method mean-diff|pca`, `--out`, `--vector`, `--strength`, `--layers`, `--positions`, `--no-attention`). Învață o direcție din două seturi de prompturi și o adaugă la fluxul rezidual fără a schimba ponderile; lentila arată ce ar prezice fiecare strat. *Nu poate:* funcționa cu modele cu spațiu de stare, ieșire structurată, speculație, chitanțe sau sesiuni; un vector de la un fine-tuning este acceptat de altul cu aceeași formă.
+
+### Regăsire locală
+
+Modulul `rag`. În `corbul`: `rag add|search|ask` (`--query`, `--question`, `--k`, `--chunk-chars`, `--overlap`, `--embed-model`). Împărțire în bucăți atentă la limba română, un index HNSW în Rust simplu, BM25 cu ignorarea diacriticelor, fuziune de clasamente, pasaje numerotate `[S1]…` care alimentează citările blocate pe citat, fișiere cu sumă de control. *Nu poate:* implicit, embedderul este unul prin hashing (cuvinte și părți de cuvinte, nu sens); `--embed-model` folosește stările ascunse ale unui model generativ (slab); CLI reindexează la fiecare apel și citește text simplu, nu PDF sau fișiere Office (biblioteca are ajutoare de ingestie).
+
+### Îmbinarea modelelor
+
+Modulul `merge`. În `corbul`: `merge CONFIG.json` (`--out`, `--model`, `--dry-run`, `--max-memory`, `--overwrite`, `--verbose`). Liniar, SLERP, aritmetica sarcinilor, TIES, DARE (cu sămânță) și felii de straturi, câte un tensor pe rând. Formele și intervalele sunt verificate înainte de scriere; legăturile simbolice nu sunt urmate. *Nu poate:* garanta calitatea; scrie doar ponderi safetensors, niciodată cuantizate, iar `config.json` și tokenizatorul le copiezi tu.
+
+### Filigran de text
+
+Modulul `watermark`. În `corbul`: `generate --watermark KEY` (`--wm-gamma`, `--wm-delta`, `--wm-context`) și `watermark detect MODEL --key K --text T | --file F` (`--no-dedup`). Un bias de „listă verde” cu cheie și un detector cu scor z. *Nu poate:* da o dovadă; textele scurte, codul și citatele poartă puțin semnal; parafrazarea îl elimină; cine are cheia îl poate falsifica; lipsa semnului nu dovedește că autorul este om.
+
+## Multimodal (doar bibliotecă)
+
+### Viziune
+
+Modulele `vision`, `imageio`. Un encoder de tip CLIP/SigLIP, proiector, tăiere în plăci și un cârlig `Model::forward_segments` pentru a introduce embeddings într-un prompt; decodoare pentru PNG, JPEG (de bază și progresiv), BMP și PNM scrise după specificații, cu limite de dimensiune. *Nu poate:* fi folosit din `corbul` (doar text); nu a rulat niciun punct de control real.
+
+### Audio
+
+Modulul `audio`. Citire și scriere WAV, reeșantionare, FFT, trăsături log-mel, detectarea activității vocale, un rulator cu structură Whisper. *Nu poate:* fi folosit din `corbul`; nu a rulat niciun punct de control Whisper real.
+
+## Spațiu de stare, hibride și GPU (vezi ENGINE.md)
+
+Modulele `ssm`, `hybrid`, `mla` și crate-ul `companion-engine-gpu` sunt descrise, cu limitele lor, în ENGINE.md.

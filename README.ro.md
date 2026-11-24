@@ -24,6 +24,20 @@ Chat: răspunsuri în flux, Stop instant, Markdown, raționament pliabil, conver
 
 Aplicația nu include colibri. Rulează comenzile JSON ale lui colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) și vorbește cu gateway-ul OpenAI-compatibil de pe `127.0.0.1`. Nu instalează niciodată pachete de sistem: dacă lipsește ceva, îți arată comanda de copiat. Datele (setări, conversații) stau local în folderul de date al utilizatorului; `COLIBRI_COMPANION_HOME` îl poate schimba.
 
+## corbul: motorul clean-room (alpha)
+
+Pe lângă aplicația desktop, depozitul conține un motor de inferență scris de la zero în Rust și `corbul`, linia lui de comandă și serverul local (în stilurile OpenAI, Ollama și Anthropic, cu interfață web la `/`). Nu înlocuiește colibri în aplicație.
+
+```bash
+cargo build --release -p colibri-rs-cli      # target/release/corbul
+corbul capabilities                          # what works and what does not
+corbul generate ./model --prompt "Hello"     # a folder with safetensors or a .gguf file
+```
+
+**Stare sinceră:** testat doar pe modele sintetice minuscule și pe fișiere de referință ale tokenizatorului (12 familii de modele, 46 din 46 de cazuri egale cu datele de referință ale llama.cpp). Niciun model real descărcat, nicio placă grafică și niciun calculator Windows, macOS sau ARM nu l-au rulat încă; vitezele sunt estimări. Modelele dense și cu amestec de experți se încarcă; Mamba, RWKV și Jamba/Bamba rulează ca simplă continuare de text; atenția în stil DeepSeek, imaginile, sunetul, embeddings și GPU nu sunt disponibile în `corbul`. i-quant-urile și modelele de tip BERT nu sunt suportate.
+
+Documentație: [ce este și ce nu face](docs/engine/ENGINE.ro.md) · [pornire rapidă și fiecare flag](docs/engine/QUICKSTART.ro.md) · [funcții diferite](docs/engine/INNOVATIONS.ro.md) · [procesul clean-room](docs/engine/CLEANROOM.ro.md) · [modificări de securitate](docs/engine/CHANGES-SECURITY.ro.md).
+
 ## Licențe
 
 - Proiectul: Apache-2.0 (`LICENSE`, `NOTICE`), la fel ca colibri.

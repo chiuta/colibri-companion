@@ -24,6 +24,20 @@ Csevegés: folyamatos válaszok, azonnali leállítás, Markdown, összecsukhat�
 
 Az alkalmazás nem tartalmazza a colibrit. A colibri JSON-parancsait futtatja (`setup --list --json`, `status --json`, `setup`, `start`, `stop`), és a `127.0.0.1`-en lévő OpenAI-kompatibilis átjárójával beszélget. Soha nem telepít rendszercsomagokat: ha valami hiányzik, megmutatja a másolható parancsot. Az adataid (beállítások, beszélgetések) helyben maradnak a felhasználói adatmappában; a `COLIBRI_COMPANION_HOME` ezt megváltoztathatja.
 
+## corbul: a clean-room motor (alfa)
+
+Az asztali alkalmazás mellett a tároló tartalmaz egy nulláról, Rustban írt következtető motort, valamint a `corbul` programot, annak parancssorát és helyi szerverét (OpenAI-, Ollama- és Anthropic-stílusban, a `/` címen elérhető webes felülettel). Nem váltja le a colibrit az alkalmazásban.
+
+```bash
+cargo build --release -p colibri-rs-cli      # target/release/corbul
+corbul capabilities                          # mi működik és mi nem
+corbul generate ./model --prompt "Hello"     # safetensors mappa vagy .gguf fájl
+```
+
+**Őszinte állapot:** csak apró szintetikus modelleken és tokenizáló-referenciafájlokon teszteltük (12 modellcsalád, 46 eset 46-ból egyezik a llama.cpp referenciaadataival). Valódi letöltött modellen, GPU-n, valamint Windows, macOS vagy ARM gépen még nem futott; a sebességek becslések. A sűrű és a szakértők keverékét használó modelleket betölti; a Mamba, az RWKV és a Jamba/Bamba sima folytatásként fut; a DeepSeek-stílusú figyelem, a képek, a hang, a beágyazások és a GPU nem érhetők el a `corbul` programban. Az i-kvantumok és a BERT-stílusú modellek nem támogatottak.
+
+Dokumentáció (magyarul is): [mi ez és mit nem tud](docs/engine/ENGINE.hu.md) · [gyorsindítás és minden kapcsoló](docs/engine/QUICKSTART.hu.md) · [a különleges képességek](docs/engine/INNOVATIONS.hu.md) · [clean-room folyamat](docs/engine/CLEANROOM.hu.md) · [biztonsági változtatások](docs/engine/CHANGES-SECURITY.hu.md).
+
 ## Licencek
 
 - Ez a projekt: Apache-2.0 (`LICENSE`, `NOTICE`), mint a colibri.
