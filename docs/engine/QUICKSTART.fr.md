@@ -131,6 +131,8 @@ corbul lang detect "Aceasta este o propoziție."                          # or -
 corbul lang normalize --file text.txt                                    # ș/ț, mojibake, quotes
 corbul generate M --prompt "…" --watermark SECRETKEY --wm-gamma 0.25 --wm-delta 2 --wm-context 4
 corbul watermark detect M --key SECRETKEY --file answer.txt --no-dedup   # or --text "…"
+corbul embed ./bge-small "first text" "second text" --pool cls --json    # a BERT-family folder; or --file lines.txt, --no-normalize
+corbul rerank ./ms-marco-minilm --query "refund policy" "doc one" "doc two" --top 3 --json   # needs a cross-encoder
 ```
 
 Toutes les combinaisons d'options ne fonctionnent pas ; chaque commande affiche une erreur d'usage d'une ligne quand ce n'est pas le cas. Rien de tout cela n'a été exécuté sur un vrai point de contrôle.
@@ -142,12 +144,13 @@ corbul serve --models-dir ./models --host 127.0.0.1 --port 8080 --token-file tok
 corbul serve --models-dir ./models --alias fast=qwen-0.5b --max-loaded 2 --sleep-idle-seconds 600
 corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 8g --max-heavy 4
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
+corbul serve --encoder ./bge-small --port 8081                                  # embeddings (and /v1/rerank for a cross-encoder) without a decoder
 ```
 
-Ouvre `http://127.0.0.1:8080/` pour l'interface web (aussi `/ui`). La page est publique ; chaque appel qu'elle fait exige le jeton. `--token T` équivaut à `CORBUL_TOKEN` (visible dans la liste des processus, donc préfère `--token-file`). `--keys-file` contient des clés d'API avec des listes de modèles et des limites de débit par clé. `--allow-admin` permet aux détenteurs de clés d'utiliser `/api/create`, `/api/delete`, `/models/load` et `/models/unload` ; par défaut, seul le jeton maître le peut. `--max-kv` refuse les requêtes dont le cache KV dépasserait la taille indiquée (8g par défaut) ; `--max-heavy` limite les requêtes simultanées de tokenisation, de modèle et de vérification (4 par défaut). `--no-log` fait taire le journal des requêtes. `GET /v1/capabilities` liste ce qui fonctionne. Les routes d'embeddings fonctionnent (`/v1/embeddings`, `/api/embed`) ; les routes de reranking répondent 501.
+Ouvre `http://127.0.0.1:8080/` pour l'interface web (aussi `/ui`). La page est publique ; chaque appel qu'elle fait exige le jeton. `--token T` équivaut à `CORBUL_TOKEN` (visible dans la liste des processus, donc préfère `--token-file`). `--keys-file` contient des clés d'API avec des listes de modèles et des limites de débit par clé. `--allow-admin` permet aux détenteurs de clés d'utiliser `/api/create`, `/api/delete`, `/models/load` et `/models/unload` ; par défaut, seul le jeton maître le peut. `--max-kv` refuse les requêtes dont le cache KV dépasserait la taille indiquée (8g par défaut) ; `--max-heavy` limite les requêtes simultanées de tokenisation, de modèle et de vérification (4 par défaut). `--no-log` fait taire le journal des requêtes. `GET /v1/capabilities` liste ce qui fonctionne. Les routes d'embeddings fonctionnent (`/v1/embeddings`, `/api/embed`) ; le reranking exige `--encoder`.
 
 ## Non disponible dans `corbul` (pour l'instant)
 
-- Modèles à attention latente multi-têtes (style DeepSeek), RWKV au format GGUF, Zamba/Zamba2, i-quants, modèles WordPiece/BERT.
-- Entrées de vision et d'audio (la bibliothèque a les blocs), points d'accès de reranking, le back end GPU.
+- Modèles à attention latente multi-têtes (style DeepSeek), RWKV au format GGUF, Zamba/Zamba2, les autres i-quants (IQ1–IQ3), modèles RoBERTa/XLM-R.
+- Entrées de vision et d'audio (la bibliothèque a les blocs), le back end GPU.
 - Identité bit à bit du prefill quantifié ordinaire (voir ENGINE.md, « Exactitude »).

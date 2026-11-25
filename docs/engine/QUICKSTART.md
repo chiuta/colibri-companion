@@ -131,6 +131,8 @@ corbul lang detect "Aceasta este o propoziție."                          # or -
 corbul lang normalize --file text.txt                                    # ș/ț, mojibake, quotes
 corbul generate M --prompt "…" --watermark SECRETKEY --wm-gamma 0.25 --wm-delta 2 --wm-context 4
 corbul watermark detect M --key SECRETKEY --file answer.txt --no-dedup   # or --text "…"
+corbul embed ./bge-small "first text" "second text" --pool cls --json    # a BERT-family folder; or --file lines.txt, --no-normalize
+corbul rerank ./ms-marco-minilm --query "refund policy" "doc one" "doc two" --top 3 --json   # needs a cross-encoder
 ```
 
 Not every flag combination works; each command prints a one-line usage error when it does not. Nothing here has been run on a real checkpoint.
@@ -142,12 +144,13 @@ corbul serve --models-dir ./models --host 127.0.0.1 --port 8080 --token-file tok
 corbul serve --models-dir ./models --alias fast=qwen-0.5b --max-loaded 2 --sleep-idle-seconds 600
 corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 8g --max-heavy 4
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
+corbul serve --encoder ./bge-small --port 8081                                  # embeddings (and /v1/rerank for a cross-encoder) without a decoder
 ```
 
-Open `http://127.0.0.1:8080/` for the web interface (also `/ui`). The page is public; every call it makes needs the token. `--token T` is the same as `CORBUL_TOKEN` (visible in the process list, so prefer `--token-file`). `--keys-file` holds API keys with per-key model lists and rate limits. `--allow-admin` lets key holders use `/api/create`, `/api/delete`, `/models/load` and `/models/unload`; by default only the master token may. `--max-kv` refuses requests whose KV cache would exceed the size (default 8g); `--max-heavy` limits concurrent tokenize, template and verify requests (default 4). `--no-log` silences the request log. `GET /v1/capabilities` lists what works. Embedding routes work (`/v1/embeddings`, `/api/embed`); rerank routes answer 501.
+Open `http://127.0.0.1:8080/` for the web interface (also `/ui`). The page is public; every call it makes needs the token. `--token T` is the same as `CORBUL_TOKEN` (visible in the process list, so prefer `--token-file`). `--keys-file` holds API keys with per-key model lists and rate limits. `--allow-admin` lets key holders use `/api/create`, `/api/delete`, `/models/load` and `/models/unload`; by default only the master token may. `--max-kv` refuses requests whose KV cache would exceed the size (default 8g); `--max-heavy` limits concurrent tokenize, template and verify requests (default 4). `--no-log` silences the request log. `GET /v1/capabilities` lists what works. Embedding routes work (`/v1/embeddings`, `/api/embed`); rerank needs `--encoder`.
 
 ## Not available in `corbul` (yet)
 
-- Multi-head latent attention (DeepSeek-style) models, RWKV in GGUF form, Zamba/Zamba2, i-quants, WordPiece/BERT models.
-- Vision and audio inputs (the library has the blocks), rerank endpoints, the GPU back end.
+- Multi-head latent attention (DeepSeek-style) models, RWKV in GGUF form, Zamba/Zamba2, the other i-quants (IQ1–IQ3), RoBERTa/XLM-R models.
+- Vision and audio inputs (the library has the blocks), the GPU back end.
 - Bit-identity of ordinary quantised prefill (see ENGINE.md, "Exactness").

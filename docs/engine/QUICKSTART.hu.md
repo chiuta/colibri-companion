@@ -131,6 +131,8 @@ corbul lang detect "Aceasta este o propoziție."                          # vagy
 corbul lang normalize --file text.txt                                    # ș/ț, mojibake, idézőjelek
 corbul generate M --prompt "…" --watermark SECRETKEY --wm-gamma 0.25 --wm-delta 2 --wm-context 4
 corbul watermark detect M --key SECRETKEY --file answer.txt --no-dedup   # vagy --text "…"
+corbul embed ./bge-small "first text" "second text" --pool cls --json    # a BERT-family folder; or --file lines.txt, --no-normalize
+corbul rerank ./ms-marco-minilm --query "refund policy" "doc one" "doc two" --top 3 --json   # needs a cross-encoder
 ```
 
 Nem minden kapcsolókombináció működik; ilyenkor minden parancs egysoros használati hibát ír ki. Ebből semmit sem futtattak valódi ellenőrzőponton.
@@ -142,12 +144,13 @@ corbul serve --models-dir ./models --host 127.0.0.1 --port 8080 --token-file tok
 corbul serve --models-dir ./models --alias fast=qwen-0.5b --max-loaded 2 --sleep-idle-seconds 600
 corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 8g --max-heavy 4
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
+corbul serve --encoder ./bge-small --port 8081                                  # embeddings (and /v1/rerank for a cross-encoder) without a decoder
 ```
 
-A webes felülethez nyisd meg a `http://127.0.0.1:8080/` címet (a `/ui` is jó). Az oldal nyilvános; minden hívásához token kell. A `--token T` megegyezik a `CORBUL_TOKEN` változóval (látszik a folyamatlistában, ezért inkább a `--token-file` kapcsolót használd). A `--keys-file` API-kulcsokat tartalmaz kulcsonkénti modellistákkal és sebességkorlátokkal. Az `--allow-admin` lehetővé teszi a kulcsbirtokosoknak a `/api/create`, `/api/delete`, `/models/load` és `/models/unload` használatát; alapértelmezés szerint csak a mestertoken használhatja. A `--max-kv` elutasítja azokat a kéréseket, amelyeknél a KV-gyorsítótár meghaladná a megadott méretet (alapértelmezés 8g); a `--max-heavy` az egyidejű tokenizálási, sablon- és ellenőrzési kéréseket korlátozza (alapértelmezés 4). A `--no-log` elnémítja a kérésnaplót. A `GET /v1/capabilities` felsorolja, mi működik. A beágyazási útvonalak működnek (`/v1/embeddings`, `/api/embed`); az újrarangsoroló útvonalak 501-gyel válaszolnak.
+A webes felülethez nyisd meg a `http://127.0.0.1:8080/` címet (a `/ui` is jó). Az oldal nyilvános; minden hívásához token kell. A `--token T` megegyezik a `CORBUL_TOKEN` változóval (látszik a folyamatlistában, ezért inkább a `--token-file` kapcsolót használd). A `--keys-file` API-kulcsokat tartalmaz kulcsonkénti modellistákkal és sebességkorlátokkal. Az `--allow-admin` lehetővé teszi a kulcsbirtokosoknak a `/api/create`, `/api/delete`, `/models/load` és `/models/unload` használatát; alapértelmezés szerint csak a mestertoken használhatja. A `--max-kv` elutasítja azokat a kéréseket, amelyeknél a KV-gyorsítótár meghaladná a megadott méretet (alapértelmezés 8g); a `--max-heavy` az egyidejű tokenizálási, sablon- és ellenőrzési kéréseket korlátozza (alapértelmezés 4). A `--no-log` elnémítja a kérésnaplót. A `GET /v1/capabilities` felsorolja, mi működik. A beágyazási útvonalak működnek (`/v1/embeddings`, `/api/embed`); az újrarangsoroláshoz `--encoder` kell.
 
 ## A `corbul` programban (még) nem érhető el
 
-- Többfejes látens figyelmet használó (DeepSeek-stílusú) modellek, GGUF formátumú RWKV, Zamba/Zamba2, i-kvantumok, WordPiece/BERT-modellek.
-- Látás- és hangbemenetek (a könyvtárban megvannak az építőelemek), újrarangsoroló végpontok, a GPU-háttérrendszer.
+- Többfejes látens figyelmet használó (DeepSeek-stílusú) modellek, GGUF formátumú RWKV, Zamba/Zamba2, a többi i-kvantum (IQ1–IQ3), RoBERTa/XLM-R-modellek.
+- Látás- és hangbemenetek (a könyvtárban megvannak az építőelemek), a GPU-háttérrendszer.
 - A szokásos kvantált előtöltés bitazonossága (lásd az ENGINE.md „Pontosság” szakaszát).

@@ -34,7 +34,7 @@ corbul capabilities                          # mi működik és mi nem
 corbul generate ./model --prompt "Hello"     # safetensors mappa vagy .gguf fájl
 ```
 
-**Őszinte állapot:** csak apró szintetikus modelleken és tokenizáló-referenciafájlokon teszteltük (12 modellcsalád, 46 eset 46-ból egyezik a llama.cpp referenciaadataival). Valódi letöltött modellen, GPU-n, valamint Windows, macOS vagy ARM gépen még nem futott; a sebességek becslések. A sűrű és a szakértők keverékét használó modelleket betölti; a Mamba, az RWKV és a Jamba/Bamba sima folytatásként fut; a DeepSeek-stílusú figyelem, a képek, a hang és a GPU nem érhetők el a `corbul` programban; a beágyazások működnek, az újrarangsorolás nem. Az i-kvantumok és a BERT-stílusú modellek nem támogatottak.
+**Őszinte állapot:** csak apró szintetikus modelleken és tokenizáló-referenciafájlokon teszteltük (12 modellcsalád, 46 eset 46-ból egyezik a llama.cpp referenciaadataival). Valódi letöltött modellen, GPU-n, valamint Windows, macOS vagy ARM gépen még nem futott; a sebességek becslések. A sűrű és a szakértők keverékét használó modelleket betölti; a Mamba, az RWKV és a Jamba/Bamba sima folytatásként fut; a DeepSeek-stílusú figyelem, a képek, a hang és a GPU nem érhetők el a `corbul` programban; a beágyazások működnek, az újrarangsorolás pedig BERT keresztenkóderrel az `--encoder` kapcsolón át. Az IQ4_NL-en és IQ4_XS-en kívüli i-kvantumok és a RoBERTa-stílusú enkóderek nem támogatottak.
 
 Dokumentáció (magyarul is): [mi ez és mit nem tud](docs/engine/ENGINE.hu.md) · [gyorsindítás és minden kapcsoló](docs/engine/QUICKSTART.hu.md) · [a különleges képességek](docs/engine/INNOVATIONS.hu.md) · [clean-room folyamat](docs/engine/CLEANROOM.hu.md) · [biztonsági változtatások](docs/engine/CHANGES-SECURITY.hu.md).
 

@@ -131,6 +131,8 @@ corbul lang detect "Aceasta este o propoziție."                          # or -
 corbul lang normalize --file text.txt                                    # ș/ț, mojibake, quotes
 corbul generate M --prompt "…" --watermark SECRETKEY --wm-gamma 0.25 --wm-delta 2 --wm-context 4
 corbul watermark detect M --key SECRETKEY --file answer.txt --no-dedup   # or --text "…"
+corbul embed ./bge-small "first text" "second text" --pool cls --json    # a BERT-family folder; or --file lines.txt, --no-normalize
+corbul rerank ./ms-marco-minilm --query "refund policy" "doc one" "doc two" --top 3 --json   # needs a cross-encoder
 ```
 
 Nu orice combinație de flaguri funcționează; fiecare comandă afișează o eroare de utilizare pe o singură linie când nu funcționează. Nimic de aici nu a fost rulat pe un punct de control real.
@@ -142,12 +144,13 @@ corbul serve --models-dir ./models --host 127.0.0.1 --port 8080 --token-file tok
 corbul serve --models-dir ./models --alias fast=qwen-0.5b --max-loaded 2 --sleep-idle-seconds 600
 corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 8g --max-heavy 4
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
+corbul serve --encoder ./bge-small --port 8081                                  # embeddings (and /v1/rerank for a cross-encoder) without a decoder
 ```
 
-Deschide `http://127.0.0.1:8080/` pentru interfața web (și `/ui`). Pagina este publică; fiecare apel pe care îl face cere tokenul. `--token T` este același lucru cu `CORBUL_TOKEN` (vizibil în lista de procese, deci preferă `--token-file`). `--keys-file` conține chei API cu liste de modele și limite de rată pe cheie. `--allow-admin` le permite deținătorilor de chei să folosească `/api/create`, `/api/delete`, `/models/load` și `/models/unload`; implicit le poate folosi doar tokenul principal. `--max-kv` refuză cererile al căror cache KV ar depăși dimensiunea (implicit 8g); `--max-heavy` limitează cererile simultane de tokenizare, de șablon și de verificare (implicit 4). `--no-log` oprește jurnalul cererilor. `GET /v1/capabilities` listează ce funcționează. Rutele de embeddings funcționează (`/v1/embeddings`, `/api/embed`); rutele de rerank răspund 501.
+Deschide `http://127.0.0.1:8080/` pentru interfața web (și `/ui`). Pagina este publică; fiecare apel pe care îl face cere tokenul. `--token T` este același lucru cu `CORBUL_TOKEN` (vizibil în lista de procese, deci preferă `--token-file`). `--keys-file` conține chei API cu liste de modele și limite de rată pe cheie. `--allow-admin` le permite deținătorilor de chei să folosească `/api/create`, `/api/delete`, `/models/load` și `/models/unload`; implicit le poate folosi doar tokenul principal. `--max-kv` refuză cererile al căror cache KV ar depăși dimensiunea (implicit 8g); `--max-heavy` limitează cererile simultane de tokenizare, de șablon și de verificare (implicit 4). `--no-log` oprește jurnalul cererilor. `GET /v1/capabilities` listează ce funcționează. Rutele de embeddings funcționează (`/v1/embeddings`, `/api/embed`); rerank-ul cere `--encoder`.
 
 ## Indisponibile în `corbul` (încă)
 
-- Modele cu atenție latentă multi-cap (în stil DeepSeek), RWKV în formă GGUF, Zamba/Zamba2, i-quant-uri, modele WordPiece/BERT.
-- Intrări de imagine și sunet (biblioteca are blocurile), endpoint-uri de rerank, back end-ul GPU.
+- Modele cu atenție latentă multi-cap (în stil DeepSeek), RWKV în formă GGUF, Zamba/Zamba2, celelalte i-quant-uri (IQ1–IQ3), modele RoBERTa/XLM-R.
+- Intrări de imagine și sunet (biblioteca are blocurile), back end-ul GPU.
 - Identitatea bit cu bit a prefill-ului cuantizat obișnuit (vezi ENGINE.md, „Exactitate”).
