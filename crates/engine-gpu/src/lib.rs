@@ -15,6 +15,9 @@
 //! * [`report`] is the capability report for `doctor`, [`runtime`] opens the best backend and
 //!   explains a CPU fallback.
 //!
+// Newer clippy wants as_chunks for fixed-size blocks; the block layouts here are written out on purpose.
+#![allow(unknown_lints)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 //! The device runner (`GpuBackend`) is behind the `wgpu` cargo feature.
 pub mod caps;
 pub mod emu;

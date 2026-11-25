@@ -193,28 +193,34 @@ pub fn spawn(app: Arc<App>) -> io::Result<Handle> {
                     continue;
                 };
                 if app1.draining.load(Ordering::SeqCst) {
-                    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-                    let _ = http::write_json(
-                        &mut &stream,
-                        503,
-                        &err_body(
-                            Style::Oai,
-                            "overloaded_error",
-                            "the server is shutting down",
-                        ),
-                        &[],
-                    );
+                    std::thread::spawn(move || {
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                        let _ = http::write_json(
+                            &mut &stream,
+                            503,
+                            &err_body(
+                                Style::Oai,
+                                "overloaded_error",
+                                "the server is shutting down",
+                            ),
+                            &[],
+                        );
+                        linger_close(&stream);
+                    });
                     continue;
                 }
                 if app1.active.fetch_add(1, Ordering::SeqCst) >= app1.cfg.max_connections {
                     app1.active.fetch_sub(1, Ordering::SeqCst);
-                    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-                    let _ = http::write_json(
-                        &mut &stream,
-                        503,
-                        &err_body(Style::Oai, "overloaded_error", "too many connections"),
-                        &[("Retry-After", "5")],
-                    );
+                    std::thread::spawn(move || {
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                        let _ = http::write_json(
+                            &mut &stream,
+                            503,
+                            &err_body(Style::Oai, "overloaded_error", "too many connections"),
+                            &[("Retry-After", "5")],
+                        );
+                        linger_close(&stream);
+                    });
                     continue;
                 }
                 let app2 = app1.clone();
@@ -1385,6 +1391,24 @@ impl Sink for Collect {
 type Principal = Option<KeyEntry>;
 type Denied = (u16, Value, Vec<(&'static str, &'static str)>);
 
+/// Closes a connection after an early reply without losing it: half-close the sending side, then read
+/// (and drop) whatever the client still sends for a moment. Closing with unread data makes Windows send
+/// a reset that can discard the reply the client has not read yet.
+fn linger_close(stream: &TcpStream) {
+    let _ = (&*stream).flush();
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+    let end = Instant::now() + Duration::from_millis(400);
+    let mut sink = [0u8; 4096];
+    let mut left = 256 * 1024usize;
+    while Instant::now() < end && left > 0 {
+        match std::io::Read::read(&mut &*stream, &mut sink) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => left = left.saturating_sub(n),
+        }
+    }
+}
+
 fn handle(stream: TcpStream, app: &App) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
@@ -1404,6 +1428,7 @@ fn handle(stream: TcpStream, app: &App) {
                     &err_body(Style::Oai, "invalid_request_error", &e.message()),
                     &[],
                 );
+                linger_close(&stream);
             }
             return;
         }
