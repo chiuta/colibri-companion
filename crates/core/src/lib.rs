@@ -14,6 +14,7 @@ pub mod coli;
 pub mod connect;
 pub mod diskbench;
 pub mod duel;
+pub mod embed;
 pub mod fetch;
 pub mod flow_eval;
 pub mod flows;

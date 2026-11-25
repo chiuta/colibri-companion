@@ -16,13 +16,24 @@ pub enum Style {
     Numeric,
     /// Smith, J., & Doe, A. (2019). Title. *Journal*, *3*(2), 1-9. https://doi.org/..
     Apa,
+    /// Chicago author-date: Smith, John, and Anna Doe. 2019. "Title." Journal 3 (2): 1-9.
+    Chicago,
+    /// Vancouver: 1. Smith J, Doe A. Title. Journal. 2019;3(2):1-9.
+    Vancouver,
 }
 
 impl Style {
+    /// Numbered in the text and listed in order of first use.
+    pub fn is_numeric(self) -> bool {
+        matches!(self, Style::Numeric | Style::Vancouver)
+    }
+
     pub fn parse(s: &str) -> Option<Style> {
         match s.trim().to_ascii_lowercase().as_str() {
             "author-year" | "authoryear" | "harvard" => Some(Style::AuthorYear),
-            "numeric" | "ieee" | "vancouver" => Some(Style::Numeric),
+            "numeric" | "ieee" => Some(Style::Numeric),
+            "vancouver" => Some(Style::Vancouver),
+            "chicago" | "chicago-author-date" => Some(Style::Chicago),
             "apa" => Some(Style::Apa),
             _ => None,
         }
@@ -204,6 +215,105 @@ pub fn reference(e: &Entry, style: Style, n: usize) -> String {
             }
             parts.push(dot(&tail));
         }
+        Style::Chicago => {
+            let mut who: Vec<String> = Vec::new();
+            for (i, x) in p.iter().enumerate() {
+                if i == 0 {
+                    let i2 = {
+                        let g = x.given();
+                        if g.is_empty() || x.is_literal() {
+                            String::new()
+                        } else {
+                            g
+                        }
+                    };
+                    who.push(if i2.is_empty() {
+                        family_with_particle(x)
+                    } else {
+                        format!("{}, {i2}", family_with_particle(x))
+                    });
+                } else {
+                    let g = x.given();
+                    who.push(if g.is_empty() || x.is_literal() {
+                        family_with_particle(x)
+                    } else {
+                        format!("{g} {}", family_with_particle(x))
+                    });
+                }
+            }
+            let who = join_names(&who, et, "and", true);
+            if !who.is_empty() {
+                parts.push(dot(&who));
+            }
+            parts.push(format!("{year}."));
+            if !e.title.is_empty() {
+                parts.push(format!(
+                    "\u{201c}{}.\u{201d}",
+                    e.title.trim_end_matches('.')
+                ));
+            }
+            if !e.container.is_empty() {
+                let mut c = e.container.clone();
+                if !e.volume.is_empty() {
+                    c.push_str(&format!(" {}", e.volume));
+                }
+                if !e.number.is_empty() {
+                    c.push_str(&format!(" ({})", e.number));
+                }
+                let pg = pages(e);
+                if !pg.is_empty() {
+                    c.push_str(&format!(": {pg}"));
+                }
+                parts.push(dot(&c));
+            } else if !e.publisher.is_empty() {
+                parts.push(dot(&e.publisher));
+            }
+        }
+        Style::Vancouver => {
+            parts.push(format!("{n}."));
+            let who: Vec<String> = p
+                .iter()
+                .map(|x| {
+                    if x.is_literal() {
+                        x.family()
+                    } else {
+                        let ini: String = initials(x).replace(['.', ' '], "");
+                        format!("{} {ini}", family_with_particle(x))
+                            .trim()
+                            .to_string()
+                    }
+                })
+                .collect();
+            let who = if et {
+                format!("{}, et al", who.join(", "))
+            } else {
+                who.join(", ")
+            };
+            if !who.is_empty() {
+                parts.push(dot(&who));
+            }
+            if !e.title.is_empty() {
+                parts.push(dot(&e.title));
+            }
+            let mut c = e.container.clone();
+            if c.is_empty() {
+                c = e.publisher.clone();
+            }
+            let mut tail = String::new();
+            if !c.is_empty() {
+                tail.push_str(&format!("{c}. "));
+            }
+            tail.push_str(&e.year);
+            let vi = volume_issue(e);
+            if !vi.is_empty() {
+                tail.push_str(&format!(";{vi}"));
+            }
+            let pg = pages(e);
+            if !pg.is_empty() {
+                tail.push_str(&format!(":{pg}"));
+            }
+            parts.push(dot(tail.trim()));
+        }
     }
     let l = link(e);
     if !l.is_empty() {
@@ -216,7 +326,7 @@ pub fn reference(e: &Entry, style: Style, n: usize) -> String {
 /// Markdown: one line per reference, numeric as an ordered list.
 pub fn bibliography(entries: &[Entry], style: Style) -> String {
     let mut v: Vec<&Entry> = entries.iter().collect();
-    if style != Style::Numeric {
+    if !style.is_numeric() {
         v.sort_by_cached_key(|e| {
             let (p, _) = people(e);
             let who = p
@@ -228,7 +338,7 @@ pub fn bibliography(entries: &[Entry], style: Style) -> String {
     }
     let mut s = String::new();
     for (i, e) in v.iter().enumerate() {
-        if style == Style::Numeric {
+        if style.is_numeric() {
             s.push_str(&reference(e, style, i + 1));
         } else {
             s.push_str(&reference(e, style, 0));
@@ -287,7 +397,7 @@ pub fn render_citations<'a>(
                             cited.push(e);
                             cited.len()
                         });
-                        let base = if style == Style::Numeric {
+                        let base = if style.is_numeric() {
                             n.to_string()
                         } else {
                             short(e)
@@ -298,7 +408,7 @@ pub fn render_citations<'a>(
                             format!("{base}, {loc}")
                         });
                     }
-                    let (o, cl) = if style == Style::Numeric {
+                    let (o, cl) = if style.is_numeric() {
                         ('[', ']')
                     } else {
                         ('(', ')')
@@ -354,6 +464,26 @@ mod tests {
     }
 
     #[test]
+    fn chicago_and_vancouver() {
+        let e = sample();
+        let c = reference(&e[0], Style::Chicago, 0);
+        assert!(
+            c.starts_with("Smith, John, and Anna Doe. 2019. \u{201c}On things.\u{201d} Journal of Stuff 3 (2): 1-9."),
+            "{c}"
+        );
+        let v = reference(&e[0], Style::Vancouver, 4);
+        assert!(
+            v.starts_with("4. Smith J, Doe A. On things. Journal of Stuff. 2019;3(2):1-9."),
+            "{v}"
+        );
+        let (t, used) = render_citations("a [@smith2019] b [@lee2020]", &e, Style::Vancouver);
+        assert_eq!(t, "a [1] b [2]");
+        assert_eq!(used.len(), 2);
+        let b = bibliography(&e, Style::Vancouver);
+        assert!(b.starts_with("1. "), "{b}");
+    }
+
+    #[test]
     fn numeric_and_apa() {
         let e = sample();
         let n = reference(&e[0], Style::Numeric, 7);
@@ -389,6 +519,8 @@ mod tests {
         let e = Entry::default();
         let _ = reference(&e, Style::Apa, 1);
         assert_eq!(Style::parse("IEEE"), Some(Style::Numeric));
+        assert_eq!(Style::parse("Vancouver"), Some(Style::Vancouver));
+        assert_eq!(Style::parse("Chicago"), Some(Style::Chicago));
         assert_eq!(Style::parse("x"), None);
     }
 }

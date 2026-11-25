@@ -52,8 +52,8 @@ pub fn as_ris(entries: &[Entry]) -> String {
         .join("\n")
 }
 
-/// The six ways a list of entries can be copied out.
-pub(crate) fn formats() -> [(&'static str, Maker); 6] {
+/// The eight ways a list of entries can be copied out.
+pub(crate) fn formats() -> [(&'static str, Maker); 8] {
     [
         ("BibTeX", Box::new(as_bibtex)),
         ("RIS", Box::new(as_ris)),
@@ -66,6 +66,14 @@ pub(crate) fn formats() -> [(&'static str, Maker); 6] {
         (
             "IEEE",
             Box::new(|e| export::bibliography(e, Style::Numeric)),
+        ),
+        (
+            "Chicago",
+            Box::new(|e| export::bibliography(e, Style::Chicago)),
+        ),
+        (
+            "Vancouver",
+            Box::new(|e| export::bibliography(e, Style::Vancouver)),
         ),
     ]
 }
@@ -234,9 +242,9 @@ impl CompanionApp {
                         .desired_rows(4)
                         .desired_width(f32::INFINITY),
                 );
-                let styles = [("APA", Style::Apa), ("Harvard", Style::AuthorYear), ("IEEE", Style::Numeric)];
+                let styles = [("APA", Style::Apa), ("Harvard", Style::AuthorYear), ("IEEE", Style::Numeric), ("Chicago", Style::Chicago), ("Vancouver", Style::Vancouver)];
                 ui.horizontal(|ui| {
-                    let cur = self.docs.bib.cite_style.min(2);
+                    let cur = self.docs.bib.cite_style.min(4);
                     egui::ComboBox::from_id_salt("bib_cite_style")
                         .selected_text(styles[cur].0)
                         .show_ui(ui, |ui| {
@@ -246,7 +254,7 @@ impl CompanionApp {
                         });
                     if secondary_button(ui, self.t("Scrie citările", "Write the citations")).clicked() {
                         let b = &mut self.docs.bib;
-                        let style = styles[b.cite_style.min(2)].1;
+                        let style = styles[b.cite_style.min(4)].1;
                         let (out, cited) = export::render_citations(&b.cite_in, &b.entries, style);
                         let list: Vec<Entry> = cited.into_iter().cloned().collect();
                         b.cite_refs = export::bibliography(&list, style);

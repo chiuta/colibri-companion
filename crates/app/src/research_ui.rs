@@ -8,6 +8,8 @@
 use crate::app::CompanionApp;
 use crate::theme::Semibold;
 use crate::widgets::*;
+use companion_core::embed;
+use companion_core::http::CancelToken;
 use companion_core::paths;
 use companion_scholar::declare::{self, Lang as DLang, Locality};
 use companion_scholar::receipt::Status;
@@ -15,6 +17,7 @@ use companion_scholar::retrieve::Passage;
 use companion_scholar::shelf::{self, Added, Shelf};
 use egui::{RichText, Ui};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
 
 /// Receipts read from the exports folder when a declaration is written (the rest are ignored).
 const MAX_RECEIPT_FILES: usize = 2000;
@@ -23,9 +26,24 @@ const MAX_RECEIPT_READ: u64 = 4 << 20;
 /// Characters of a passage shown in the list.
 const SNIPPET_CHARS: usize = 320;
 
+/// What the embedding thread reports.
+pub enum EmbMsg {
+    Progress(usize, usize),
+    Passages(Vec<Vec<f32>>),
+    Query(Vec<f32>),
+    Failed(String),
+}
+
 #[derive(Default)]
 pub struct ResearchState {
     shelf: Option<(String, Shelf)>,
+    pub emb_url: String,
+    pub emb_model: String,
+    pub meaning: bool,
+    emb_rx: Option<Receiver<EmbMsg>>,
+    emb_cancel: Option<CancelToken>,
+    emb_progress: (usize, usize),
+    pending_query: String,
     pub query: String,
     pub hits: Vec<Passage>,
     pub searched: bool,
@@ -48,6 +66,7 @@ pub struct ResearchState {
 impl ResearchState {
     /// Forget the loaded shelf (a file was added or removed); it is read again when needed.
     pub fn drop_shelf(&mut self) {
+        self.stop_embedding();
         self.shelf = None;
         self.hits.clear();
         self.searched = false;
@@ -59,6 +78,72 @@ impl ResearchState {
             .as_ref()
             .filter(|(c, _)| c == coll)
             .map(|(_, s)| s)
+    }
+
+    fn shelf_mut(&mut self, coll: &str) -> Option<&mut Shelf> {
+        self.shelf
+            .as_mut()
+            .filter(|(c, _)| c == coll)
+            .map(|(_, s)| s)
+    }
+
+    pub fn embedding_busy(&self) -> bool {
+        self.emb_rx.is_some()
+    }
+
+    fn stop_embedding(&mut self) {
+        if let Some(c) = self.emb_cancel.take() {
+            c.cancel();
+        }
+        self.emb_rx = None;
+    }
+
+    /// Embeds `texts` (batches) in a thread; `query` is the one question to embed instead.
+    fn start_embedding(&mut self, ctx: &egui::Context, texts: Vec<String>, is_query: bool) {
+        self.stop_embedding();
+        let (tx, rx) = mpsc::channel();
+        let cancel = CancelToken::new();
+        let (url, model) = (
+            self.emb_url.trim().to_string(),
+            self.emb_model.trim().to_string(),
+        );
+        let (c2, ctx2) = (cancel.clone(), ctx.clone());
+        self.emb_progress = (0, texts.len());
+        let spawned = std::thread::Builder::new()
+            .name("embeddings".into())
+            .spawn(move || {
+                let total = texts.len();
+                let mut all: Vec<Vec<f32>> = Vec::with_capacity(total);
+                for chunk in texts.chunks(embed::BATCH) {
+                    if c2.is_cancelled() {
+                        return;
+                    }
+                    match embed::embed_batch(&url, &model, None, chunk, Some(&c2)) {
+                        Ok(v) => all.extend(v),
+                        Err(e) => {
+                            let _ = tx.send(EmbMsg::Failed(e));
+                            ctx2.request_repaint();
+                            return;
+                        }
+                    }
+                    let _ = tx.send(EmbMsg::Progress(all.len(), total));
+                    ctx2.request_repaint();
+                }
+                let msg = if is_query {
+                    all.into_iter().next().map_or(
+                        EmbMsg::Failed("no embedding came back".into()),
+                        EmbMsg::Query,
+                    )
+                } else {
+                    EmbMsg::Passages(all)
+                };
+                let _ = tx.send(msg);
+                ctx2.request_repaint();
+            });
+        if spawned.is_ok() {
+            self.emb_rx = Some(rx);
+            self.emb_cancel = Some(cancel);
+        }
     }
 
     pub fn ensure(&mut self, coll: &str) {
@@ -261,7 +346,163 @@ impl CompanionApp {
         self.research_eval(ui, coll_id);
     }
 
+    /// Takes in what the embedding thread has sent since the last frame.
+    fn poll_embeddings(&mut self) {
+        let coll = self.docs.selected.clone().unwrap_or_default();
+        let mut msgs = Vec::new();
+        if let Some(rx) = &self.docs.research.emb_rx {
+            while let Ok(m) = rx.try_recv() {
+                msgs.push(m);
+            }
+        }
+        let mut finished = false;
+        for m in msgs {
+            match m {
+                EmbMsg::Progress(a, b) => self.docs.research.emb_progress = (a, b),
+                EmbMsg::Passages(v) => {
+                    let mut ok = 0;
+                    if let Some(sh) = self.docs.research.shelf_mut(&coll) {
+                        for (i, e) in v.into_iter().enumerate() {
+                            if sh.set_embedding(i, e).is_ok() {
+                                ok += 1;
+                            }
+                        }
+                    }
+                    self.docs.research.message = format!(
+                        "{} {ok}",
+                        self.t(
+                            "Pasaje pregătite pentru căutarea după sens:",
+                            "Passages ready for search by meaning:"
+                        )
+                    );
+                    finished = true;
+                }
+                EmbMsg::Query(q) => {
+                    let query = self.docs.research.pending_query.clone();
+                    let hits = self
+                        .docs
+                        .research
+                        .shelf_of(&coll)
+                        .map(|s| s.search_by_meaning(&query, 8, &q).passages)
+                        .unwrap_or_default();
+                    self.docs.research.hits = hits;
+                    finished = true;
+                }
+                EmbMsg::Failed(e) => {
+                    let query = self.docs.research.pending_query.clone();
+                    if !query.is_empty() {
+                        let hits = self
+                            .docs
+                            .research
+                            .shelf_of(&coll)
+                            .map(|s| s.search(&query, 8).passages)
+                            .unwrap_or_default();
+                        self.docs.research.hits = hits;
+                    }
+                    self.docs.research.message = format!(
+                        "{} {e}",
+                        self.t(
+                            "Căutarea după sens a eșuat; folosesc cuvintele cheie:",
+                            "Search by meaning failed; using keywords:"
+                        )
+                    );
+                    finished = true;
+                }
+            }
+        }
+        if finished {
+            self.docs.research.emb_rx = None;
+            self.docs.research.emb_cancel = None;
+            self.docs.research.pending_query.clear();
+        }
+    }
+
+    fn research_meaning(&mut self, ui: &mut Ui, coll: &str) {
+        let p = self.p;
+        egui::CollapsingHeader::new(self.t("Caută după sens", "Search by meaning"))
+            .id_salt("research_meaning")
+            .show(ui, |ui| {
+                muted(
+                    ui,
+                    &p,
+                    self.t(
+                        "Folosește un server de embeddings pornit de tine (de exemplu corbul serve --encoder). Se trimite doar textul pasajelor și al întrebării, la adresa de mai jos; folosește o adresă de pe acest calculator, dacă nu ai încredere în server.",
+                        "Uses an embeddings server you start yourself (for example corbul serve --encoder). Only the text of the passages and of your question is sent, to the address below; use an address on this computer unless you trust the server.",
+                    ),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.docs.research.emb_url)
+                        .hint_text("http://127.0.0.1:8080")
+                        .char_limit(300)
+                        .desired_width(f32::INFINITY),
+                );
+                let hint = self.t("Numele modelului", "Model name");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.docs.research.emb_model)
+                        .hint_text(hint)
+                        .char_limit(200)
+                        .desired_width(f32::INFINITY),
+                );
+                let busy = self.docs.research.embedding_busy();
+                let have_url = !self.docs.research.emb_url.trim().is_empty();
+                let n = self
+                    .docs
+                    .research
+                    .shelf_of(coll)
+                    .map(|s| (s.embedded(), s.counts().1))
+                    .unwrap_or((0, 0));
+                ui.horizontal(|ui| {
+                    if !busy {
+                        if ui
+                            .add_enabled(
+                                have_url && n.1 > 0,
+                                egui::Button::new(self.t("Pregătește raftul", "Prepare the shelf")),
+                            )
+                            .clicked()
+                        {
+                            let texts = self
+                                .docs
+                                .research
+                                .shelf_of(coll)
+                                .map(|s| s.passage_texts())
+                                .unwrap_or_default();
+                            let ctx = ui.ctx().clone();
+                            self.docs.research.start_embedding(&ctx, texts, false);
+                        }
+                    } else if secondary_button(ui, self.t("Oprește", "Stop")).clicked() {
+                        self.docs.research.stop_embedding();
+                    }
+                    let (a, b) = self.docs.research.emb_progress;
+                    if busy {
+                        muted(ui, &p, &format!("{a} / {b}"));
+                    } else {
+                        muted(
+                            ui,
+                            &p,
+                            &format!(
+                                "{} {} / {}",
+                                self.t("pasaje pregătite:", "passages ready:"),
+                                n.0,
+                                n.1
+                            ),
+                        );
+                    }
+                });
+                let label = self.t(
+                    "Folosește sensul la căutare",
+                    "Use meaning in the search",
+                );
+                ui.add_enabled(
+                    n.0 > 0,
+                    egui::Checkbox::new(&mut self.docs.research.meaning, label),
+                );
+            });
+    }
+
     fn research_search(&mut self, ui: &mut Ui) {
+        self.poll_embeddings();
+        let coll_now = self.docs.selected.clone().unwrap_or_default();
+        self.research_meaning(ui, &coll_now);
         let p = self.p;
         egui::CollapsingHeader::new(
             self.t("Caută cu numere de pagină", "Search with page numbers"),
@@ -286,13 +527,26 @@ impl CompanionApp {
                 self.docs.research.searched = true;
                 let q = self.docs.research.query.clone();
                 let coll = self.docs.selected.clone().unwrap_or_default();
-                let hits = self
-                    .docs
-                    .research
-                    .shelf_of(&coll)
-                    .map(|s| s.search(&q, 8).passages)
-                    .unwrap_or_default();
-                self.docs.research.hits = hits;
+                let by_meaning = self.docs.research.meaning
+                    && !q.trim().is_empty()
+                    && self
+                        .docs
+                        .research
+                        .shelf_of(&coll)
+                        .is_some_and(|s| s.embedded() > 0);
+                if by_meaning {
+                    self.docs.research.pending_query = q.clone();
+                    let ctx = ui.ctx().clone();
+                    self.docs.research.start_embedding(&ctx, vec![q], true);
+                } else {
+                    let hits = self
+                        .docs
+                        .research
+                        .shelf_of(&coll)
+                        .map(|s| s.search(&q, 8).passages)
+                        .unwrap_or_default();
+                    self.docs.research.hits = hits;
+                }
             }
             if self.docs.research.searched && self.docs.research.hits.is_empty() {
                 muted(ui, &p, self.t("Nimic găsit.", "Nothing found."));

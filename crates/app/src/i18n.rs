@@ -13988,6 +13988,83 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Előbb indítsd el a modellt: a kiszolgálónak készen kell állnia.",
         ],
     ),
+    (
+        "Search by meaning",
+        [
+            "Chercher par le sens",
+            "Cerca per significato",
+            "Buscar por significado",
+            "Pesquisar por significado",
+            "Nach Bedeutung suchen",
+            "Keresés jelentés alapján",
+        ],
+    ),
+    (
+        "Uses an embeddings server you start yourself (for example corbul serve --encoder). Only the text of the passages and of your question is sent, to the address below; use an address on this computer unless you trust the server.",
+        [
+            "Utilise un serveur d'embeddings que vous lancez vous-même (par exemple corbul serve --encoder). Seul le texte des passages et de votre question est envoyé, à l'adresse ci-dessous ; utilisez une adresse de cet ordinateur sauf si vous faites confiance au serveur.",
+            "Usa un server di embeddings che avvii tu (per esempio corbul serve --encoder). Viene inviato solo il testo dei passaggi e della tua domanda, all'indirizzo qui sotto; usa un indirizzo di questo computer, a meno che ti fidi del server.",
+            "Usa un servidor de embeddings que inicias tú (por ejemplo corbul serve --encoder). Solo se envía el texto de los pasajes y de tu pregunta, a la dirección de abajo; usa una dirección de este ordenador salvo que confíes en el servidor.",
+            "Usa um servidor de embeddings que inicias tu (por exemplo corbul serve --encoder). Só é enviado o texto das passagens e da tua pergunta, para o endereço abaixo; usa um endereço deste computador, a menos que confies no servidor.",
+            "Verwendet einen Embeddings-Server, den du selbst startest (zum Beispiel corbul serve --encoder). Gesendet wird nur der Text der Passagen und deiner Frage, an die Adresse unten; nimm eine Adresse auf diesem Computer, wenn du dem Server nicht vertraust.",
+            "Egy általad indított embedding-kiszolgálót használ (például corbul serve --encoder). Csak a szövegrészek és a kérdésed szövege kerül elküldésre az alábbi címre; használj ezen a gépen lévő címet, hacsak nem bízol a kiszolgálóban.",
+        ],
+    ),
+    (
+        "Prepare the shelf",
+        [
+            "Préparer l'étagère",
+            "Prepara lo scaffale",
+            "Preparar la estantería",
+            "Preparar a estante",
+            "Regal vorbereiten",
+            "Polc előkészítése",
+        ],
+    ),
+    (
+        "passages ready:",
+        [
+            "passages prêts :",
+            "passaggi pronti:",
+            "pasajes listos:",
+            "passagens prontas:",
+            "Passagen bereit:",
+            "előkészített részek:",
+        ],
+    ),
+    (
+        "Use meaning in the search",
+        [
+            "Utiliser le sens dans la recherche",
+            "Usa il significato nella ricerca",
+            "Usar el significado en la búsqueda",
+            "Usar o significado na pesquisa",
+            "Bedeutung bei der Suche verwenden",
+            "Jelentés használata a keresésben",
+        ],
+    ),
+    (
+        "Passages ready for search by meaning:",
+        [
+            "Passages prêts pour la recherche par le sens :",
+            "Passaggi pronti per la ricerca per significato:",
+            "Pasajes listos para la búsqueda por significado:",
+            "Passagens prontas para a pesquisa por significado:",
+            "Passagen bereit für die Bedeutungssuche:",
+            "Jelentés alapú kereséshez előkészített részek:",
+        ],
+    ),
+    (
+        "Search by meaning failed; using keywords:",
+        [
+            "La recherche par le sens a échoué ; utilisation des mots-clés :",
+            "La ricerca per significato non è riuscita; uso le parole chiave:",
+            "La búsqueda por significado falló; uso las palabras clave:",
+            "A pesquisa por significado falhou; uso as palavras-chave:",
+            "Die Bedeutungssuche ist fehlgeschlagen; Stichwörter werden verwendet:",
+            "A jelentés alapú keresés nem sikerült; kulcsszavakat használok:",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

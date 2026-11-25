@@ -193,6 +193,38 @@ impl Shelf {
         )
     }
 
+    /// The text of every passage, in index order (to be embedded elsewhere).
+    pub fn passage_texts(&self) -> Vec<String> {
+        self.store().chunks.iter().map(|c| c.text.clone()).collect()
+    }
+
+    /// Attaches the embedding of passage `i`.
+    pub fn set_embedding(&mut self, i: usize, emb: Vec<f32>) -> std::result::Result<(), String> {
+        self.index.set_embedding(i, emb).map_err(|e| e.to_string())
+    }
+
+    /// How many passages carry an embedding.
+    pub fn embedded(&self) -> usize {
+        self.store()
+            .chunks
+            .iter()
+            .filter(|c| c.emb.is_some())
+            .count()
+    }
+
+    /// Like [`Shelf::search`], with the question's embedding merged in (same model as the passages).
+    pub fn search_by_meaning(&self, query: &str, k: usize, q_emb: &[f32]) -> SearchResult {
+        self.index.search(
+            query,
+            Some(q_emb),
+            &SearchOptions {
+                k: k.clamp(1, 50),
+                phrases: true,
+                ..SearchOptions::default()
+            },
+        )
+    }
+
     /// The pandoc citation that points at a passage: `[@report, p. 3]`, or `[@report]` when the
     /// document has no pages.
     pub fn citation(p: &Passage) -> String {
@@ -485,6 +517,37 @@ mod tests {
         delete(&path);
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn search_by_meaning_uses_attached_embeddings() {
+        let mut sh = Shelf::from_bytes(&[
+            (
+                "a.txt",
+                "txt",
+                b"Totally unrelated words about gardens and soil.",
+            ),
+            (
+                "b.txt",
+                "txt",
+                b"Another paragraph that mentions rivers and bridges.",
+            ),
+        ]);
+        let n = sh.passage_texts().len();
+        assert!(n >= 2);
+        assert_eq!(sh.embedded(), 0);
+        for i in 0..n {
+            let v = if sh.passage_texts()[i].contains("rivers") {
+                vec![1.0, 0.0]
+            } else {
+                vec![0.0, 1.0]
+            };
+            sh.set_embedding(i, v).unwrap();
+        }
+        assert_eq!(sh.embedded(), n);
+        let r = sh.search_by_meaning("zzz nothing in common", 2, &[1.0, 0.0]);
+        assert!(r.passages[0].text.contains("rivers"), "{:?}", r.passages[0]);
+        assert!(sh.set_embedding(999, vec![1.0]).is_err());
     }
 
     #[test]
