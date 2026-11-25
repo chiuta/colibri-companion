@@ -14,7 +14,7 @@ Nyelvi modellek helyi következtető motorja, nulláról, Rustban írva, nyilvá
 |---|---|
 | `crates/engine` (`companion-engine`) | A könyvtár: fájlformátumok, tokenizáló, kvantálás, előre menő számítások, mintavételezés és az INNOVATIONS.md kiegészítő eszközei. Futásidejű függőségei: csak a `serde_json` és a `memmap2`. |
 | `crates/engine-cli` (`corbul`) | A parancssor és egy OpenAI-, Ollama- és Anthropic-kompatibilis helyi szerver beépített webes felülettel. A könyvtártól és a `serde_json` crate-től függ. |
-| `crates/engine-gpu` (`companion-engine-gpu`) | WGSL-kernelek és CPU-s emulációjuk. Az eszközfuttató (`wgpu`, `pollster`) a `wgpu` cargo-képesség mögött van, amely alapértelmezés szerint ki van kapcsolva. **A `corbul` nem használja ezt a crate-et.** |
+| `crates/engine-gpu` (`companion-engine-gpu`) | WGSL-kernelek és CPU-s emulációjuk. Az eszközfuttató (`wgpu`, `pollster`) a `wgpu` cargo-képesség mögött van, amely alapértelmezés szerint ki van kapcsolva. **A `corbul` nem fut rajta; `--features gpu` kapcsolóval építve a `corbul doctor` csak a képességjelentését írja ki.** |
 
 Különálló a Colibri Companion asztali alkalmazástól, és nem váltja le azt; az alkalmazás továbbra is JustVugg colibrijét vezérli. Hogy ez a motor az alkalmazás alternatív háttérrendszere legyen, tervben van, de nincs kész.
 

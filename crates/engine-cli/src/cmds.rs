@@ -1263,6 +1263,16 @@ pub fn doctor(args: &Args) -> Result<(), String> {
             hp.cpu.isa.join(" ")
         }
     );
+    #[cfg(feature = "gpu")]
+    {
+        outln!("gpu report    (corbul runs on the CPU; this is the engine-gpu capability report)");
+        for l in companion_engine_gpu::report::capability_report(Some(&hp))
+            .text()
+            .lines()
+        {
+            outln!("  {l}");
+        }
+    }
     outln!(
         "kernels       {} (reproducible mode {})",
         simd::active(),
@@ -1450,7 +1460,11 @@ pub const CAPABILITIES: &[(&str, &str, &str)] = &[
     (
         "GPU",
         "no",
-        "the wgpu crate exists but corbul does not use it",
+        if cfg!(feature = "gpu") {
+            "built with --features gpu: `doctor` prints the GPU report; inference still runs on the CPU"
+        } else {
+            "the engine-gpu crate exists but corbul does not run on it (build with --features gpu for the report in `doctor`)"
+        },
     ),
     ("vision / audio inputs", "no", "text only"),
     (

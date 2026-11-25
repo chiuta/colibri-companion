@@ -14,7 +14,7 @@ Un motor local de inferencia para modelos de lenguaje, escrito desde cero en Rus
 |---|---|
 | `crates/engine` (`companion-engine`) | La biblioteca: formatos de archivo, tokenizador, cuantización, pasadas hacia delante, muestreo y las herramientas adicionales de INNOVATIONS.es.md. Dependencias en tiempo de ejecución: solo `serde_json` y `memmap2`. |
 | `crates/engine-cli` (`corbul`) | La línea de comandos y un servidor local compatible con OpenAI / Ollama / Anthropic con interfaz web integrada. Depende de la biblioteca y de `serde_json`. |
-| `crates/engine-gpu` (`companion-engine-gpu`) | Kernels WGSL y una emulación de ellos en CPU. El ejecutor en dispositivo (`wgpu`, `pollster`) queda tras la característica de cargo `wgpu`, desactivada por defecto. **`corbul` no usa este crate.** |
+| `crates/engine-gpu` (`companion-engine-gpu`) | Kernels WGSL y una emulación de ellos en CPU. El ejecutor en dispositivo (`wgpu`, `pollster`) queda tras la característica de cargo `wgpu`, desactivada por defecto. **`corbul` no se ejecuta sobre él; compilado con `--features gpu`, `corbul doctor` solo imprime su informe de capacidades.** |
 
 Es independiente de la aplicación de escritorio Colibri Companion y no la sustituye; esta sigue manejando el colibri de JustVugg. Usar este motor como back end alternativo de la aplicación está planeado, no hecho.
 

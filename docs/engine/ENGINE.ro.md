@@ -14,7 +14,7 @@ Un motor local de inferență pentru modele de limbaj, scris de la zero în Rust
 |---|---|
 | `crates/engine` (`companion-engine`) | Biblioteca: formate de fișiere, tokenizator, cuantizare, treceri înainte, eșantionare și uneltele suplimentare din INNOVATIONS.md. Dependențe la rulare: doar `serde_json` și `memmap2`. |
 | `crates/engine-cli` (`corbul`) | Linia de comandă și un server local compatibil OpenAI / Ollama / Anthropic, cu interfață web încorporată. Depinde de bibliotecă și de `serde_json`. |
-| `crates/engine-gpu` (`companion-engine-gpu`) | Nuclee WGSL și o emulare a lor pe procesor. Rulatorul pe dispozitiv (`wgpu`, `pollster`) se află în spatele funcției cargo `wgpu`, dezactivată implicit. **`corbul` nu folosește acest crate.** |
+| `crates/engine-gpu` (`companion-engine-gpu`) | Nuclee WGSL și o emulare a lor pe procesor. Rulatorul pe dispozitiv (`wgpu`, `pollster`) se află în spatele funcției cargo `wgpu`, dezactivată implicit. **`corbul` nu rulează pe el; construit cu `--features gpu`, `corbul doctor` doar afișează raportul lui de capabilități.** |
 
 Este separat de aplicația desktop Colibri Companion și nu o înlocuiește; aceasta continuă să controleze colibri al lui JustVugg. Folosirea acestui motor ca alternativă de back end a aplicației este planificată, nu făcută.
 

@@ -16,4 +16,9 @@ path = "src/main.rs"
 
 [dependencies]
 companion-engine = { path = "../engine" }
+companion-engine-gpu = { path = "../engine-gpu", optional = true }
 serde_json = { workspace = true, features = ["preserve_order"] }
+
+[features]
+# `doctor` and `capabilities` also print the GPU capability report (the CPU does all the inference either way)
+gpu = ["dep:companion-engine-gpu"]

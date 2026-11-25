@@ -702,6 +702,7 @@ name = "colibri-rs-cli"
 version = "0.1.0-alpha.7"
 dependencies = [
  "companion-engine",
+ "companion-engine-gpu",
  "serde_json",
 ]
 

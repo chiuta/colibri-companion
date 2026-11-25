@@ -86,6 +86,7 @@ jobs:
         with: { shared-key: engine-clippy }
       # engine-gpu is built with its default features: the `wgpu` device runner stays off.
       - run: cargo clippy $ENGINE_PKGS --all-targets --locked -- -D warnings
+      - run: cargo clippy -p colibri-rs-cli --features gpu --all-targets --locked -- -D warnings
 
   msrv:
     # companion-engine and corbul declare rust-version 1.89: they must build with exactly that.

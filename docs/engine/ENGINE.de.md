@@ -14,7 +14,7 @@ Eine lokale Inferenz-Engine für Sprachmodelle, von Grund auf in Rust geschriebe
 |---|---|
 | `crates/engine` (`companion-engine`) | Die Bibliothek: Dateiformate, Tokenizer, Quantisierung, Vorwärtsdurchläufe, Sampling und die zusätzlichen Werkzeuge aus INNOVATIONS.md. Laufzeitabhängigkeiten: nur `serde_json` und `memmap2`. |
 | `crates/engine-cli` (`corbul`) | Die Kommandozeile und ein lokaler Server, kompatibel mit OpenAI, Ollama und Anthropic, mit eingebauter Weboberfläche. Hängt von der Bibliothek und von `serde_json` ab. |
-| `crates/engine-gpu` (`companion-engine-gpu`) | WGSL-Kernel und eine CPU-Emulation davon. Der Geräte-Runner (`wgpu`, `pollster`) liegt hinter dem Cargo-Feature `wgpu`, das standardmäßig aus ist. **`corbul` verwendet dieses Crate nicht.** |
+| `crates/engine-gpu` (`companion-engine-gpu`) | WGSL-Kernel und eine CPU-Emulation davon. Der Geräte-Runner (`wgpu`, `pollster`) liegt hinter dem Cargo-Feature `wgpu`, das standardmäßig aus ist. **`corbul` läuft nicht darauf; mit `--features gpu` gebaut, gibt `corbul doctor` nur dessen Fähigkeitsbericht aus.** |
 
 Sie ist von der Desktop-App Colibri Companion getrennt und ersetzt sie nicht; die App steuert weiterhin das colibri von JustVugg. Diese Engine als alternatives Back-End der App zu nutzen, ist geplant, aber nicht umgesetzt.
 
