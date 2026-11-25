@@ -179,7 +179,14 @@ fn prompt_of(args: &Args) -> Result<String, String> {
 
 fn refuse(args: &Args) -> Result<(), String> {
     crate::fast::refuse(args, false, "state-space and hybrid models")?;
-    for f in ["lookahead", "self-spec"] {
+    for f in [
+        "lookahead",
+        "self-spec",
+        "no-lock",
+        "keep-steps",
+        "leaves",
+        "compress",
+    ] {
         if args.flag(f) {
             return Err(format!(
                 "--{f} is not available for state-space and hybrid models"
@@ -195,6 +202,10 @@ fn refuse(args: &Args) -> Result<(), String> {
         "grammar",
         "ram-budget",
         "kv-budget",
+        "citations",
+        "kv-sinks",
+        "receipt-topk",
+        "session-cap",
     ] {
         if args.get(k).is_some() {
             return Err(format!(
@@ -370,6 +381,27 @@ mod tests {
             "--lookahead".into(),
         ]);
         assert!(generate(&spec).unwrap_err().contains("--lookahead"));
+        // options of the attention-model path are refused, never silently ignored
+        for (opt, val) in [
+            ("--citations", Some("x")),
+            ("--kv-sinks", Some("4")),
+            ("--receipt-topk", Some("2")),
+            ("--session-cap", Some("1m")),
+            ("--no-lock", None),
+            ("--keep-steps", None),
+            ("--leaves", None),
+            ("--compress", None),
+        ] {
+            let mut v = vec![
+                ssm.to_string_lossy().to_string(),
+                "--prompt".into(),
+                "hi".into(),
+                opt.to_string(),
+            ];
+            v.extend(val.map(String::from));
+            let e = generate(&Args::parse(&v)).unwrap_err();
+            assert!(e.contains(opt), "{opt}: {e}");
+        }
         std::fs::remove_dir_all(ssm).unwrap();
     }
 }
