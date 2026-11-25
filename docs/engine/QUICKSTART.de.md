@@ -144,10 +144,10 @@ corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
 ```
 
-Öffne `http://127.0.0.1:8080/` für die Weboberfläche (auch `/ui`). Die Seite ist öffentlich; jeder Aufruf, den sie macht, braucht das Token. `--token T` entspricht `CORBUL_TOKEN` (in der Prozessliste sichtbar, bevorzuge also `--token-file`). `--keys-file` enthält API-Schlüssel mit Modelllisten und Ratenbegrenzungen pro Schlüssel. `--allow-admin` erlaubt Schlüsselinhabern, `/api/create`, `/api/delete`, `/models/load` und `/models/unload` zu nutzen; standardmäßig darf das nur das Master-Token. `--max-kv` lehnt Anfragen ab, deren KV-Cache die Größe überschreiten würde (Standard 8g); `--max-heavy` begrenzt gleichzeitige Tokenize-, Template- und Verify-Anfragen (Standard 4). `--no-log` schaltet das Anfrageprotokoll stumm. `GET /v1/capabilities` listet auf, was funktioniert. Die Routen für Embeddings und Rerank antworten mit 501.
+Öffne `http://127.0.0.1:8080/` für die Weboberfläche (auch `/ui`). Die Seite ist öffentlich; jeder Aufruf, den sie macht, braucht das Token. `--token T` entspricht `CORBUL_TOKEN` (in der Prozessliste sichtbar, bevorzuge also `--token-file`). `--keys-file` enthält API-Schlüssel mit Modelllisten und Ratenbegrenzungen pro Schlüssel. `--allow-admin` erlaubt Schlüsselinhabern, `/api/create`, `/api/delete`, `/models/load` und `/models/unload` zu nutzen; standardmäßig darf das nur das Master-Token. `--max-kv` lehnt Anfragen ab, deren KV-Cache die Größe überschreiten würde (Standard 8g); `--max-heavy` begrenzt gleichzeitige Tokenize-, Template- und Verify-Anfragen (Standard 4). `--no-log` schaltet das Anfrageprotokoll stumm. `GET /v1/capabilities` listet auf, was funktioniert. Die Embedding-Routen funktionieren (`/v1/embeddings`, `/api/embed`); die Rerank-Routen antworten mit 501.
 
 ## In `corbul` (noch) nicht verfügbar
 
 - Modelle mit Multi-Head Latent Attention (im DeepSeek-Stil), RWKV in GGUF-Form, Zamba/Zamba2, i-Quants, WordPiece/BERT-Modelle.
-- Vision- und Audio-Eingaben (die Bibliothek hat die Bausteine), Endpunkte für Embeddings und Rerank, das GPU-Back-End.
+- Vision- und Audio-Eingaben (die Bibliothek hat die Bausteine), Endpunkte für Rerank, das GPU-Back-End.
 - Bitidentität des gewöhnlichen quantisierten Prefills (siehe ENGINE.md, „Exaktheit“).

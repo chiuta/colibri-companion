@@ -34,7 +34,7 @@ corbul capabilities                          # what works and what does not
 corbul generate ./model --prompt "Hello"     # a folder with safetensors or a .gguf file
 ```
 
-**Estado honesto:** testado apenas com modelos sintéticos minúsculos e com ficheiros de referência de tokenizadores (12 famílias de modelos, 46 de 46 casos iguais aos dados de referência do llama.cpp). Nenhum modelo real descarregado, nenhuma GPU e nenhuma máquina Windows, macOS ou ARM o executou ainda; as velocidades são estimativas. Carregam-se modelos densos e de mistura de especialistas; Mamba, RWKV e Jamba/Bamba correm como continuação de texto simples; a atenção ao estilo DeepSeek, as imagens, o som, os embeddings e a GPU não estão disponíveis em `corbul`. As i-quants e os modelos do tipo BERT não são suportados.
+**Estado honesto:** testado apenas com modelos sintéticos minúsculos e com ficheiros de referência de tokenizadores (12 famílias de modelos, 46 de 46 casos iguais aos dados de referência do llama.cpp). Nenhum modelo real descarregado, nenhuma GPU e nenhuma máquina Windows, macOS ou ARM o executou ainda; as velocidades são estimativas. Carregam-se modelos densos e de mistura de especialistas; Mamba, RWKV e Jamba/Bamba correm como continuação de texto simples; a atenção ao estilo DeepSeek, as imagens, o som e a GPU não estão disponíveis em `corbul`; os embeddings funcionam, o reranking não. As i-quants e os modelos do tipo BERT não são suportados.
 
 Documentação: [o que é e o que não faz](docs/engine/ENGINE.pt.md) · [início rápido e todas as opções](docs/engine/QUICKSTART.pt.md) · [funcionalidades diferentes](docs/engine/INNOVATIONS.pt.md) · [processo clean-room](docs/engine/CLEANROOM.pt.md) · [alterações de segurança](docs/engine/CHANGES-SECURITY.pt.md).
 

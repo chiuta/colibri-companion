@@ -144,10 +144,10 @@ corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
 ```
 
-Apri `http://127.0.0.1:8080/` per l'interfaccia web (anche `/ui`). La pagina è pubblica; ogni chiamata che fa richiede il token. `--token T` equivale a `CORBUL_TOKEN` (visibile nell'elenco dei processi, quindi preferisci `--token-file`). `--keys-file` contiene chiavi API con elenchi di modelli e limiti di frequenza per chiave. `--allow-admin` consente ai titolari di chiavi di usare `/api/create`, `/api/delete`, `/models/load` e `/models/unload`; per impostazione predefinita può farlo solo il token principale. `--max-kv` rifiuta le richieste la cui cache KV supererebbe la dimensione indicata (predefinito 8g); `--max-heavy` limita le richieste simultanee di tokenizzazione, template e verifica (predefinito 4). `--no-log` silenzia il log delle richieste. `GET /v1/capabilities` elenca ciò che funziona. Le rotte di embedding e rerank rispondono 501.
+Apri `http://127.0.0.1:8080/` per l'interfaccia web (anche `/ui`). La pagina è pubblica; ogni chiamata che fa richiede il token. `--token T` equivale a `CORBUL_TOKEN` (visibile nell'elenco dei processi, quindi preferisci `--token-file`). `--keys-file` contiene chiavi API con elenchi di modelli e limiti di frequenza per chiave. `--allow-admin` consente ai titolari di chiavi di usare `/api/create`, `/api/delete`, `/models/load` e `/models/unload`; per impostazione predefinita può farlo solo il token principale. `--max-kv` rifiuta le richieste la cui cache KV supererebbe la dimensione indicata (predefinito 8g); `--max-heavy` limita le richieste simultanee di tokenizzazione, template e verifica (predefinito 4). `--no-log` silenzia il log delle richieste. `GET /v1/capabilities` elenca ciò che funziona. Le rotte di embedding funzionano (`/v1/embeddings`, `/api/embed`); le rotte di rerank rispondono 501.
 
 ## Non disponibile in `corbul` (per ora)
 
 - Modelli con attenzione latente multi-testa (stile DeepSeek), RWKV in forma GGUF, Zamba/Zamba2, i-quant, modelli WordPiece/BERT.
-- Input di visione e audio (la libreria ha i blocchi), endpoint di embedding e reranking, il back end GPU.
+- Input di visione e audio (la libreria ha i blocchi), endpoint di reranking, il back end GPU.
 - Identità bit per bit del prefill quantizzato ordinario (vedi ENGINE.md, «Esattezza»).

@@ -144,10 +144,10 @@ corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
 ```
 
-Ouvre `http://127.0.0.1:8080/` pour l'interface web (aussi `/ui`). La page est publique ; chaque appel qu'elle fait exige le jeton. `--token T` équivaut à `CORBUL_TOKEN` (visible dans la liste des processus, donc préfère `--token-file`). `--keys-file` contient des clés d'API avec des listes de modèles et des limites de débit par clé. `--allow-admin` permet aux détenteurs de clés d'utiliser `/api/create`, `/api/delete`, `/models/load` et `/models/unload` ; par défaut, seul le jeton maître le peut. `--max-kv` refuse les requêtes dont le cache KV dépasserait la taille indiquée (8g par défaut) ; `--max-heavy` limite les requêtes simultanées de tokenisation, de modèle et de vérification (4 par défaut). `--no-log` fait taire le journal des requêtes. `GET /v1/capabilities` liste ce qui fonctionne. Les routes d'embeddings et de reranking répondent 501.
+Ouvre `http://127.0.0.1:8080/` pour l'interface web (aussi `/ui`). La page est publique ; chaque appel qu'elle fait exige le jeton. `--token T` équivaut à `CORBUL_TOKEN` (visible dans la liste des processus, donc préfère `--token-file`). `--keys-file` contient des clés d'API avec des listes de modèles et des limites de débit par clé. `--allow-admin` permet aux détenteurs de clés d'utiliser `/api/create`, `/api/delete`, `/models/load` et `/models/unload` ; par défaut, seul le jeton maître le peut. `--max-kv` refuse les requêtes dont le cache KV dépasserait la taille indiquée (8g par défaut) ; `--max-heavy` limite les requêtes simultanées de tokenisation, de modèle et de vérification (4 par défaut). `--no-log` fait taire le journal des requêtes. `GET /v1/capabilities` liste ce qui fonctionne. Les routes d'embeddings fonctionnent (`/v1/embeddings`, `/api/embed`) ; les routes de reranking répondent 501.
 
 ## Non disponible dans `corbul` (pour l'instant)
 
 - Modèles à attention latente multi-têtes (style DeepSeek), RWKV au format GGUF, Zamba/Zamba2, i-quants, modèles WordPiece/BERT.
-- Entrées de vision et d'audio (la bibliothèque a les blocs), points d'accès d'embeddings et de reranking, le back end GPU.
+- Entrées de vision et d'audio (la bibliothèque a les blocs), points d'accès de reranking, le back end GPU.
 - Identité bit à bit du prefill quantifié ordinaire (voir ENGINE.md, « Exactitude »).

@@ -42,7 +42,7 @@ corbul capabilities                          # what works and what does not
 corbul generate ./model --prompt "Hello"     # a folder with safetensors or a .gguf file
 ```
 
-**Honest status:** tested on tiny synthetic models and on tokenizer reference files only (12 model families, 46 of 46 cases equal to llama.cpp's reference data). No real downloaded model, no GPU and no Windows, macOS or ARM machine has run it yet; speeds are estimates. Dense and mixture-of-experts models are loaded; Mamba, RWKV and Jamba/Bamba run as plain continuation; DeepSeek-style attention, images, sound, embeddings and the GPU are not available in `corbul`. i-quants and BERT-style models are not supported.
+**Honest status:** tested on tiny synthetic models and on tokenizer reference files only (12 model families, 46 of 46 cases equal to llama.cpp's reference data). No real downloaded model, no GPU and no Windows, macOS or ARM machine has run it yet; speeds are estimates. Dense and mixture-of-experts models are loaded; Mamba, RWKV and Jamba/Bamba run as plain continuation; DeepSeek-style attention, images, sound and the GPU are not available in `corbul`; embeddings work, reranking does not. i-quants and BERT-style models are not supported.
 
 Documentation (English for now, translations in preparation): [what it is and what it does not do](docs/engine/ENGINE.md) · [quick start and every flag](docs/engine/QUICKSTART.md) · [features that are different](docs/engine/INNOVATIONS.md) · [clean-room process](docs/engine/CLEANROOM.md) · [security changes](docs/engine/CHANGES-SECURITY.md).
 

@@ -1454,10 +1454,11 @@ pub const CAPABILITIES: &[(&str, &str, &str)] = &[
     ),
     ("vision / audio inputs", "no", "text only"),
     (
-        "embeddings, rerank endpoints",
-        "no",
-        "answered with `not implemented`",
+        "embeddings endpoints",
+        "yes",
+        "`/v1/embeddings`, `/api/embed`: pooled final hidden states of decoder models",
     ),
+    ("rerank endpoints", "no", "answered with `not implemented`"),
 ];
 
 pub fn capabilities(args: &Args) -> Result<(), String> {

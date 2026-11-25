@@ -144,10 +144,10 @@ corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
 ```
 
-Deschide `http://127.0.0.1:8080/` pentru interfața web (și `/ui`). Pagina este publică; fiecare apel pe care îl face cere tokenul. `--token T` este același lucru cu `CORBUL_TOKEN` (vizibil în lista de procese, deci preferă `--token-file`). `--keys-file` conține chei API cu liste de modele și limite de rată pe cheie. `--allow-admin` le permite deținătorilor de chei să folosească `/api/create`, `/api/delete`, `/models/load` și `/models/unload`; implicit le poate folosi doar tokenul principal. `--max-kv` refuză cererile al căror cache KV ar depăși dimensiunea (implicit 8g); `--max-heavy` limitează cererile simultane de tokenizare, de șablon și de verificare (implicit 4). `--no-log` oprește jurnalul cererilor. `GET /v1/capabilities` listează ce funcționează. Rutele de embeddings și rerank răspund 501.
+Deschide `http://127.0.0.1:8080/` pentru interfața web (și `/ui`). Pagina este publică; fiecare apel pe care îl face cere tokenul. `--token T` este același lucru cu `CORBUL_TOKEN` (vizibil în lista de procese, deci preferă `--token-file`). `--keys-file` conține chei API cu liste de modele și limite de rată pe cheie. `--allow-admin` le permite deținătorilor de chei să folosească `/api/create`, `/api/delete`, `/models/load` și `/models/unload`; implicit le poate folosi doar tokenul principal. `--max-kv` refuză cererile al căror cache KV ar depăși dimensiunea (implicit 8g); `--max-heavy` limitează cererile simultane de tokenizare, de șablon și de verificare (implicit 4). `--no-log` oprește jurnalul cererilor. `GET /v1/capabilities` listează ce funcționează. Rutele de embeddings funcționează (`/v1/embeddings`, `/api/embed`); rutele de rerank răspund 501.
 
 ## Indisponibile în `corbul` (încă)
 
 - Modele cu atenție latentă multi-cap (în stil DeepSeek), RWKV în formă GGUF, Zamba/Zamba2, i-quant-uri, modele WordPiece/BERT.
-- Intrări de imagine și sunet (biblioteca are blocurile), endpoint-uri de embeddings și rerank, back end-ul GPU.
+- Intrări de imagine și sunet (biblioteca are blocurile), endpoint-uri de rerank, back end-ul GPU.
 - Identitatea bit cu bit a prefill-ului cuantizat obișnuit (vezi ENGINE.md, „Exactitate”).

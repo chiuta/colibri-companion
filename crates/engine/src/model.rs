@@ -501,6 +501,14 @@ pub struct Model {
     accel: Option<Accel>,
 }
 
+/// How [`Model::embed`] folds per-token hidden states into one vector.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pooling {
+    Mean,
+    Last,
+    First,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ModelError {
     Shape(String),
@@ -1527,6 +1535,92 @@ impl Model {
                 .for_each(|l| *l = softcap(*l, s.final_softcap));
         }
         Ok(logits)
+    }
+
+    /// A fixed-size vector for a token sequence: the final-normed hidden states of the last layer,
+    /// pooled by `pooling`, optionally scaled to unit length. Uses a fresh state (nothing is cached or
+    /// kept), runs the sequence in chunks of 256 tokens, and returns [`ModelError::ContextFull`] past the
+    /// context window. Decoder models give useful vectors with `Pooling::Last` or `Pooling::Mean`.
+    pub fn embed(
+        &self,
+        tokens: &[usize],
+        pooling: Pooling,
+        normalize: bool,
+    ) -> Result<Vec<f32>, ModelError> {
+        self.embed_chunked(tokens, pooling, normalize, 256)
+    }
+
+    fn embed_chunked(
+        &self,
+        tokens: &[usize],
+        pooling: Pooling,
+        normalize: bool,
+        chunk_len: usize,
+    ) -> Result<Vec<f32>, ModelError> {
+        let s = &self.spec;
+        let h = s.hidden as usize;
+        if tokens.is_empty() {
+            return Err(ModelError::NoTokens);
+        }
+        if let Some(&t) = tokens.iter().find(|&&t| t >= s.vocab as usize) {
+            return Err(ModelError::Token(t));
+        }
+        if tokens.len() > s.context as usize {
+            return Err(ModelError::ContextFull(s.context as usize));
+        }
+        let mut st = self.new_state();
+        let (mut sum, mut first, mut last) = (vec![0.0f64; h], vec![0.0f32; h], vec![0.0f32; h]);
+        let mut tmp = Vec::new();
+        let mut xl = vec![0.0f32; h];
+        let mut done = 0usize;
+        for chunk in tokens.chunks(chunk_len.max(1)) {
+            let mut x = vec![0.0f32; chunk.len() * h];
+            self.embed_rows(chunk, &mut x, &mut tmp)?;
+            let pos = st.pos;
+            self.run_layers_batch(&mut st, 0..self.w.layers.len(), &mut x, pos)?;
+            self.finish_batch(&mut st, chunk);
+            for (i, row) in x.chunks(h).enumerate() {
+                norm(
+                    s,
+                    row,
+                    &self.w.final_norm,
+                    self.w.final_norm_b.as_deref(),
+                    &mut xl,
+                );
+                if done + i == 0 {
+                    first.copy_from_slice(&xl);
+                }
+                if done + i + 1 == tokens.len() {
+                    last.copy_from_slice(&xl);
+                }
+                for (a, b) in sum.iter_mut().zip(&xl) {
+                    *a += f64::from(*b);
+                }
+            }
+            done += chunk.len();
+        }
+        let mut v: Vec<f32> = match pooling {
+            Pooling::First => first,
+            Pooling::Last => last,
+            Pooling::Mean => sum
+                .iter()
+                .map(|a| (*a / tokens.len() as f64) as f32)
+                .collect(),
+        };
+        if normalize {
+            let n = v
+                .iter()
+                .map(|a| f64::from(*a) * f64::from(*a))
+                .sum::<f64>()
+                .sqrt();
+            if n > 0.0 && n.is_finite() {
+                v.iter_mut().for_each(|a| *a = (f64::from(*a) / n) as f32);
+            }
+        }
+        if v.iter().any(|a| !a.is_finite()) {
+            return Err(ModelError::Shape("the embedding is not finite".into()));
+        }
+        Ok(v)
     }
 
     /// The layer loop: `b` consecutive tokens starting at `pos0`, hidden states in `x`, layers in `range`.
@@ -4100,6 +4194,59 @@ pub(crate) mod tests {
         }
         // two ring layers of 3 positions and one full layer of 30, K and V, 2 kv heads x 8 dims, f32
         assert_eq!(st.kv_bytes(), (3 + 30 + 3) * 2 * 16 * 4);
+    }
+
+    #[test]
+    fn embed_is_deterministic_unit_length_and_chunk_independent() {
+        let m = tiny(4, 2, true);
+        let toks = [3usize, 7, 1, 9, 4, 4, 2, 11];
+        for p in [Pooling::Mean, Pooling::Last, Pooling::First] {
+            let a = m.embed(&toks, p, true).unwrap();
+            assert_eq!(a.len(), m.spec.hidden as usize);
+            let n: f64 = a.iter().map(|x| f64::from(*x).powi(2)).sum();
+            assert!((n - 1.0).abs() < 1e-4, "{p:?} norm {n}");
+            assert_eq!(a, m.embed(&toks, p, true).unwrap());
+            for c in [1, 3, 5, 100] {
+                let b = m.embed_chunked(&toks, p, true, c).unwrap();
+                for (x, y) in a.iter().zip(&b) {
+                    assert!((x - y).abs() < 1e-5, "{p:?} chunk {c}: {x} vs {y}");
+                }
+            }
+        }
+        // a single token: every pooling agrees
+        let one = [5usize];
+        let (m1, l1, f1) = (
+            m.embed(&one, Pooling::Mean, false).unwrap(),
+            m.embed(&one, Pooling::Last, false).unwrap(),
+            m.embed(&one, Pooling::First, false).unwrap(),
+        );
+        assert_eq!(m1, l1);
+        assert_eq!(l1, f1);
+        // different text, different vector
+        assert_ne!(
+            m.embed(&[1, 2, 3], Pooling::Mean, true).unwrap(),
+            m.embed(&[3, 2, 1], Pooling::Last, true).unwrap()
+        );
+    }
+
+    #[test]
+    fn embed_rejects_bad_input() {
+        let m = tiny(4, 2, true);
+        assert_eq!(m.embed(&[], Pooling::Mean, true), Err(ModelError::NoTokens));
+        assert_eq!(
+            m.embed(&[999], Pooling::Mean, true),
+            Err(ModelError::Token(999))
+        );
+        let long = vec![1usize; m.spec.context as usize + 1];
+        assert!(matches!(
+            m.embed(&long, Pooling::Mean, true),
+            Err(ModelError::ContextFull(_))
+        ));
+        // exactly the context window is fine
+        assert!(
+            m.embed(&long[..m.spec.context as usize], Pooling::Mean, true)
+                .is_ok()
+        );
     }
 
     #[test]

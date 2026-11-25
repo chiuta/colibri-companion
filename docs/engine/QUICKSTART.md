@@ -144,10 +144,10 @@ corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
 ```
 
-Open `http://127.0.0.1:8080/` for the web interface (also `/ui`). The page is public; every call it makes needs the token. `--token T` is the same as `CORBUL_TOKEN` (visible in the process list, so prefer `--token-file`). `--keys-file` holds API keys with per-key model lists and rate limits. `--allow-admin` lets key holders use `/api/create`, `/api/delete`, `/models/load` and `/models/unload`; by default only the master token may. `--max-kv` refuses requests whose KV cache would exceed the size (default 8g); `--max-heavy` limits concurrent tokenize, template and verify requests (default 4). `--no-log` silences the request log. `GET /v1/capabilities` lists what works. Embedding and rerank routes answer 501.
+Open `http://127.0.0.1:8080/` for the web interface (also `/ui`). The page is public; every call it makes needs the token. `--token T` is the same as `CORBUL_TOKEN` (visible in the process list, so prefer `--token-file`). `--keys-file` holds API keys with per-key model lists and rate limits. `--allow-admin` lets key holders use `/api/create`, `/api/delete`, `/models/load` and `/models/unload`; by default only the master token may. `--max-kv` refuses requests whose KV cache would exceed the size (default 8g); `--max-heavy` limits concurrent tokenize, template and verify requests (default 4). `--no-log` silences the request log. `GET /v1/capabilities` lists what works. Embedding routes work (`/v1/embeddings`, `/api/embed`); rerank routes answer 501.
 
 ## Not available in `corbul` (yet)
 
 - Multi-head latent attention (DeepSeek-style) models, RWKV in GGUF form, Zamba/Zamba2, i-quants, WordPiece/BERT models.
-- Vision and audio inputs (the library has the blocks), embedding and rerank endpoints, the GPU back end.
+- Vision and audio inputs (the library has the blocks), rerank endpoints, the GPU back end.
 - Bit-identity of ordinary quantised prefill (see ENGINE.md, "Exactness").

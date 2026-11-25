@@ -1776,6 +1776,9 @@ fn route(
                 | "/apply-template"
                 | "/v1/messages/count_tokens"
                 | "/v1/quotes/verify"
+                | "/v1/embeddings"
+                | "/api/embed"
+                | "/api/embeddings"
         ) {
         if let Some(k) = who
             && let Err(wait) = app.limiter.admit(k, 0)
@@ -1806,7 +1809,7 @@ fn route(
         None
     };
     let not_impl = |what: &str| {
-        out.json(501, &err_body(style, "not_implemented_error", &format!("{what} are not available: this engine build exposes no hidden-state / pooling output, so embeddings and reranking cannot be computed")))
+        out.json(501, &err_body(style, "not_implemented_error", &format!("{what} are not available: reranking needs a cross-encoder head this engine does not load")))
     };
     match (m, path) {
         ("GET" | "HEAD", "/" | "/ui" | "/ui/") => out.bytes(
@@ -2053,7 +2056,12 @@ fn route(
             }
             Err(e) => fail(e),
         },
-        ("POST", "/v1/embeddings" | "/api/embed" | "/api/embeddings") => not_impl("embeddings"),
+        ("POST", "/v1/embeddings" | "/api/embed" | "/api/embeddings") => {
+            match embeddings(app, req, who, path) {
+                Ok(v) => out.json(200, &v),
+                Err(e) => fail(e),
+            }
+        }
         ("POST", "/v1/rerank" | "/rerank") => not_impl("rerank requests"),
         ("POST", "/v1/messages/count_tokens") => match count_tokens(app, req, who) {
             Ok(n) => out.json(200, &json!({"input_tokens": n})),
@@ -2119,6 +2127,178 @@ fn route(
             );
         }
         _ => out.json(404, &err_body(style, "not_found_error", "unknown endpoint")),
+    }
+}
+
+/// Most inputs one embeddings request may carry, and the most tokens across all of them.
+const EMBED_MAX_INPUTS: usize = 64;
+const EMBED_MAX_TOKENS: usize = 65_536;
+
+fn b64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut o = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        o.push(T[(n >> 18) as usize & 63] as char);
+        o.push(T[(n >> 12) as usize & 63] as char);
+        o.push(if c.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        o.push(if c.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    o
+}
+
+/// `/v1/embeddings` (OpenAI), `/api/embed` and `/api/embeddings` (Ollama): one vector per input, taken from
+/// the model's final-normed hidden states (`pooling`: mean (default), last or first; `normalize`: unit length,
+/// default true). Inputs are strings, token-id arrays, or lists of either.
+fn embeddings(
+    app: &App,
+    req: &http::Request,
+    who: &Principal,
+    path: &str,
+) -> Result<Value, ApiError> {
+    use companion_engine::model::Pooling;
+    let t0 = Instant::now();
+    let body = body_json(req)?;
+    let slot = slot_for(app, who, body.get("model").and_then(Value::as_str))?;
+    let legacy = path == "/api/embeddings";
+    let key = if legacy { "prompt" } else { "input" };
+    let raw = body
+        .get(key)
+        .or_else(|| if legacy { body.get("input") } else { None });
+    let Some(raw) = raw else {
+        return Err(bad(format!("`{key}` is required")));
+    };
+    let l = &slot.loaded;
+    let encode = |v: &Value| -> Result<Vec<usize>, ApiError> {
+        match v {
+            Value::String(t) => Ok(to_ids(l.tok.encode(t, true))),
+            Value::Array(a) if a.iter().all(|x| x.is_u64()) => {
+                Ok(a.iter().map(|x| x.as_u64().unwrap_or(0) as usize).collect())
+            }
+            _ => Err(bad(format!(
+                "`{key}` must be a string, an array of token ids, or a list of those"
+            ))),
+        }
+    };
+    let inputs: Vec<Vec<usize>> = match raw {
+        Value::String(_) => vec![encode(raw)?],
+        Value::Array(a) if !a.is_empty() && a.iter().all(|x| x.is_u64()) => vec![encode(raw)?],
+        Value::Array(a) if !a.is_empty() => a.iter().map(&encode).collect::<Result<_, _>>()?,
+        _ => return Err(bad(format!("`{key}` must not be empty"))),
+    };
+    if inputs.len() > EMBED_MAX_INPUTS {
+        return Err(bad(format!(
+            "at most {EMBED_MAX_INPUTS} inputs per request"
+        )));
+    }
+    let total: usize = inputs.iter().map(Vec::len).sum();
+    if inputs.iter().any(Vec::is_empty) {
+        return Err(bad("an input is empty"));
+    }
+    if total > EMBED_MAX_TOKENS {
+        return Err(bad(format!(
+            "at most {EMBED_MAX_TOKENS} tokens per request"
+        )));
+    }
+    let ctx = l.model.spec.context as usize;
+    let truncate = body
+        .get("truncate")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let pooling = match body
+        .get("pooling")
+        .and_then(Value::as_str)
+        .unwrap_or("mean")
+    {
+        "mean" => Pooling::Mean,
+        "last" => Pooling::Last,
+        "first" | "cls" => Pooling::First,
+        other => {
+            return Err(bad(format!(
+                "unknown pooling `{other}` (mean, last, first)"
+            )));
+        }
+    };
+    let normalize = body
+        .get("normalize")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let dims = body
+        .get("dimensions")
+        .and_then(Value::as_u64)
+        .map(|d| d as usize);
+    let mut vecs = Vec::with_capacity(inputs.len());
+    let mut counted = 0usize;
+    for mut ids in inputs {
+        if ids.len() > ctx {
+            if truncate {
+                ids.truncate(ctx);
+            } else {
+                return Err(bad(format!(
+                    "an input has {} tokens but the context window is {ctx}",
+                    ids.len()
+                )));
+            }
+        }
+        counted += ids.len();
+        slot.touch();
+        let mut v = l
+            .model
+            .embed(&ids, pooling, normalize)
+            .map_err(|e| match e {
+                ModelError::Token(_) | ModelError::NoTokens | ModelError::ContextFull(_) => {
+                    bad(e.to_string())
+                }
+                e => server_err(e.to_string()),
+            })?;
+        if let Some(d) = dims {
+            if d == 0 || d > v.len() {
+                return Err(bad(format!("`dimensions` must be 1..={}", v.len())));
+            }
+            v.truncate(d);
+            if normalize {
+                let n = v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
+                if n > 0.0 {
+                    v.iter_mut().for_each(|x| *x = (f64::from(*x) / n) as f32);
+                }
+            }
+        }
+        vecs.push(v);
+    }
+    let as_b64 = body.get("encoding_format").and_then(Value::as_str) == Some("base64");
+    if path == "/v1/embeddings" {
+        let data: Vec<Value> = vecs
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let e = if as_b64 {
+                    json!(b64(&v
+                        .iter()
+                        .flat_map(|x| x.to_le_bytes())
+                        .collect::<Vec<u8>>()))
+                } else {
+                    json!(v)
+                };
+                json!({"object": "embedding", "index": i, "embedding": e})
+            })
+            .collect();
+        Ok(json!({"object": "list", "data": data, "model": slot.name,
+            "usage": {"prompt_tokens": counted, "total_tokens": counted}}))
+    } else if legacy {
+        Ok(json!({"embedding": vecs.into_iter().next().unwrap_or_default()}))
+    } else {
+        Ok(json!({"model": slot.name, "embeddings": vecs,
+            "total_duration": t0.elapsed().as_nanos() as u64, "prompt_eval_count": counted}))
     }
 }
 
@@ -3397,11 +3577,67 @@ mod tests {
             s[0]["n_cached"].as_u64().unwrap() > 0,
             "the conversation stays cached for the next turn"
         );
-        // embeddings and rerank say plainly that they are not available
-        for path in ["/v1/embeddings", "/api/embed", "/v1/rerank", "/rerank"] {
+        // rerank says plainly that it is not available
+        for path in ["/v1/rerank", "/rerank"] {
             let r = post(h.addr, path, "{}", "");
             assert_eq!(r.status, 501, "{path}");
             assert!(r.json().to_string().contains("not available"), "{path}");
+        }
+        // embeddings: OpenAI shape, Ollama shapes, token-id input, base64, and bad input
+        let e = post(
+            h.addr,
+            "/v1/embeddings",
+            r#"{"input":["Hi","Hi there"]}"#,
+            "",
+        )
+        .json();
+        assert_eq!(e["object"], "list");
+        let emb = e["data"].as_array().unwrap();
+        assert_eq!(emb.len(), 2);
+        let v0 = emb[0]["embedding"].as_array().unwrap();
+        assert!(!v0.is_empty());
+        let n: f64 = v0.iter().map(|x| x.as_f64().unwrap().powi(2)).sum();
+        assert!((n - 1.0).abs() < 1e-3, "unit length, got {n}");
+        assert_eq!(e["usage"]["prompt_tokens"].as_u64().unwrap(), 2 + 8);
+        let ids = post(h.addr, "/v1/embeddings", r#"{"input":[72,105]}"#, "").json();
+        assert_eq!(
+            ids["data"][0]["embedding"], emb[0]["embedding"],
+            "ids equal the text"
+        );
+        let b = post(
+            h.addr,
+            "/v1/embeddings",
+            r#"{"input":"Hi","encoding_format":"base64"}"#,
+            "",
+        )
+        .json();
+        assert!(b["data"][0]["embedding"].is_string());
+        let o = post(h.addr, "/api/embed", r#"{"input":"Hi"}"#, "").json();
+        assert_eq!(o["embeddings"][0], emb[0]["embedding"]);
+        let lg = post(h.addr, "/api/embeddings", r#"{"prompt":"Hi"}"#, "").json();
+        assert_eq!(lg["embedding"], emb[0]["embedding"]);
+        let dim = post(
+            h.addr,
+            "/v1/embeddings",
+            r#"{"input":"Hi","dimensions":4}"#,
+            "",
+        )
+        .json();
+        assert_eq!(dim["data"][0]["embedding"].as_array().unwrap().len(), 4);
+        for body in [
+            "{}",
+            r#"{"input":""}"#,
+            r#"{"input":[]}"#,
+            r#"{"input":[1.5]}"#,
+            r#"{"input":"Hi","pooling":"max"}"#,
+            r#"{"input":"Hi","dimensions":0}"#,
+            r#"{"input":[99999999]}"#,
+        ] {
+            assert_eq!(
+                post(h.addr, "/v1/embeddings", body, "").status,
+                400,
+                "{body}"
+            );
         }
         assert_eq!(
             get(h.addr, "/metrics", "")

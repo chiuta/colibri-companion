@@ -144,10 +144,10 @@ corbul serve --models-dir ./models --keys-file keys.json --allow-admin --max-kv 
 corbul serve --models-dir ./models --cors "https://app.example" --log-prompts --drain-seconds 10 --config-dir ./cfg
 ```
 
-Abre `http://127.0.0.1:8080/` para a interface web (também `/ui`). A página é pública; cada chamada que faz precisa do token. `--token T` equivale a `CORBUL_TOKEN` (visível na lista de processos, por isso prefere `--token-file`). `--keys-file` contém chaves de API com listas de modelos e limites de taxa por chave. `--allow-admin` permite aos titulares de chaves usar `/api/create`, `/api/delete`, `/models/load` e `/models/unload`; por defeito só o token mestre pode. `--max-kv` recusa pedidos cuja cache KV excederia o tamanho indicado (por defeito 8g); `--max-heavy` limita os pedidos simultâneos de tokenização, modelo e verificação (por defeito 4). `--no-log` silencia o registo de pedidos. `GET /v1/capabilities` enumera o que funciona. As rotas de embeddings e rerank respondem 501.
+Abre `http://127.0.0.1:8080/` para a interface web (também `/ui`). A página é pública; cada chamada que faz precisa do token. `--token T` equivale a `CORBUL_TOKEN` (visível na lista de processos, por isso prefere `--token-file`). `--keys-file` contém chaves de API com listas de modelos e limites de taxa por chave. `--allow-admin` permite aos titulares de chaves usar `/api/create`, `/api/delete`, `/models/load` e `/models/unload`; por defeito só o token mestre pode. `--max-kv` recusa pedidos cuja cache KV excederia o tamanho indicado (por defeito 8g); `--max-heavy` limita os pedidos simultâneos de tokenização, modelo e verificação (por defeito 4). `--no-log` silencia o registo de pedidos. `GET /v1/capabilities` enumera o que funciona. As rotas de embeddings funcionam (`/v1/embeddings`, `/api/embed`); as rotas de rerank respondem 501.
 
 ## Não disponível em `corbul` (ainda)
 
 - Modelos de atenção latente multicabeça (ao estilo DeepSeek), RWKV em formato GGUF, Zamba/Zamba2, i-quants, modelos WordPiece/BERT.
-- Entradas de visão e áudio (a biblioteca tem os blocos), endpoints de embeddings e rerank, o back end de GPU.
+- Entradas de visão e áudio (a biblioteca tem os blocos), endpoints de rerank, o back end de GPU.
 - Identidade bit a bit do prefill quantizado normal (ver ENGINE.pt.md, «Exatidão»).
