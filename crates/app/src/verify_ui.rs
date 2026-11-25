@@ -6,10 +6,13 @@
 use crate::app::CompanionApp;
 use crate::theme::Semibold;
 use crate::widgets::*;
+use companion_core::chat::{ChatClient, ChatMessage, ChatRequest, StreamEvent, Thinking};
+use companion_core::http::CancelToken;
 use companion_core::rag::Collection;
 use companion_scholar::audit::{
     self, AuditOptions, AuditReport, Passage, Passages, SourceInfo, Verdict,
 };
+use companion_scholar::audit::{Finding, Sem, parse_sem, semantic_pass};
 use egui::{RichText, Ui};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
@@ -26,6 +29,73 @@ pub struct VerifyState {
     failed: bool,
     /// Read the pages of the research shelf instead of the plain collection.
     pub pages: bool,
+    /// The model's second reading is running; its findings arrive here.
+    sem: Option<Receiver<SemResult>>,
+    sem_cancel: Option<CancelToken>,
+    sem_note: String,
+}
+
+/// The findings after the model's second reading, how many it answered, how many it changed.
+type SemResult = (Vec<Finding>, usize, usize);
+
+/// Most sentences the model reads in one go: each one is a call to the local model.
+const MAX_SEM_CALLS: usize = 40;
+
+/// The model's verdict on one sentence and its passage (`None` when the call fails or is stopped).
+fn make_judge(
+    client: ChatClient,
+    model: String,
+    cancel: CancelToken,
+) -> impl FnMut(&str, &str) -> Option<Sem> + Send + 'static {
+    move |sentence, passage| {
+        if cancel.is_cancelled() {
+            return None;
+        }
+        let req = ChatRequest {
+            model: model.clone(),
+            messages: vec![
+                ChatMessage::new("system", audit::SYSTEM_SEMANTIC),
+                ChatMessage::new(
+                    "user",
+                    format!("PASSAGE:\n{passage}\n\nSENTENCE:\n{sentence}"),
+                ),
+            ],
+            temperature: 0.0,
+            top_p: 1.0,
+            max_tokens: Some(16),
+            thinking: Thinking::Off,
+        };
+        let mut text = String::new();
+        client
+            .stream_chat(&req, &cancel, |ev| {
+                if let StreamEvent::Content(piece) = ev
+                    && text.len() < 400
+                {
+                    text.push_str(&piece);
+                }
+            })
+            .ok()?;
+        (!cancel.is_cancelled()).then(|| parse_sem(&text))
+    }
+}
+
+/// Runs the model's second reading on its own thread; the findings come through the receiver.
+fn start_semantic(
+    mut findings: Vec<Finding>,
+    max_calls: usize,
+    mut judge: impl FnMut(&str, &str) -> Option<Sem> + Send + 'static,
+    wake: impl FnOnce() + Send + 'static,
+) -> Receiver<SemResult> {
+    let (tx, rx) = mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("verify-semantic".into())
+        .spawn(move || {
+            let (checked, changed) = semantic_pass(&mut findings, max_calls, &mut judge);
+            let _ = tx.send((findings, checked, changed));
+            wake();
+        });
+    drop(spawned);
+    rx
 }
 
 /// Longest text the box takes; the check itself reads at most 256 KiB of it.
@@ -158,6 +228,114 @@ impl CompanionApp {
         }
     }
 
+    /// The button (and its progress) for the model's second reading of the report.
+    fn second_reading_ui(&mut self, ui: &mut Ui, coll_id: &str) {
+        let p = self.p;
+        let mut waiting = false;
+        if let Some(rx) = &self.docs.verify.sem {
+            match rx.try_recv() {
+                Ok((findings, checked, changed)) => {
+                    if let Some(r) = self
+                        .docs
+                        .verify
+                        .report
+                        .as_mut()
+                        .filter(|_| self.docs.verify.report_coll == coll_id)
+                    {
+                        r.findings = findings;
+                    }
+                    self.docs.verify.sem_note = self
+                        .t(
+                            "{} propoziții citite de model, {} rezultate schimbate.",
+                            "{} sentences read by the model, {} results changed.",
+                        )
+                        .replacen("{}", &checked.to_string(), 1)
+                        .replacen("{}", &changed.to_string(), 1);
+                    self.docs.verify.sem = None;
+                    self.docs.verify.sem_cancel = None;
+                }
+                Err(TryRecvError::Empty) => waiting = true,
+                Err(TryRecvError::Disconnected) => {
+                    self.docs.verify.sem = None;
+                    self.docs.verify.sem_cancel = None;
+                }
+            }
+        }
+        let can = self.docs.verify.report_coll == coll_id
+            && self
+                .docs
+                .verify
+                .report
+                .as_ref()
+                .is_some_and(|r| r.findings.iter().any(|f| f.passage.is_some()));
+        if !can {
+            return;
+        }
+        if waiting {
+            ui.ctx().request_repaint_after(Duration::from_millis(200));
+            ui.horizontal(|ui| {
+                spinner(ui);
+                ui.label(self.t("Modelul citește…", "The model is reading…"));
+                if secondary_button(ui, self.t("Oprește", "Stop")).clicked()
+                    && let Some(c) = &self.docs.verify.sem_cancel
+                {
+                    c.cancel();
+                }
+            });
+            return;
+        }
+        muted(
+            ui,
+            &p,
+            self.t(
+                "Un model local citește fiecare propoziție lângă pasajul ei: poate salva o parafrază corectă sau prinde o negație pe care numărarea cuvintelor o ratează. Poate greși: fiecare rezultat schimbat o spune. Cel mult {} propoziții, câte un apel pentru fiecare.",
+                "A local model reads each sentence next to its passage: it can rescue a correct paraphrase or catch a negation that word counting misses. It can be wrong: every changed result says so. At most {} sentences, one call each.",
+            )
+            .replacen("{}", &MAX_SEM_CALLS.to_string(), 1)
+            .as_str(),
+        );
+        let ready = self.server_ready();
+        let clicked = ui
+            .horizontal(|ui| {
+                ui.add_enabled_ui(ready, |ui| {
+                    secondary_button(
+                        ui,
+                        self.t("A doua citire cu modelul", "Second reading by the model"),
+                    )
+                    .clicked()
+                })
+                .inner
+            })
+            .inner;
+        if !ready {
+            muted(
+                ui,
+                &p,
+                self.t(
+                    "Pornește mai întâi modelul: serverul trebuie să fie gata.",
+                    "Start the model first: the server must be ready.",
+                ),
+            );
+        }
+        if !self.docs.verify.sem_note.is_empty() {
+            let n = self.docs.verify.sem_note.clone();
+            muted(ui, &p, &n);
+        }
+        if clicked && let Some(r) = &self.docs.verify.report {
+            let findings = r.findings.clone();
+            let model = self.model_id.clone().unwrap_or_else(|| "colibri".into());
+            let cancel = CancelToken::new();
+            let judge = make_judge(self.client(), model, cancel.clone());
+            let ctx = ui.ctx().clone();
+            self.docs.verify.sem_note.clear();
+            self.docs.verify.sem_cancel = Some(cancel);
+            self.docs.verify.sem =
+                Some(start_semantic(findings, MAX_SEM_CALLS, judge, move || {
+                    ctx.request_repaint()
+                }));
+        }
+    }
+
     pub fn verify_section(&mut self, ui: &mut Ui, coll_id: &str) {
         egui::CollapsingHeader::new(
             RichText::new(self.t("Verifică citările", "Check citations")).semibold(),
@@ -227,6 +405,11 @@ impl CompanionApp {
                 } else if secondary_button(ui, self.t("Verifică", "Check")).clicked() {
                     self.docs.verify.report = None;
                     self.docs.verify.failed = false;
+                    if let Some(c) = self.docs.verify.sem_cancel.take() {
+                        c.cancel();
+                    }
+                    self.docs.verify.sem = None;
+                    self.docs.verify.sem_note.clear();
                     self.docs.verify.report_coll = coll_id.to_string();
                     let ctx = ui.ctx().clone();
                     if let Some(sh) = self
@@ -265,6 +448,7 @@ impl CompanionApp {
                     .color(p.bad),
                 );
             }
+            self.second_reading_ui(ui, coll_id);
             let Some(r) = &self.docs.verify.report else {
                 return;
             };
@@ -542,6 +726,45 @@ mod tests {
         // a report is not shown under another collection
         frame(&mut a, "another");
         assert!(!a.docs.verify.failed);
+    }
+
+    #[test]
+    fn the_second_reading_changes_findings_and_a_stopped_one_changes_nothing() {
+        let f = |v, p: Option<&str>| Finding {
+            sentence: "The plant produced 42 megawatts.".into(),
+            cite: Some("report".into()),
+            page: None,
+            verdict: v,
+            support: 0.3,
+            note: String::new(),
+            passage: p.map(String::from),
+        };
+        let input = vec![
+            f(Verdict::Weak, Some("Output was forty-two megawatts.")),
+            f(Verdict::Supported, Some("Output fell to zero.")),
+            f(Verdict::UnknownSource, None),
+        ];
+        let judge = move |_: &str, p: &str| {
+            Some(if p.contains("forty-two") {
+                Sem::Supports
+            } else {
+                Sem::Contradicts
+            })
+        };
+        let rx = start_semantic(input.clone(), 10, judge, || {});
+        let (out, checked, changed) = rx.recv_timeout(Duration::from_secs(10)).expect("a result");
+        assert_eq!((checked, changed), (2, 2));
+        assert_eq!(out[0].verdict, Verdict::Supported);
+        assert_eq!(out[1].verdict, Verdict::Contradicted);
+        assert_eq!(out[2].verdict, Verdict::UnknownSource);
+        // a judge that fails (a stopped or unreachable model) leaves everything as it was
+        let rx = start_semantic(input.clone(), 10, |_: &str, _: &str| None, || {});
+        let (out, checked, changed) = rx.recv_timeout(Duration::from_secs(10)).expect("a result");
+        assert_eq!((checked, changed), (0, 0));
+        assert_eq!(out[0].verdict, Verdict::Weak);
+        // the call limit holds
+        let rx = start_semantic(input, 1, |_: &str, _: &str| Some(Sem::Supports), || {});
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap().1, 1);
     }
 
     #[test]

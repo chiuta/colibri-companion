@@ -13933,6 +13933,61 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A valódi oldalszámok használata (kutatási polc)",
         ],
     ),
+    (
+        "{} sentences read by the model, {} results changed.",
+        [
+            "{} phrases lues par le modèle, {} résultats modifiés.",
+            "{} frasi lette dal modello, {} risultati cambiati.",
+            "{} frases leídas por el modelo, {} resultados cambiados.",
+            "{} frases lidas pelo modelo, {} resultados alterados.",
+            "{} Sätze vom Modell gelesen, {} Ergebnisse geändert.",
+            "{} mondatot olvasott el a modell, {} eredmény változott.",
+        ],
+    ),
+    (
+        "The model is reading…",
+        [
+            "Le modèle lit…",
+            "Il modello sta leggendo…",
+            "El modelo está leyendo…",
+            "O modelo está a ler…",
+            "Das Modell liest…",
+            "A modell olvas…",
+        ],
+    ),
+    (
+        "A local model reads each sentence next to its passage: it can rescue a correct paraphrase or catch a negation that word counting misses. It can be wrong: every changed result says so. At most {} sentences, one call each.",
+        [
+            "Un modèle local lit chaque phrase à côté de son passage : il peut sauver une paraphrase correcte ou repérer une négation que le comptage des mots manque. Il peut se tromper : chaque résultat modifié le dit. Au plus {} phrases, un appel chacune.",
+            "Un modello locale legge ogni frase accanto al suo passaggio: può salvare una parafrasi corretta o cogliere una negazione che il conteggio delle parole non vede. Può sbagliare: ogni risultato cambiato lo dice. Al massimo {} frasi, una chiamata ciascuna.",
+            "Un modelo local lee cada frase junto a su pasaje: puede rescatar una paráfrasis correcta o detectar una negación que el recuento de palabras no ve. Puede equivocarse: cada resultado cambiado lo dice. Como máximo {} frases, una llamada cada una.",
+            "Um modelo local lê cada frase junto da sua passagem: pode salvar uma paráfrase correta ou apanhar uma negação que a contagem de palavras não vê. Pode errar: cada resultado alterado di-lo. No máximo {} frases, uma chamada cada.",
+            "Ein lokales Modell liest jeden Satz neben seiner Passage: Es kann eine korrekte Umschreibung retten oder eine Verneinung erkennen, die das Wortzählen übersieht. Es kann irren: Jedes geänderte Ergebnis sagt das. Höchstens {} Sätze, je ein Aufruf.",
+            "Egy helyi modell minden mondatot a szövegrésze mellett olvas el: megmenthet egy helyes átfogalmazást, vagy észrevehet egy tagadást, amit a szószámlálás elmulaszt. Tévedhet: minden megváltozott eredmény ezt jelzi. Legfeljebb {} mondat, mindegyikhez egy hívás.",
+        ],
+    ),
+    (
+        "Second reading by the model",
+        [
+            "Seconde lecture par le modèle",
+            "Seconda lettura con il modello",
+            "Segunda lectura con el modelo",
+            "Segunda leitura com o modelo",
+            "Zweites Lesen durch das Modell",
+            "Második olvasat a modellel",
+        ],
+    ),
+    (
+        "Start the model first: the server must be ready.",
+        [
+            "Démarrez d'abord le modèle : le serveur doit être prêt.",
+            "Avvia prima il modello: il server deve essere pronto.",
+            "Inicia primero el modelo: el servidor debe estar listo.",
+            "Inicia primeiro o modelo: o servidor tem de estar pronto.",
+            "Starte zuerst das Modell: Der Server muss bereit sein.",
+            "Előbb indítsd el a modellt: a kiszolgálónak készen kell állnia.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
