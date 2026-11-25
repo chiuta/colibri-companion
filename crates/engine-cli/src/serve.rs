@@ -2728,11 +2728,19 @@ mod tests {
         let _ = s.write_all(bytes);
         let mut all = vec![];
         let _ = s.read_to_end(&mut all);
+        // Windows may reset the connection after an early error reply and drop the tail of it, so a
+        // reply cut inside its head still counts when the status line is complete.
         let split = all
             .windows(4)
             .position(|w| w == b"\r\n\r\n")
-            .unwrap_or_else(|| panic!("no head in {:?}", String::from_utf8_lossy(&all)));
-        let head = String::from_utf8_lossy(&all[..split]).into_owned();
+            .unwrap_or_else(|| {
+                if all.starts_with(b"HTTP/1.1 ") && all.len() >= 12 {
+                    all.len().saturating_sub(4)
+                } else {
+                    panic!("no head in {:?}", String::from_utf8_lossy(&all))
+                }
+            });
+        let head = String::from_utf8_lossy(&all[..split.min(all.len())]).into_owned();
         let status: u16 = head.split(' ').nth(1).unwrap().parse().unwrap();
         let mut body = all[split + 4..].to_vec();
         if head

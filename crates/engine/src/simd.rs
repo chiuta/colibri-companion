@@ -2477,7 +2477,13 @@ mod tests {
         let want: Vec<f32> = v.iter().map(|x| x.exp()).collect();
         exp_sub_sum(&mut v, 0.0);
         set_precise(false);
-        assert_eq!(v, want);
+        // libm and the platform exp may differ by an ulp or two (macOS), so compare relatively
+        for (g, w) in v.iter().zip(&want) {
+            assert!(
+                (g - w).abs() <= w.abs() * 1e-6 + f32::MIN_POSITIVE,
+                "{g} vs {w}"
+            );
+        }
         assert!(!is_precise());
     }
 

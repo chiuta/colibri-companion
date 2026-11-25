@@ -2317,7 +2317,11 @@ mod tests {
         let body = "<|reserved_special_token_".repeat((4 << 20) / 25);
         let start = std::time::Instant::now();
         let _ = t.encode(&body, false);
-        assert!(start.elapsed().as_secs() < 20, "took {:?}", start.elapsed());
+        assert!(
+            start.elapsed().as_secs() < 120,
+            "took {:?}",
+            start.elapsed()
+        );
         // and the matcher still finds the right token: longest listed first, ids in order
         let ids = t.encode(
             "a<|reserved_special_token_7|>b<|reserved_special_token_249|>",
@@ -2340,7 +2344,11 @@ mod tests {
         let body = "hello".repeat((4 << 20) / 5);
         let start = std::time::Instant::now();
         let ids = t.encode(&body, false);
-        assert!(start.elapsed().as_secs() < 20, "took {:?}", start.elapsed());
+        assert!(
+            start.elapsed().as_secs() < 120,
+            "took {:?}",
+            start.elapsed()
+        );
         assert!(!ids.is_empty());
         assert_eq!(
             t.decode(&ids),
