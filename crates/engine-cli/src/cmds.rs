@@ -1472,7 +1472,16 @@ pub const CAPABILITIES: &[(&str, &str, &str)] = &[
         "yes",
         "`/v1/embeddings`, `/api/embed`: pooled final hidden states of decoder models",
     ),
-    ("rerank endpoints", "no", "answered with `not implemented`"),
+    (
+        "BERT-family encoders",
+        "yes",
+        "corbul embed / corbul rerank, and serve --encoder FOLDER for /v1/embeddings and /v1/rerank; WordPiece tokenizer; Hugging Face safetensors folders only, not RoBERTa/XLM-R",
+    ),
+    (
+        "rerank without --encoder",
+        "no",
+        "answered with `not implemented`",
+    ),
 ];
 
 pub fn capabilities(args: &Args) -> Result<(), String> {

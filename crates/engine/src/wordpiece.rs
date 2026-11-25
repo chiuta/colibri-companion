@@ -115,7 +115,7 @@ fn base_letter(c: char) -> Option<char> {
             0x1EE4..=0x1EF1 => 'u',
             _ => 'y',
         };
-        return Some(if u % 2 == 0 {
+        return Some(if u.is_multiple_of(2) {
             base.to_ascii_uppercase()
         } else {
             base
@@ -487,12 +487,11 @@ impl WordPiece {
             // the earliest special spelling
             let mut at: Option<(usize, usize, u32)> = None;
             for &id in &self.special {
-                if let Some(t) = self.id_to_token(id).filter(|t| t.starts_with('[')) {
-                    if let Some(p) = rest.find(t) {
-                        if at.is_none_or(|(q, _, _)| p < q) {
-                            at = Some((p, t.len(), id));
-                        }
-                    }
+                if let Some(t) = self.id_to_token(id).filter(|t| t.starts_with('['))
+                    && let Some(p) = rest.find(t)
+                    && at.is_none_or(|(q, _, _)| p < q)
+                {
+                    at = Some((p, t.len(), id));
                 }
             }
             let (chunk, next) = match at {

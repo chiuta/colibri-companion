@@ -39,6 +39,8 @@ USAGE
   corbul steer    train|apply|lens <model> …                              control vectors and a logit lens
   corbul rag      add LIB FILE… | search LIB --query Q | ask LIB MODEL --question Q   local document library, quote-locked answers
   corbul watermark detect <model> --key K --text T | --file F             test a text for the mark made by generate --watermark
+  corbul embed    <bert-folder> TEXT… [--file F --pool cls|mean --no-normalize --json]   sentence vectors from a BERT encoder
+  corbul rerank   <bert-folder> --query Q DOC… [--file F --top N --json]  relevance scores from a BERT cross-encoder
 
 OPTIONS (generate / chat / serve)
   --max-tokens N     --temperature T   --top-p P   --top-k K   --seed S
@@ -81,6 +83,7 @@ SERVE
   --max-loaded N          keep at most N models in memory (least recently used go first)
   --sleep-idle-seconds S  unload a model after S seconds without requests
   --token T               one shared bearer token (or CORBUL_TOKEN); --token-file FILE reads it from a file (keeps it out of `ps`)
+  --encoder FOLDER        also serve a BERT-family encoder: /v1/embeddings, /api/embed, and /v1/rerank for a cross-encoder
   --allow-admin           let API-key holders use /api/create, /api/delete, /models/load, /models/unload (default: master token only)
   --max-kv SIZE           refuse requests whose KV cache would exceed SIZE (default 8g)   --max-heavy N  concurrent tokenize/template/verify requests (4)
   --keys-file FILE        API keys with per-key model lists and rate limits (JSON)
@@ -147,6 +150,8 @@ fn run(argv: &[String]) -> Result<(), String> {
         "rag" => corbul::rag_cmd::cmd(&args),
         "search" => corbul::search_cmd::cmd(&args),
         "watermark" => corbul::wm::cmd(&args),
+        "embed" => corbul::enc_cmd::embed(&args),
+        "rerank" => corbul::enc_cmd::rerank(&args),
         other => Err(format!("unknown command `{other}` (try `corbul help`)")),
     }
 }
@@ -438,8 +443,8 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
         ctx: args.num::<usize>("ctx")?.filter(|c| *c > 0),
     };
     let models_dir = args.get("models-dir").map(PathBuf::from);
-    if args.pos.is_empty() && models_dir.is_none() {
-        return Err("serve: give a model, or --models-dir DIR".into());
+    if args.pos.is_empty() && models_dir.is_none() && args.get("encoder").is_none() {
+        return Err("serve: give a model, --models-dir DIR, or --encoder FOLDER".into());
     }
     let mut cfg = ServeConfig::default();
     if let Some(h) = args.get("host") {
@@ -490,6 +495,25 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
             cfg.host
         );
     }
+    let encoder = match args.get("encoder") {
+        Some(p) => {
+            let e = companion_engine::bert::Encoder::open(Path::new(p))
+                .map_err(|e| format!("--encoder: {e}"))?;
+            eprintln!(
+                "encoder {} ({} layers, hidden {}, pooling {}, cross-encoder head {})",
+                e.name,
+                e.bert.cfg.layers,
+                e.bert.cfg.hidden,
+                match e.pool {
+                    companion_engine::bert::Pool::Cls => "cls",
+                    companion_engine::bert::Pool::Mean => "mean",
+                },
+                if e.bert.has_classifier() { "yes" } else { "no" }
+            );
+            Some(e)
+        }
+        None => None,
+    };
     let registry = match args.pos.first() {
         Some(_) => {
             let l = open_model(args)?;
@@ -520,14 +544,21 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
             .ok_or_else(|| format!("--alias: `{a}` is not NAME=MODEL"))?;
         registry.alias(alias.trim(), target.trim())?;
     }
-    if registry.is_empty() {
+    if registry.is_empty() && encoder.is_none() {
         return Err("no models found".into());
     }
     if let Some(d) = args.get("default-model") {
         registry.set_default(d);
     }
-    let names = registry.names();
-    let app = Arc::new(App::with_registry(registry, cfg));
+    let mut names = registry.names();
+    if let Some(e) = &encoder {
+        names.push(e.name.clone());
+    }
+    let mut app = App::with_registry(registry, cfg);
+    if let Some(e) = encoder {
+        app = app.with_encoder(e);
+    }
+    let app = Arc::new(app);
     let h = serve::spawn(app).map_err(|e| format!("cannot listen: {e}"))?;
     shutdown::install();
     eprintln!(

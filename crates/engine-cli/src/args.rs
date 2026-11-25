@@ -32,6 +32,7 @@ pub const FLAGS: &[&str] = &[
     "discovery",
     "overwrite",
     "allow-admin",
+    "no-normalize",
 ];
 
 pub struct Args {

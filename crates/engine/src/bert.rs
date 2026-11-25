@@ -90,12 +90,14 @@ impl BertConfig {
                 "model type `{mt}` is not supported (BERT only)"
             )));
         }
-        if let Some(p) = v.get("position_embedding_type").and_then(Value::as_str) {
-            if p != "absolute" {
-                return Err(BertError::Load(format!(
-                    "position embedding type `{p}` is not supported"
-                )));
-            }
+        if let Some(p) = v
+            .get("position_embedding_type")
+            .and_then(Value::as_str)
+            .filter(|p| *p != "absolute")
+        {
+            return Err(BertError::Load(format!(
+                "position embedding type `{p}` is not supported"
+            )));
         }
         let n = |k: &str, max: u64| -> Result<usize, BertError> {
             let x = v
@@ -603,24 +605,25 @@ impl Encoder {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Small random encoders for tests and demos: nothing here is a trained model.
+#[doc(hidden)]
+pub mod demo {
     use super::*;
     use std::collections::HashMap;
 
-    struct Rng(u64);
+    pub struct Rng(u64);
     impl Rng {
-        fn f(&mut self) -> f32 {
+        pub fn f(&mut self) -> f32 {
             self.0 = self
                 .0
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
             ((self.0 >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.6
         }
-        fn v(&mut self, n: usize) -> Vec<f32> {
+        pub fn v(&mut self, n: usize) -> Vec<f32> {
             (0..n).map(|_| self.f()).collect()
         }
-        fn ones(&mut self, n: usize) -> Vec<f32> {
+        pub fn ones(&mut self, n: usize) -> Vec<f32> {
             (0..n).map(|_| 1.0 + self.f() * 0.2).collect()
         }
     }
@@ -696,6 +699,66 @@ pub(crate) mod tests {
         }
         Mem(m)
     }
+
+    pub fn write_st(path: &Path, m: &Mem) {
+        let mut names: Vec<&String> = m.0.keys().collect();
+        names.sort();
+        let mut hdr = serde_json::Map::new();
+        let mut data: Vec<u8> = vec![];
+        for n in names {
+            let v = &m.0[n];
+            let (a, b) = (data.len(), data.len() + v.len() * 4);
+            data.extend(v.iter().flat_map(|x| x.to_le_bytes()));
+            hdr.insert(
+                n.clone(),
+                serde_json::json!({"dtype": "F32", "shape": [v.len()], "data_offsets": [a, b]}),
+            );
+        }
+        let h = Value::Object(hdr).to_string();
+        let mut f = (h.len() as u64).to_le_bytes().to_vec();
+        f.extend(h.as_bytes());
+        f.extend(data);
+        std::fs::write(path, f).unwrap();
+    }
+
+    /// Write a whole random encoder folder (`config.json`, `tokenizer.json`, `model.safetensors`),
+    /// tokenizer and weights agreeing, for tests and for trying `corbul embed` / `corbul rerank`.
+    pub fn write_folder(dir: &Path, classifier: bool, seed: u64) -> std::io::Result<()> {
+        let c = BertConfig {
+            vocab: 18,
+            ..tiny_cfg()
+        };
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(
+            dir.join("config.json"),
+            r#"{"model_type":"bert","hidden_size":8,"num_attention_heads":2,"num_hidden_layers":2,"intermediate_size":16,"vocab_size":18,"max_position_embeddings":12}"#,
+        )?;
+        let toks = [
+            "[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "hello", "world", "un", "##aff",
+            "##able", "!", ",", "a", "##s", "cafe", "sa", "##rut", "##a",
+        ];
+        let vocab: serde_json::Map<String, Value> = toks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.to_string(), i.into()))
+            .collect();
+        std::fs::write(
+            dir.join("tokenizer.json"),
+            serde_json::json!({"model": {"type": "WordPiece", "vocab": vocab, "unk_token": "[UNK]"}})
+                .to_string(),
+        )?;
+        write_st(
+            &dir.join("model.safetensors"),
+            &tiny_tensors(&c, seed, classifier, "bert."),
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::demo::*;
+    use super::*;
 
     /// A direct f64 transcription of the BERT equations, independent of the production code.
     fn reference(c: &BertConfig, t: &Mem, ids: &[u32], types: &[u32], pre: &str) -> Vec<Vec<f64>> {
@@ -900,66 +963,17 @@ pub(crate) mod tests {
         );
     }
 
-    fn write_st(path: &Path, m: &Mem) {
-        let mut names: Vec<&String> = m.0.keys().collect();
-        names.sort();
-        let mut hdr = serde_json::Map::new();
-        let mut data: Vec<u8> = vec![];
-        for n in names {
-            let v = &m.0[n];
-            let (a, b) = (data.len(), data.len() + v.len() * 4);
-            data.extend(v.iter().flat_map(|x| x.to_le_bytes()));
-            hdr.insert(
-                n.clone(),
-                serde_json::json!({"dtype": "F32", "shape": [v.len()], "data_offsets": [a, b]}),
-            );
-        }
-        let h = Value::Object(hdr).to_string();
-        let mut f = (h.len() as u64).to_le_bytes().to_vec();
-        f.extend(h.as_bytes());
-        f.extend(data);
-        std::fs::write(path, f).unwrap();
-    }
-
     #[test]
     fn a_folder_loads_embeds_text_and_scores_pairs() {
-        let c = BertConfig {
-            vocab: 18,
-            ..tiny_cfg()
-        };
         let d = std::env::temp_dir().join(format!("bert-folder-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
+        write_folder(&d, true, 9).unwrap();
         std::fs::create_dir_all(d.join("1_Pooling")).unwrap();
-        std::fs::write(
-            d.join("config.json"),
-            r#"{"model_type":"bert","hidden_size":8,"num_attention_heads":2,"num_hidden_layers":2,
-                "intermediate_size":16,"vocab_size":18,"max_position_embeddings":12}"#,
-        )
-        .unwrap();
-        let toks = [
-            "[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "hello", "world", "un", "##aff",
-            "##able", "!", ",", "a", "##s", "cafe", "sa", "##rut", "##a",
-        ];
-        let vocab: serde_json::Map<String, Value> = toks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.to_string(), i.into()))
-            .collect();
-        std::fs::write(
-            d.join("tokenizer.json"),
-            serde_json::json!({"model": {"type": "WordPiece", "vocab": vocab, "unk_token": "[UNK]"}})
-                .to_string(),
-        )
-        .unwrap();
         std::fs::write(
             d.join("1_Pooling/config.json"),
             r#"{"pooling_mode_cls_token": true}"#,
         )
         .unwrap();
-        write_st(
-            &d.join("model.safetensors"),
-            &tiny_tensors(&c, 9, true, "bert."),
-        );
         let e = Encoder::open(&d).unwrap();
         assert_eq!(e.pool, Pool::Cls);
         let v = e.embed_text("hello world", None, true).unwrap();

@@ -108,6 +108,8 @@ pub struct App {
     loopback: AtomicBool,
     draining: AtomicBool,
     heavy: AtomicUsize,
+    /// A BERT-family encoder (`--encoder`): serves `/v1/embeddings` and `/v1/rerank`.
+    pub encoder: Option<Arc<companion_engine::bert::Encoder>>,
 }
 impl App {
     /// A server for one model that is already loaded.
@@ -127,7 +129,13 @@ impl App {
             loopback: AtomicBool::new(true),
             draining: AtomicBool::new(false),
             heavy: AtomicUsize::new(0),
+            encoder: None,
         }
+    }
+    /// Serve embeddings and reranking from `e` (its folder name is the model name clients use).
+    pub fn with_encoder(mut self, e: companion_engine::bert::Encoder) -> App {
+        self.encoder = Some(Arc::new(e));
+        self
     }
     fn next_id(&self) -> u64 {
         self.counter.fetch_add(1, Ordering::Relaxed)
@@ -1779,6 +1787,8 @@ fn route(
                 | "/v1/embeddings"
                 | "/api/embed"
                 | "/api/embeddings"
+                | "/v1/rerank"
+                | "/rerank"
         ) {
         if let Some(k) = who
             && let Err(wait) = app.limiter.admit(k, 0)
@@ -1807,9 +1817,6 @@ fn route(
         }
     } else {
         None
-    };
-    let not_impl = |what: &str| {
-        out.json(501, &err_body(style, "not_implemented_error", &format!("{what} are not available: reranking needs a cross-encoder head this engine does not load")))
     };
     match (m, path) {
         ("GET" | "HEAD", "/" | "/ui" | "/ui/") => out.bytes(
@@ -1848,6 +1855,11 @@ fn route(
                 .iter()
                 .filter(|i| allowed(who, &i.name))
                 .map(|i| model_obj(i, ctx_of(app, &i.name)))
+                .chain(app.encoder.iter().filter(|e| allowed(who, &e.name)).map(|e| {
+                    json!({"id": e.name, "object": "model", "created": 0, "owned_by": "corbul",
+                        "meta": {"kind": "encoder", "n_ctx": e.bert.cfg.max_pos, "n_embd": e.bert.cfg.hidden,
+                                 "reranker": e.bert.has_classifier()}})
+                }))
                 .collect();
             out.json(200, &json!({"object": "list", "data": data}));
         }
@@ -2062,7 +2074,10 @@ fn route(
                 Err(e) => fail(e),
             }
         }
-        ("POST", "/v1/rerank" | "/rerank") => not_impl("rerank requests"),
+        ("POST", "/v1/rerank" | "/rerank") => match rerank(app, req, who) {
+            Ok(v) => out.json(200, &v),
+            Err(e) => fail(e),
+        },
         ("POST", "/v1/messages/count_tokens") => match count_tokens(app, req, who) {
             Ok(n) => out.json(200, &json!({"input_tokens": n})),
             Err(e) => fail(e),
@@ -2157,19 +2172,46 @@ fn b64(bytes: &[u8]) -> String {
     o
 }
 
-/// `/v1/embeddings` (OpenAI), `/api/embed` and `/api/embeddings` (Ollama): one vector per input, taken from
-/// the model's final-normed hidden states (`pooling`: mean (default), last or first; `normalize`: unit length,
-/// default true). Inputs are strings, token-id arrays, or lists of either.
+/// Which model answers an embeddings request: the encoder when it is named, or when no decoder is loaded.
+enum EmbBackend {
+    Decoder(Arc<Slot>),
+    Encoder(Arc<companion_engine::bert::Encoder>),
+}
+
+fn embed_backend(app: &App, who: &Principal, body: &Value) -> Result<EmbBackend, ApiError> {
+    let want = body.get("model").and_then(Value::as_str);
+    if let Some(e) = &app.encoder
+        && (want == Some(e.name.as_str())
+            || (app.registry.is_empty() && want.is_none_or(|w| w == "encoder")))
+    {
+        if !allowed(who, &e.name) {
+            return Err(api_err(
+                403,
+                "permission_error",
+                format!("this API key may not use the model `{}`", e.name),
+            ));
+        }
+        return Ok(EmbBackend::Encoder(e.clone()));
+    }
+    Ok(EmbBackend::Decoder(slot_for(app, who, want)?))
+}
+
+/// `/v1/embeddings` (OpenAI), `/api/embed` and `/api/embeddings` (Ollama): one vector per input.
+/// With a decoder model the vector comes from the final-normed hidden states of the last layer; with an
+/// `--encoder` model it is the BERT sentence vector. `pooling`: `mean` (default for decoders; an encoder
+/// uses the pooling it was trained with), `last` (decoders), `first`/`cls`; `normalize`: unit length,
+/// default true. Inputs are strings, token-id arrays, or lists of either.
 fn embeddings(
     app: &App,
     req: &http::Request,
     who: &Principal,
     path: &str,
 ) -> Result<Value, ApiError> {
+    use companion_engine::bert::Pool;
     use companion_engine::model::Pooling;
     let t0 = Instant::now();
     let body = body_json(req)?;
-    let slot = slot_for(app, who, body.get("model").and_then(Value::as_str))?;
+    let backend = embed_backend(app, who, &body)?;
     let legacy = path == "/api/embeddings";
     let key = if legacy { "prompt" } else { "input" };
     let raw = body
@@ -2178,10 +2220,16 @@ fn embeddings(
     let Some(raw) = raw else {
         return Err(bad(format!("`{key}` is required")));
     };
-    let l = &slot.loaded;
+    let (name, ctx) = match &backend {
+        EmbBackend::Decoder(s) => (s.name.clone(), s.loaded.model.spec.context as usize),
+        EmbBackend::Encoder(e) => (e.name.clone(), e.bert.cfg.max_pos),
+    };
     let encode = |v: &Value| -> Result<Vec<usize>, ApiError> {
         match v {
-            Value::String(t) => Ok(to_ids(l.tok.encode(t, true))),
+            Value::String(t) => Ok(match &backend {
+                EmbBackend::Decoder(s) => to_ids(s.loaded.tok.encode(t, true)),
+                EmbBackend::Encoder(e) => e.tok.encode(t).into_iter().map(|i| i as usize).collect(),
+            }),
             Value::Array(a) if a.iter().all(|x| x.is_u64()) => {
                 Ok(a.iter().map(|x| x.as_u64().unwrap_or(0) as usize).collect())
             }
@@ -2210,25 +2258,16 @@ fn embeddings(
             "at most {EMBED_MAX_TOKENS} tokens per request"
         )));
     }
-    let ctx = l.model.spec.context as usize;
     let truncate = body
         .get("truncate")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let pooling = match body
-        .get("pooling")
-        .and_then(Value::as_str)
-        .unwrap_or("mean")
+    let pool_name = body.get("pooling").and_then(Value::as_str);
+    if let Some(p) = pool_name
+        && !matches!(p, "mean" | "last" | "first" | "cls")
     {
-        "mean" => Pooling::Mean,
-        "last" => Pooling::Last,
-        "first" | "cls" => Pooling::First,
-        other => {
-            return Err(bad(format!(
-                "unknown pooling `{other}` (mean, last, first)"
-            )));
-        }
-    };
+        return Err(bad(format!("unknown pooling `{p}` (mean, last, first)")));
+    }
     let normalize = body
         .get("normalize")
         .and_then(Value::as_bool)
@@ -2251,16 +2290,43 @@ fn embeddings(
             }
         }
         counted += ids.len();
-        slot.touch();
-        let mut v = l
-            .model
-            .embed(&ids, pooling, normalize)
-            .map_err(|e| match e {
-                ModelError::Token(_) | ModelError::NoTokens | ModelError::ContextFull(_) => {
-                    bad(e.to_string())
-                }
-                e => server_err(e.to_string()),
-            })?;
+        let mut v = match &backend {
+            EmbBackend::Decoder(slot) => {
+                slot.touch();
+                let pooling = match pool_name.unwrap_or("mean") {
+                    "last" => Pooling::Last,
+                    "first" | "cls" => Pooling::First,
+                    _ => Pooling::Mean,
+                };
+                slot.loaded
+                    .model
+                    .embed(&ids, pooling, normalize)
+                    .map_err(|e| match e {
+                        ModelError::Token(_)
+                        | ModelError::NoTokens
+                        | ModelError::ContextFull(_) => bad(e.to_string()),
+                        e => server_err(e.to_string()),
+                    })?
+            }
+            EmbBackend::Encoder(e) => {
+                let pool = match pool_name {
+                    None => e.pool,
+                    Some("cls" | "first") => Pool::Cls,
+                    Some("mean") => Pool::Mean,
+                    Some(o) => {
+                        return Err(bad(format!("an encoder pools with cls or mean, not `{o}`")));
+                    }
+                };
+                let ids32: Vec<u32> = ids.iter().map(|&i| i as u32).collect();
+                e.bert.embed(&ids32, None, pool, normalize).map_err(|er| {
+                    use companion_engine::bert::BertError as B;
+                    match er {
+                        B::Token(_) | B::Empty | B::TooLong { .. } => bad(er.to_string()),
+                        er => server_err(er.to_string()),
+                    }
+                })?
+            }
+        };
         if let Some(d) = dims {
             if d == 0 || d > v.len() {
                 return Err(bad(format!("`dimensions` must be 1..={}", v.len())));
@@ -2292,14 +2358,99 @@ fn embeddings(
                 json!({"object": "embedding", "index": i, "embedding": e})
             })
             .collect();
-        Ok(json!({"object": "list", "data": data, "model": slot.name,
+        Ok(json!({"object": "list", "data": data, "model": name,
             "usage": {"prompt_tokens": counted, "total_tokens": counted}}))
     } else if legacy {
         Ok(json!({"embedding": vecs.into_iter().next().unwrap_or_default()}))
     } else {
-        Ok(json!({"model": slot.name, "embeddings": vecs,
+        Ok(json!({"model": name, "embeddings": vecs,
             "total_duration": t0.elapsed().as_nanos() as u64, "prompt_eval_count": counted}))
     }
+}
+
+/// `/v1/rerank` and `/rerank`: score every document against the query with the `--encoder` cross-encoder
+/// and return them best first (`top_n`, `return_documents`).
+fn rerank(app: &App, req: &http::Request, who: &Principal) -> Result<Value, ApiError> {
+    const MAX_DOCS: usize = 256;
+    let body = body_json(req)?;
+    let Some(e) = &app.encoder else {
+        return Err(api_err(
+            501,
+            "not_implemented_error",
+            "rerank requests need a cross-encoder: start the server with --encoder FOLDER",
+        ));
+    };
+    if !allowed(who, &e.name) {
+        return Err(api_err(
+            403,
+            "permission_error",
+            format!("this API key may not use the model `{}`", e.name),
+        ));
+    }
+    if !e.bert.has_classifier() {
+        return Err(bad(format!(
+            "the encoder `{}` has no classification head, so it cannot rerank (use a cross-encoder)",
+            e.name
+        )));
+    }
+    let query = body
+        .get("query")
+        .and_then(Value::as_str)
+        .filter(|q| !q.is_empty())
+        .ok_or_else(|| bad("`query` (a non-empty string) is required"))?;
+    let docs: Vec<String> = match body.get("documents") {
+        Some(Value::Array(a)) if !a.is_empty() => a
+            .iter()
+            .map(|d| match d {
+                Value::String(s) => Ok(s.clone()),
+                Value::Object(o) => o
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| bad("a document object needs a `text` string")),
+                _ => Err(bad("`documents` must be strings or objects with `text`")),
+            })
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad("`documents` (a non-empty array) is required")),
+    };
+    if docs.len() > MAX_DOCS {
+        return Err(bad(format!("at most {MAX_DOCS} documents per request")));
+    }
+    let top = body
+        .get("top_n")
+        .and_then(Value::as_u64)
+        .map_or(docs.len(), |n| (n as usize).min(docs.len()));
+    let with_docs = body
+        .get("return_documents")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mut scored = vec![];
+    let mut tokens = 0usize;
+    for (i, d) in docs.iter().enumerate() {
+        let (ids, types) = e.tok.encode_pair(query, d, e.bert.cfg.max_pos);
+        tokens += ids.len();
+        let s = e
+            .bert
+            .classify(&ids, &types)
+            .map_err(|er| server_err(er.to_string()))?[0];
+        scored.push((i, s));
+    }
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    scored.truncate(top);
+    let results: Vec<Value> = scored
+        .iter()
+        .map(|(i, s)| {
+            let mut r = json!({"index": i, "relevance_score": s});
+            if with_docs {
+                r["document"] = json!({"text": docs[*i]});
+            }
+            r
+        })
+        .collect();
+    Ok(
+        json!({"object": "list", "model": e.name, "results": results,
+        "usage": {"prompt_tokens": tokens, "total_tokens": tokens}}),
+    )
 }
 
 fn count_tokens(app: &App, req: &http::Request, who: &Principal) -> Result<usize, ApiError> {
@@ -3075,6 +3226,136 @@ mod tests {
         (spawn(Arc::new(App::new(loaded, cfg))).unwrap(), d)
     }
 
+    #[test]
+    fn an_encoder_alone_serves_embeddings_and_rerank() {
+        let d = tmpdir("serve-enc");
+        companion_engine::bert::demo::write_folder(&d, true, 11).unwrap();
+        let enc = companion_engine::bert::Encoder::open(&d).unwrap();
+        let name = enc.name.clone();
+        let cfg = ServeConfig {
+            port: 0,
+            ..ServeConfig::default()
+        };
+        let app = App::with_registry(Registry::new(RegCfg::default()), cfg).with_encoder(enc);
+        let h = spawn(Arc::new(app)).unwrap();
+        let models = get(h.addr, "/v1/models", "").json();
+        assert_eq!(models["data"][0]["id"], name);
+        assert_eq!(models["data"][0]["meta"]["reranker"], true);
+        // embeddings: no model field, the encoder's name, and a foreign name that falls through to "no model"
+        let a = post(
+            h.addr,
+            "/v1/embeddings",
+            r#"{"input":["hello world","world"]}"#,
+            "",
+        )
+        .json();
+        assert_eq!(a["model"], name);
+        assert_eq!(a["data"].as_array().unwrap().len(), 2);
+        assert_eq!(a["data"][0]["embedding"].as_array().unwrap().len(), 8);
+        let b = post(
+            h.addr,
+            "/v1/embeddings",
+            &json!({"model": name, "input": "hello world", "pooling": "cls"}).to_string(),
+            "",
+        )
+        .json();
+        assert_ne!(b["data"][0]["embedding"], a["data"][0]["embedding"]);
+        assert_eq!(
+            post(
+                h.addr,
+                "/v1/embeddings",
+                r#"{"input":"x","pooling":"last"}"#,
+                ""
+            )
+            .status,
+            400
+        );
+        let o = post(h.addr, "/api/embed", r#"{"input":"hello"}"#, "").json();
+        assert_eq!(o["embeddings"].as_array().unwrap().len(), 1);
+        // text beyond the 12-token window is refused unless `truncate` is set
+        let long = "hello ".repeat(30);
+        let body = json!({"input": long}).to_string();
+        assert_eq!(post(h.addr, "/v1/embeddings", &body, "").status, 400);
+        let body = json!({"input": long, "truncate": true}).to_string();
+        assert_eq!(post(h.addr, "/v1/embeddings", &body, "").status, 200);
+        // rerank: best first, top_n, return_documents, and its input checks
+        let r = post(
+            h.addr,
+            "/v1/rerank",
+            r#"{"query":"hello","documents":["world","hello hello",{"text":"un"}],"return_documents":true}"#,
+            "",
+        )
+        .json();
+        let res = r["results"].as_array().unwrap();
+        assert_eq!(res.len(), 3);
+        let scores: Vec<f64> = res
+            .iter()
+            .map(|x| x["relevance_score"].as_f64().unwrap())
+            .collect();
+        assert!(scores.windows(2).all(|w| w[0] >= w[1]), "{scores:?}");
+        assert!(res[0]["document"]["text"].is_string());
+        let t = post(
+            h.addr,
+            "/rerank",
+            r#"{"query":"hello","documents":["a","b","c"],"top_n":1}"#,
+            "",
+        )
+        .json();
+        assert_eq!(t["results"].as_array().unwrap().len(), 1);
+        for body in [
+            "{}",
+            r#"{"query":"q"}"#,
+            r#"{"query":"","documents":["a"]}"#,
+            r#"{"query":"q","documents":[]}"#,
+            r#"{"query":"q","documents":[1]}"#,
+        ] {
+            assert_eq!(post(h.addr, "/v1/rerank", body, "").status, 400, "{body}");
+        }
+        // chat has no decoder to run
+        assert_ne!(
+            post(
+                h.addr,
+                "/v1/chat/completions",
+                r#"{"messages":[{"role":"user","content":"hi"}]}"#,
+                ""
+            )
+            .status,
+            200
+        );
+        h.stop();
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn an_encoder_without_a_classifier_embeds_but_cannot_rerank() {
+        let d = tmpdir("serve-enc2");
+        companion_engine::bert::demo::write_folder(&d, false, 12).unwrap();
+        let enc = companion_engine::bert::Encoder::open(&d).unwrap();
+        let app = App::with_registry(
+            Registry::new(RegCfg::default()),
+            ServeConfig {
+                port: 0,
+                ..ServeConfig::default()
+            },
+        )
+        .with_encoder(enc);
+        let h = spawn(Arc::new(app)).unwrap();
+        assert_eq!(
+            post(h.addr, "/v1/embeddings", r#"{"input":"hello"}"#, "").status,
+            200
+        );
+        let r = post(
+            h.addr,
+            "/v1/rerank",
+            r#"{"query":"q","documents":["a"]}"#,
+            "",
+        );
+        assert_eq!(r.status, 400);
+        assert!(r.text().contains("classification head"));
+        h.stop();
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
     fn weather_tool() -> Value {
         json!({"type": "function", "function": {"name": "get_weather", "description": "Get the weather", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}})
     }
@@ -3577,11 +3858,11 @@ mod tests {
             s[0]["n_cached"].as_u64().unwrap() > 0,
             "the conversation stays cached for the next turn"
         );
-        // rerank says plainly that it is not available
+        // rerank says plainly that it needs an --encoder cross-encoder
         for path in ["/v1/rerank", "/rerank"] {
             let r = post(h.addr, path, "{}", "");
             assert_eq!(r.status, 501, "{path}");
-            assert!(r.json().to_string().contains("not available"), "{path}");
+            assert!(r.json().to_string().contains("--encoder"), "{path}");
         }
         // embeddings: OpenAI shape, Ollama shapes, token-id input, base64, and bad input
         let e = post(
