@@ -6,6 +6,7 @@
 //! `ENGINE_VOCAB_ONLY=qwen2,phi-3` restricts the run to some families.
 use companion_engine::gguf::Gguf;
 use companion_engine::tokenizer::Tokenizer;
+use companion_engine::wordpiece::WordPiece;
 use std::path::Path;
 
 /// `ENGINE_VOCAB_DIR`, or a loud `SKIPPED` line (the test did not run). `ENGINE_REQUIRE_VOCAB=1`
@@ -126,6 +127,40 @@ fn encodes_exactly_like_the_reference_tokenisers() {
         all_ok,
         "some families differ from the reference (see stderr)"
     );
+}
+
+/// The BERT (WordPiece) reference pair, if present: `ggml-vocab-bert-bge.gguf[.inp|.out]`.
+#[test]
+fn wordpiece_matches_the_bert_reference() {
+    let Some(dir) = vocab_dir() else { return };
+    let dir = Path::new(&dir);
+    let g = dir.join("ggml-vocab-bert-bge.gguf");
+    if !g.exists() {
+        eprintln!("bert-bge: files not found");
+        return;
+    }
+    let gguf = Gguf::parse(std::io::BufReader::new(std::fs::File::open(&g).unwrap())).unwrap();
+    let t = WordPiece::from_gguf(&gguf).unwrap();
+    let inp = std::fs::read_to_string(dir.join("ggml-vocab-bert-bge.gguf.inp")).unwrap();
+    let out = std::fs::read_to_string(dir.join("ggml-vocab-bert-bge.gguf.out")).unwrap();
+    let cs = cases(&inp);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(cs.len(), lines.len());
+    let mut bad = vec![];
+    for (n, (c, l)) in cs.iter().zip(&lines).enumerate() {
+        let got = t.tokenize(c);
+        if got != ids(l) {
+            bad.push(format!(
+                "case {n} {c:?}\n   want {:?}\n   got  {got:?}",
+                ids(l)
+            ));
+        }
+    }
+    eprintln!("bert-bge        {}/{}", cs.len() - bad.len(), cs.len());
+    for b in bad.iter().take(8) {
+        eprintln!("   {b}");
+    }
+    assert!(bad.is_empty(), "{} cases differ", bad.len());
 }
 
 /// Texts with no reference output: multilingual, adversarial, combining marks, long runs.

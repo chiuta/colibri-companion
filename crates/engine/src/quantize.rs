@@ -581,7 +581,6 @@ fn enc_q2_k(x: &[f32], w: &[f32], b: &mut [u8]) {
     }
 }
 
-
 /// Nearest entry of the IQ4 grid for `v / d`.
 fn iq4_nearest(t: f32) -> u8 {
     let mut best = 0usize;
@@ -656,7 +655,11 @@ fn enc_iq4_xs(x: &[f32], w: &[f32], b: &mut [u8]) {
     let mut ds = [0.0f32; 8];
     let mut idx = [0u8; 32];
     for ib in 0..8 {
-        ds[ib] = iq4_fit(&x[32 * ib..32 * ib + 32], &w[32 * ib..32 * ib + 32], &mut idx);
+        ds[ib] = iq4_fit(
+            &x[32 * ib..32 * ib + 32],
+            &w[32 * ib..32 * ib + 32],
+            &mut idx,
+        );
     }
     let dmax = ds.iter().fold(0.0f32, |a, v| a.max(v.abs()));
     let d = put16(b, 0, dmax / 31.0);

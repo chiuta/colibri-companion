@@ -7,7 +7,7 @@ set -euo pipefail
 dir="${1:-vocab}"
 ref="${2:-master}"
 base="https://raw.githubusercontent.com/ggml-org/llama.cpp/${ref}/models"
-families="llama-bpe qwen2 gpt-2 llama-spm deepseek-llm deepseek-coder phi-3 falcon starcoder mpt command-r refact"
+families="llama-bpe qwen2 gpt-2 llama-spm deepseek-llm deepseek-coder phi-3 falcon starcoder mpt command-r refact bert-bge"
 mkdir -p "$dir"
 fail=0
 for f in $families; do

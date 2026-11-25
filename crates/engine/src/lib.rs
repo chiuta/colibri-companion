@@ -55,3 +55,4 @@ pub mod stream_layers;
 pub mod tokenizer;
 pub mod vision;
 pub mod watermark;
+pub mod wordpiece;

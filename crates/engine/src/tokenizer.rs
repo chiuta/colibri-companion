@@ -353,7 +353,7 @@ fn assemble(p: Parts) -> Tokenizer {
 /// algorithmically, and the combining-class reordering; it does NOT cover the CJK compatibility
 /// ideographs (U+F900–FAFF, U+2F800–2FA1F), which NFC maps to unified ideographs, and it is not a
 /// compatibility (NFKC/NFKD) normaliser — see [`nfkc_lite`].
-mod uni {
+pub mod uni {
     use std::borrow::Cow;
     use std::collections::HashMap;
     use std::sync::OnceLock;
