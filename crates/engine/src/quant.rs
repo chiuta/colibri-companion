@@ -17,6 +17,10 @@ pub enum DType {
     Q5K,
     Q6K,
     Q8K,
+    /// 4-bit non-linear (16-entry table), blocks of 32.
+    IQ4NL,
+    /// 4-bit non-linear with 6-bit sub-block scales, super-blocks of 256.
+    IQ4XS,
     /// A type this build does not know; carries the raw id.
     Other(u32),
 }
@@ -37,6 +41,8 @@ impl DType {
             13 => DType::Q5K,
             14 => DType::Q6K,
             15 => DType::Q8K,
+            20 => DType::IQ4NL,
+            23 => DType::IQ4XS,
             30 => DType::BF16,
             n => DType::Other(n),
         }
@@ -57,6 +63,8 @@ impl DType {
             DType::Q5K => (256, 176),
             DType::Q6K => (256, 210),
             DType::Q8K => (256, 292),
+            DType::IQ4NL => (32, 18),
+            DType::IQ4XS => (256, 136),
             DType::Other(_) => return None,
         })
     }
@@ -86,6 +94,8 @@ impl DType {
                 | DType::Q5K
                 | DType::Q6K
                 | DType::Q8K
+                | DType::IQ4NL
+                | DType::IQ4XS
         )
     }
 }
@@ -129,6 +139,19 @@ pub fn f16_to_f32(h: u16) -> f32 {
         (s << 31) | ((e + 127 - 15) << 23) | (m << 13)
     };
     f32::from_bits(bits)
+}
+
+/// The 16 values the 4-bit codes of IQ4_NL / IQ4_XS index (a non-uniform grid, denser near zero).
+pub const KVALUES_IQ4NL: [i8; 16] = [
+    -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113,
+];
+
+/// Signed 6-bit scale (`-32..=31`) of sub-block `ib` of an IQ4_XS super-block `b`
+/// (`sh` is its little-endian `scales_h`).
+pub fn iq4xs_scale(b: &[u8], sh: u16, ib: usize) -> i32 {
+    let lo = (b[4 + ib / 2] >> (4 * (ib % 2))) & 0xf;
+    let hi = ((sh >> (2 * ib)) & 3) as u8;
+    (lo | (hi << 4)) as i32 - 32
 }
 
 fn rd16(b: &[u8], o: usize) -> f32 {
@@ -210,6 +233,34 @@ pub fn dequantize(t: DType, src: &[u8], n: usize, out: &mut Vec<f32>) -> Result<
                 }
                 for j in 0..16 {
                     out.push(d * ((b[2 + j] >> 4) as i32 - 8) as f32);
+                }
+            }
+        }
+        DType::IQ4NL => {
+            for b in src[..need].chunks_exact(18) {
+                let d = rd16(b, 0);
+                for j in 0..16 {
+                    out.push(d * KVALUES_IQ4NL[(b[2 + j] & 0xf) as usize] as f32);
+                }
+                for j in 0..16 {
+                    out.push(d * KVALUES_IQ4NL[(b[2 + j] >> 4) as usize] as f32);
+                }
+            }
+        }
+        DType::IQ4XS => {
+            for b in src[..need].chunks_exact(136) {
+                let d = rd16(b, 0);
+                let sh = u16::from_le_bytes([b[2], b[3]]);
+                for ib in 0..8 {
+                    let ls = iq4xs_scale(b, sh, ib);
+                    let dl = d * ls as f32;
+                    let q = &b[8 + 16 * ib..8 + 16 * ib + 16];
+                    for &v in q {
+                        out.push(dl * KVALUES_IQ4NL[(v & 0xf) as usize] as f32);
+                    }
+                    for &v in q {
+                        out.push(dl * KVALUES_IQ4NL[(v >> 4) as usize] as f32);
+                    }
                 }
             }
         }
@@ -417,6 +468,45 @@ mod tests {
     // The blocks below are non-constant (random scales, mins and quants). The expected values come from
     // an independent Python transcription of ggml's dequantize_row_q4_K / q6_K; every value is exactly
     // representable, so the comparison is exact.
+    #[test]
+    fn iq4_nl_decodes_the_documented_grid() {
+        // d = 0.5 (f16 0x3800); every byte 0xF0: low nibble 0 -> -127, high nibble 15 -> 113
+        let mut b = vec![0x00u8, 0x38];
+        b.extend([0xF0u8; 16]);
+        let mut o = vec![];
+        dequantize(DType::IQ4NL, &b, 32, &mut o).unwrap();
+        assert!(o[..16].iter().all(|&v| v == -63.5));
+        assert!(o[16..].iter().all(|&v| v == 56.5));
+    }
+
+    #[test]
+    fn iq4_xs_decodes_scales_from_the_split_fields() {
+        // d = 1.0; sub-block 0: scale 15 (low nibble 0xF, high bits 2 -> 47 - 32); sub-block 1: -16 (low 0, high bits 1)
+        let mut b = vec![0u8; 136];
+        b[0..2].copy_from_slice(&[0x00, 0x3C]);
+        b[2..4].copy_from_slice(&6u16.to_le_bytes());
+        b[4] = 0x0F;
+        b[8] = 0x80; // sub-block 0: low nibble 0 (-127), high nibble 8 (1)
+        b[24] = 0x0F; // sub-block 1: low nibble 15 (113), high nibble 0 (-127)
+        let mut o = vec![];
+        dequantize(DType::IQ4XS, &b, 256, &mut o).unwrap();
+        assert_eq!(o[0], 15.0 * -127.0);
+        assert_eq!(o[16], 15.0);
+        assert_eq!(o[32], -16.0 * 113.0);
+        assert_eq!(o[48], -16.0 * -127.0);
+        assert_eq!(iq4xs_scale(&b, 6, 0), 15);
+        assert_eq!(iq4xs_scale(&b, 6, 1), -16);
+    }
+
+    #[test]
+    fn iq4_geometry_and_ids() {
+        assert_eq!(DType::from_id(20), DType::IQ4NL);
+        assert_eq!(DType::from_id(23), DType::IQ4XS);
+        assert_eq!(DType::IQ4NL.geometry(), Some((32, 18)));
+        assert_eq!(DType::IQ4XS.geometry(), Some((256, 136)));
+        assert!(DType::IQ4NL.decodable() && DType::IQ4XS.decodable());
+    }
+
     #[test]
     fn q4k_decodes_a_random_block_position_by_position() {
         let blk = unhex(
@@ -927,6 +1017,11 @@ pub(crate) mod testenc {
                 .iter()
                 .flat_map(|v| ((v.to_bits() >> 16) as u16).to_le_bytes())
                 .collect(),
+            DType::IQ4NL | DType::IQ4XS => {
+                let mut o = vec![0u8; t.bytes_for(x.len() as u64).unwrap() as usize];
+                crate::quantize::quantize_row_into(t, x, None, &mut o).unwrap();
+                o
+            }
             _ => {
                 let f: fn(&[f32]) -> Vec<u8> = match t {
                     DType::Q8_0 => enc_q8_0,

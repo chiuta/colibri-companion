@@ -142,6 +142,28 @@ impl Unp {
                     self.q[j + 16] = (b[2 + j] >> 4) as i8 - 8;
                 }
             }
+            DType::IQ4NL => {
+                self.simple(rd16(b, 0));
+                for j in 0..16 {
+                    self.q[j] = crate::quant::KVALUES_IQ4NL[(b[2 + j] & 0xf) as usize];
+                    self.q[j + 16] = crate::quant::KVALUES_IQ4NL[(b[2 + j] >> 4) as usize];
+                }
+            }
+            DType::IQ4XS => {
+                self.gs = 32;
+                self.d = rd16(b, 0);
+                self.dmin = 0.0;
+                let sh = u16::from_le_bytes([b[2], b[3]]);
+                for ib in 0..8 {
+                    self.sc[ib] = crate::quant::iq4xs_scale(b, sh, ib);
+                    self.mn[ib] = 0;
+                    for j in 0..16 {
+                        let v = b[8 + 16 * ib + j];
+                        self.q[32 * ib + j] = crate::quant::KVALUES_IQ4NL[(v & 0xf) as usize];
+                        self.q[32 * ib + j + 16] = crate::quant::KVALUES_IQ4NL[(v >> 4) as usize];
+                    }
+                }
+            }
             DType::Q4_1 => {
                 self.simple(rd16(b, 0));
                 self.mn[0] = 1;
@@ -499,7 +521,7 @@ mod tests {
     use super::*;
     use crate::quant::testenc::{encode, signal};
 
-    const ALL: [DType; 14] = [
+    const ALL: [DType; 16] = [
         DType::F32,
         DType::F16,
         DType::BF16,
@@ -514,6 +536,8 @@ mod tests {
         DType::Q4K,
         DType::Q5K,
         DType::Q6K,
+        DType::IQ4NL,
+        DType::IQ4XS,
     ];
 
     fn matrix(t: DType, rows: usize, cols: usize) -> Vec<u8> {

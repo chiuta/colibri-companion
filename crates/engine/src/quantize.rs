@@ -581,6 +581,110 @@ fn enc_q2_k(x: &[f32], w: &[f32], b: &mut [u8]) {
     }
 }
 
+
+/// Nearest entry of the IQ4 grid for `v / d`.
+fn iq4_nearest(t: f32) -> u8 {
+    let mut best = 0usize;
+    let mut be = f32::INFINITY;
+    for (i, &k) in crate::quant::KVALUES_IQ4NL.iter().enumerate() {
+        let e = (t - f32::from(k)).abs();
+        if e < be {
+            be = e;
+            best = i;
+        }
+    }
+    best as u8
+}
+
+/// Fit one 32-element IQ4 block: the scale `d` (before f16 rounding) that minimises the weighted squared
+/// error over a few candidates, with the codes for it in `idx`.
+fn iq4_fit(x: &[f32], w: &[f32], idx: &mut [u8; 32]) -> f32 {
+    let amax = x
+        .iter()
+        .copied()
+        .fold(0.0f32, |a, v| if v.abs() > a.abs() { v } else { a });
+    if amax == 0.0 || !amax.is_finite() {
+        idx.fill(iq4_nearest(0.0));
+        return 0.0;
+    }
+    let mut best = (f64::INFINITY, 0.0f32);
+    for step in -8i32..=8 {
+        let d0 = amax / (-127.0 * (1.0 + 0.02 * step as f32));
+        let mut tmp = [0u8; 32];
+        let (mut sxv, mut svv) = (0.0f64, 0.0f64);
+        for i in 0..32 {
+            tmp[i] = iq4_nearest(x[i] / d0);
+            let v = f64::from(crate::quant::KVALUES_IQ4NL[tmp[i] as usize]);
+            let wi = f64::from(w.get(i).copied().unwrap_or(1.0).max(0.0));
+            sxv += wi * f64::from(x[i]) * v;
+            svv += wi * v * v;
+        }
+        let d = if svv > 0.0 { (sxv / svv) as f32 } else { d0 };
+        let mut err = 0.0f64;
+        for i in 0..32 {
+            let v = f64::from(crate::quant::KVALUES_IQ4NL[iq4_nearest(x[i] / d) as usize]);
+            let wi = f64::from(w.get(i).copied().unwrap_or(1.0).max(0.0));
+            let e = f64::from(x[i]) - f64::from(d) * v;
+            err += wi * e * e;
+        }
+        if err < best.0 {
+            best = (err, d);
+        }
+    }
+    let d = best.1;
+    for i in 0..32 {
+        idx[i] = iq4_nearest(x[i] / d);
+    }
+    d
+}
+
+fn enc_iq4_nl(x: &[f32], w: &[f32], b: &mut [u8]) {
+    let mut idx = [0u8; 32];
+    let d = iq4_fit(x, w, &mut idx);
+    let d = put16(b, 0, d);
+    if d != 0.0 {
+        for i in 0..32 {
+            idx[i] = iq4_nearest(x[i] / d);
+        }
+    }
+    for j in 0..16 {
+        b[2 + j] = idx[j] | (idx[j + 16] << 4);
+    }
+}
+
+fn enc_iq4_xs(x: &[f32], w: &[f32], b: &mut [u8]) {
+    let mut ds = [0.0f32; 8];
+    let mut idx = [0u8; 32];
+    for ib in 0..8 {
+        ds[ib] = iq4_fit(&x[32 * ib..32 * ib + 32], &w[32 * ib..32 * ib + 32], &mut idx);
+    }
+    let dmax = ds.iter().fold(0.0f32, |a, v| a.max(v.abs()));
+    let d = put16(b, 0, dmax / 31.0);
+    let mut sh = 0u16;
+    for ib in 0..8 {
+        let ls = if d > 0.0 {
+            (ds[ib] / d).round().clamp(-32.0, 31.0) as i32
+        } else {
+            0
+        };
+        let u = (ls + 32) as u8;
+        b[4 + ib / 2] |= (u & 0xf) << (4 * (ib % 2));
+        sh |= u16::from(u >> 4) << (2 * ib);
+        let dl = d * ls as f32;
+        for i in 0..32 {
+            idx[i] = if dl != 0.0 {
+                iq4_nearest(x[32 * ib + i] / dl)
+            } else {
+                iq4_nearest(0.0)
+            };
+        }
+        for j in 0..16 {
+            b[8 + 16 * ib + j] = idx[j] | (idx[j + 16] << 4);
+        }
+    }
+    b[2..4].copy_from_slice(&sh.to_le_bytes());
+}
+
 type BlockEnc = fn(&[f32], &[f32], &mut [u8]);
 
 fn block_encoder(t: DType) -> Option<BlockEnc> {
@@ -596,6 +700,8 @@ fn block_encoder(t: DType) -> Option<BlockEnc> {
         DType::Q6K => enc_q6_k,
         DType::Q3K => enc_q3_k,
         DType::Q2K => enc_q2_k,
+        DType::IQ4NL => enc_iq4_nl,
+        DType::IQ4XS => enc_iq4_xs,
         _ => return None,
     })
 }
@@ -1124,6 +1230,8 @@ pub fn dtype_name(t: DType) -> String {
         DType::Q5K => "Q5_K",
         DType::Q6K => "Q6_K",
         DType::Q8K => "Q8_K",
+        DType::IQ4NL => "IQ4_NL",
+        DType::IQ4XS => "IQ4_XS",
         DType::F32 => "F32",
         DType::F16 => "F16",
         DType::BF16 => "BF16",
@@ -1144,6 +1252,8 @@ pub fn parse_dtype(s: &str) -> Option<DType> {
         "Q5_K" => DType::Q5K,
         "Q6_K" => DType::Q6K,
         "Q8_K" => DType::Q8K,
+        "IQ4_NL" => DType::IQ4NL,
+        "IQ4_XS" => DType::IQ4XS,
         "F32" => DType::F32,
         "F16" => DType::F16,
         "BF16" => DType::BF16,
@@ -1152,9 +1262,9 @@ pub fn parse_dtype(s: &str) -> Option<DType> {
 }
 
 impl Recipe {
-    pub const NAMES: [&'static str; 15] = [
+    pub const NAMES: [&'static str; 17] = [
         "F32", "F16", "BF16", "Q8_0", "Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q2_K", "Q3_K_M", "Q4_K_S",
-        "Q4_K_M", "Q5_K_S", "Q5_K_M", "Q6_K",
+        "Q4_K_M", "Q5_K_S", "Q5_K_M", "Q6_K", "IQ4_NL", "IQ4_XS",
     ];
 
     pub fn named(name: &str) -> Option<Recipe> {
@@ -1221,6 +1331,16 @@ impl Recipe {
                 ],
             ),
             "Q6_K" => (18, DType::Q6K, vec![]),
+            "IQ4_NL" => (
+                25,
+                DType::IQ4NL,
+                vec![r("output.weight", DType::Q6K, LayerSel::All)],
+            ),
+            "IQ4_XS" => (
+                30,
+                DType::IQ4XS,
+                vec![r("output.weight", DType::Q6K, LayerSel::All)],
+            ),
             _ => return None,
         };
         Some(Recipe {
@@ -2343,7 +2463,7 @@ mod tests {
         dequantize(t, &q, x.len(), &mut o).unwrap();
         o
     }
-    const ALL: [(DType, f32); 11] = [
+    const ALL: [(DType, f32); 13] = [
         (DType::Q8_0, 0.01),
         (DType::Q4_0, 0.2),
         (DType::Q4_1, 0.2),
@@ -2355,6 +2475,8 @@ mod tests {
         (DType::Q5K, 0.1),
         (DType::Q6K, 0.05),
         (DType::Q8K, 0.01),
+        (DType::IQ4NL, 0.15),
+        (DType::IQ4XS, 0.15),
     ];
 
     #[test]
