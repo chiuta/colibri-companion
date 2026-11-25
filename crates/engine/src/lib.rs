@@ -13,6 +13,7 @@ pub mod arch;
 pub mod audio;
 pub mod autoquant;
 pub mod backend;
+pub mod bert;
 pub mod confidence;
 pub mod eval;
 pub mod family;
