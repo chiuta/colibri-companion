@@ -106,6 +106,11 @@ impl CompanionApp {
                         }
                     }
                 });
+                self.save_formats_row(ui, "sources", &entries);
+                if !self.docs.research.message.is_empty() {
+                    let m = self.docs.research.message.clone();
+                    ui.label(RichText::new(m).color(p.warn));
+                }
             });
     }
 }

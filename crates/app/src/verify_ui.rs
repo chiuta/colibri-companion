@@ -24,6 +24,8 @@ pub struct VerifyState {
     run: Option<Receiver<AuditReport>>,
     /// The last check ended without a report (its thread stopped unexpectedly).
     failed: bool,
+    /// Read the pages of the research shelf instead of the plain collection.
+    pub pages: bool,
 }
 
 /// Longest text the box takes; the check itself reads at most 256 KiB of it.
@@ -51,17 +53,7 @@ impl<'a> CollectionSources<'a> {
 /// `report.pdf` is cited as `report` (and as `report.pdf`). A dot followed by a number is part of
 /// the name, not an extension: "Chapter 2.5" and "Chapter 2" are two different documents.
 pub(crate) fn stem(name: &str) -> String {
-    match name.rsplit_once('.') {
-        Some((s, ext))
-            if !s.is_empty()
-                && ext.len() <= 5
-                && !ext.contains(' ')
-                && ext.chars().next().is_some_and(char::is_alphabetic) =>
-        {
-            s.to_string()
-        }
-        _ => name.to_string(),
-    }
+    companion_scholar::shelf::stem(name)
 }
 
 impl Passages for CollectionSources<'_> {
@@ -123,12 +115,20 @@ fn start_check(
     opts: AuditOptions,
     wake: impl FnOnce() + Send + 'static,
 ) -> Receiver<AuditReport> {
-    let (tx, rx) = mpsc::channel();
     let (col, text) = (col.clone(), text.to_string());
+    start_run(move || check_with(&col, &text, &opts), wake)
+}
+
+/// Like [`start_check`], for any check: `work` runs on its own thread.
+fn start_run(
+    work: impl FnOnce() -> AuditReport + Send + 'static,
+    wake: impl FnOnce() + Send + 'static,
+) -> Receiver<AuditReport> {
+    let (tx, rx) = mpsc::channel();
     let spawned = std::thread::Builder::new()
         .name("verify-citations".into())
         .spawn(move || {
-            let report = check_with(&col, &text, &opts);
+            let report = work();
             let _ = tx.send(report);
             wake();
         });
@@ -189,6 +189,19 @@ impl CompanionApp {
                     .desired_rows(5)
                     .desired_width(f32::INFINITY),
             );
+            self.docs.research.ensure(coll_id);
+            let paged = self
+                .docs
+                .research
+                .shelf_of(coll_id)
+                .is_some_and(|s| s.counts().2 > 0);
+            if paged {
+                let label = self.t(
+                    "Folosește numerele de pagină reale (raftul de cercetare)",
+                    "Use the real page numbers (research shelf)",
+                );
+                ui.checkbox(&mut self.docs.verify.pages, label);
+            }
             // take the report if the thread is done
             let mut waiting = false;
             if let Some(rx) = &self.docs.verify.run {
@@ -215,8 +228,19 @@ impl CompanionApp {
                     self.docs.verify.report = None;
                     self.docs.verify.failed = false;
                     self.docs.verify.report_coll = coll_id.to_string();
-                    if let Some(c) = self.docs.lib.get(coll_id) {
-                        let ctx = ui.ctx().clone();
+                    let ctx = ui.ctx().clone();
+                    if let Some(sh) = self
+                        .docs
+                        .research
+                        .shelf_of(coll_id)
+                        .filter(|_| paged && self.docs.verify.pages)
+                    {
+                        let (src, text) = (sh.sources(), self.docs.verify.text.clone());
+                        self.docs.verify.run = Some(start_run(
+                            move || audit::audit(&src, &text, &options()),
+                            move || ctx.request_repaint(),
+                        ));
+                    } else if let Some(c) = self.docs.lib.get(coll_id) {
                         self.docs.verify.run = Some(start_check(
                             c,
                             &self.docs.verify.text,

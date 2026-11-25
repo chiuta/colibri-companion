@@ -25,6 +25,7 @@ pub struct DocsState {
     pub verify: crate::verify_ui::VerifyState,
     pub bib: crate::bib_ui::BibState,
     pub ocr: crate::ocr_ui::OcrState,
+    pub research: crate::research_ui::ResearchState,
     searcher: Option<(String, u64, Searcher)>,
 }
 
@@ -89,6 +90,21 @@ impl CompanionApp {
             Probe::Found(p) => Some(p.clone()),
             _ => None,
         };
+        let shelf_files: Vec<PathBuf> = found
+            .files
+            .iter()
+            .filter(|p| attach::kind_of(p) != attach::Kind::Image)
+            .cloned()
+            .collect();
+        if !shelf_files.is_empty() {
+            let coll = coll.to_string();
+            self.spawn(move |tx| {
+                let file =
+                    companion_scholar::shelf::shelf_file(&crate::research_ui::shelves_dir(), &coll);
+                let results = companion_scholar::shelf::add_files(&file, &shelf_files);
+                let _ = tx.send(Event::ShelfDone { coll, results });
+            });
+        }
         for path in found.files {
             let name = path
                 .file_name()
@@ -328,6 +344,8 @@ impl CompanionApp {
                 ui.add_space(6.0);
                 self.verify_section(ui, &id);
                 ui.add_space(6.0);
+                self.research_section(ui, &id);
+                ui.add_space(6.0);
                 self.ocr_section(ui, &id);
                 ui.add_space(6.0);
                 self.bib_section(ui);
@@ -369,12 +387,31 @@ impl CompanionApp {
             self.docs_add_paths(&id, &paths);
         }
         if let Some((c, d)) = remove_doc {
+            {
+                let (coll, name) = (c.clone(), d.clone());
+                self.spawn(move |tx| {
+                    let file = companion_scholar::shelf::shelf_file(
+                        &crate::research_ui::shelves_dir(),
+                        &coll,
+                    );
+                    companion_scholar::shelf::remove_file(&file, &name);
+                    let _ = tx.send(Event::ShelfDone {
+                        coll,
+                        results: Vec::new(),
+                    });
+                });
+            }
             if let Some(col) = self.docs.lib.collections.iter_mut().find(|x| x.id == c) {
                 col.remove_doc(&d);
             }
             self.save_docs();
         }
         if let Some(c) = remove_coll {
+            companion_scholar::shelf::delete(&companion_scholar::shelf::shelf_file(
+                &crate::research_ui::shelves_dir(),
+                &c,
+            ));
+            self.docs.research.drop_shelf();
             self.docs.lib.remove(&c);
             if self.s.docs_active.as_deref() == Some(c.as_str()) {
                 self.s.docs_active = None;

@@ -7,7 +7,9 @@ use crate::theme::Semibold;
 use crate::widgets::*;
 use companion_scholar::bib::{self, Entry};
 use companion_scholar::csljson;
+use companion_scholar::dedup;
 use companion_scholar::export::{self, Style};
+use companion_scholar::ids;
 use egui::{RichText, Ui};
 
 pub(crate) type Maker = Box<dyn Fn(&[Entry]) -> String>;
@@ -19,6 +21,16 @@ pub struct BibState {
     pub warnings: usize,
     pub read: bool,
     pub failed: Option<String>,
+    /// The duplicate report of the last "Find duplicates".
+    pub dups: String,
+    /// Identifiers found in the pasted text: (display text, verdict).
+    pub ids: Vec<(String, companion_scholar::ids::Verdict)>,
+    pub ids_done: bool,
+    /// Text with `[@key, p. 3]` citations, the style chosen and the result.
+    pub cite_in: String,
+    pub cite_style: usize,
+    pub cite_out: String,
+    pub cite_refs: String,
 }
 
 /// Largest paste the box takes (characters).
@@ -136,6 +148,127 @@ impl CompanionApp {
                 }
             }
         });
+        let entries = self.docs.bib.entries.clone();
+        self.save_formats_row(ui, "bibliography", &entries);
+        if !self.docs.research.message.is_empty() {
+            let m = self.docs.research.message.clone();
+            ui.label(RichText::new(m).color(p.warn));
+        }
+        self.bib_tools(ui);
+    }
+
+    /// Duplicates, identifiers and citations in a text, on the entries read above.
+    fn bib_tools(&mut self, ui: &mut Ui) {
+        let p = self.p;
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            if secondary_button(ui, self.t("Caută dubluri", "Find duplicates")).clicked() {
+                let b = &mut self.docs.bib;
+                b.dups = dedup::analyze(&b.entries).render(b.entries.len());
+            }
+            if secondary_button(
+                ui,
+                self.t("Unifică dublurile sigure", "Merge the sure duplicates"),
+            )
+            .clicked()
+            {
+                let b = &mut self.docs.bib;
+                let before = b.entries.len();
+                let (merged, rep) = dedup::unify(&b.entries);
+                b.entries = merged;
+                b.dups = rep.render(before);
+            }
+            if secondary_button(ui, self.t("Verifică identificatorii", "Check identifiers"))
+                .clicked()
+            {
+                let b = &mut self.docs.bib;
+                b.ids = ids::extract(&b.text)
+                    .into_iter()
+                    .take(2000)
+                    .map(|f| (f.display, f.verdict))
+                    .collect();
+                b.ids_done = true;
+            }
+        });
+        if !self.docs.bib.dups.is_empty() {
+            muted(ui, &p, &self.docs.bib.dups.clone());
+        }
+        if self.docs.bib.ids_done {
+            if self.docs.bib.ids.is_empty() {
+                muted(
+                    ui,
+                    &p,
+                    self.t(
+                        "Niciun DOI, ISBN, ISSN sau ORCID în text.",
+                        "No DOI, ISBN, ISSN or ORCID in the text.",
+                    ),
+                );
+            }
+            let ids = self.docs.bib.ids.clone();
+            for (shown, v) in &ids {
+                let (word, colour) = match v {
+                    ids::Verdict::Valid => (self.t("valid", "valid"), p.ok),
+                    ids::Verdict::BadChecksum => (
+                        self.t("cifră de control greșită", "wrong check digit"),
+                        p.bad,
+                    ),
+                    ids::Verdict::BadStructure => (self.t("formă greșită", "malformed"), p.bad),
+                };
+                ui.label(RichText::new(format!("{shown} · {word}")).color(colour));
+            }
+        }
+        egui::CollapsingHeader::new(self.t("Citări în text", "Citations in text"))
+            .id_salt("bib_cite_text")
+            .show(ui, |ui| {
+                muted(
+                    ui,
+                    &p,
+                    self.t(
+                        "Lipește un text cu citări [@cheie, p. 3] și primești citările scrise în stilul ales, plus lista de referințe în ordinea citării. O cheie fără intrare rămâne neschimbată.",
+                        "Paste a text with [@key, p. 3] citations and get the citations written in the chosen style, plus the reference list in order of citing. A key with no entry is left as written.",
+                    ),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.docs.bib.cite_in)
+                        .char_limit(MAX_INPUT_CHARS)
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY),
+                );
+                let styles = [("APA", Style::Apa), ("Harvard", Style::AuthorYear), ("IEEE", Style::Numeric)];
+                ui.horizontal(|ui| {
+                    let cur = self.docs.bib.cite_style.min(2);
+                    egui::ComboBox::from_id_salt("bib_cite_style")
+                        .selected_text(styles[cur].0)
+                        .show_ui(ui, |ui| {
+                            for (i, (n, _)) in styles.iter().enumerate() {
+                                ui.selectable_value(&mut self.docs.bib.cite_style, i, *n);
+                            }
+                        });
+                    if secondary_button(ui, self.t("Scrie citările", "Write the citations")).clicked() {
+                        let b = &mut self.docs.bib;
+                        let style = styles[b.cite_style.min(2)].1;
+                        let (out, cited) = export::render_citations(&b.cite_in, &b.entries, style);
+                        let list: Vec<Entry> = cited.into_iter().cloned().collect();
+                        b.cite_refs = export::bibliography(&list, style);
+                        b.cite_out = out;
+                    }
+                });
+                if !self.docs.bib.cite_out.is_empty() {
+                    let (out, refs) = (self.docs.bib.cite_out.clone(), self.docs.bib.cite_refs.clone());
+                    ui.label(&out);
+                    if !refs.trim().is_empty() {
+                        muted(ui, &p, &refs);
+                    }
+                    ui.horizontal(|ui| {
+                        if secondary_button(ui, self.t("Copiază textul", "Copy the text")).clicked() {
+                            ui.ctx().copy_text(out.clone());
+                        }
+                        if secondary_button(ui, self.t("Copiază lista", "Copy the list")).clicked() {
+                            ui.ctx().copy_text(refs.clone());
+                        }
+                    });
+                }
+            });
     }
 }
 

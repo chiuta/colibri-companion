@@ -91,6 +91,11 @@ pub enum Event {
         result: Result<String, String>,
     },
     McpManual(Result<String, String>),
+    /// The page shelf of a collection finished changing: what became of each file.
+    ShelfDone {
+        coll: String,
+        results: Vec<(String, companion_scholar::shelf::Added)>,
+    },
     DocsRead {
         coll: String,
         name: String,
@@ -2279,6 +2284,7 @@ impl CompanionApp {
             Event::DuelPiece { round, side, piece } => self.duel_piece(round, side, piece),
             Event::DuelEnd { round, side, err } => self.duel_end(round, side, err),
             Event::Memory(b) => self.memory_built(*b),
+            Event::ShelfDone { coll, results } => self.shelf_done(&coll, &results),
             Event::DocsRead { coll, name, result } => self.docs_read(coll, name, result),
             Event::OcrProbe(found) => self.ocr_probed(found),
             Event::OcrDone { coll, name, result } => self.ocr_done(coll, name, result),

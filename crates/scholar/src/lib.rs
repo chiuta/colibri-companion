@@ -27,6 +27,7 @@ pub mod retrieve;
 pub mod ris;
 pub mod sanitize;
 pub mod sha256;
+pub mod shelf;
 pub mod unitext;
 pub mod verify;
 pub mod xmlmini;

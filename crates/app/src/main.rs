@@ -21,6 +21,7 @@ mod models_ui;
 mod ocr_ui;
 mod online_ui;
 mod prompts_ui;
+mod research_ui;
 mod resources_ui;
 mod screens;
 mod sheets_ui;
