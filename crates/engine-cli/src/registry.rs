@@ -39,7 +39,7 @@ pub struct Slot {
     pub options: Map<String, Value>,
     /// Vocabulary trie for grammar-constrained decoding (built on first use) and compiled grammars by source.
     pub trie: std::sync::OnceLock<Arc<companion_engine::grammar::TokenTrie>>,
-    pub grammars: Mutex<std::collections::HashMap<String, Arc<companion_engine::grammar::Grammar>>>,
+    pub grammars: Mutex<companion_engine::grammar::GrammarCache>,
     /// Token table for the quote lock (built on first use).
     pub quote_vocab: std::sync::OnceLock<Arc<companion_engine::quotelock::QuoteVocab>>,
     last_used: AtomicU64,

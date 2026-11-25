@@ -108,8 +108,7 @@ pub fn build(slot: &Slot, spec: &Spec) -> Result<Box<dyn Constraint>, String> {
         .grammars
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get(&key)
-        .cloned();
+        .get(&key);
     let g = match cached {
         Some(g) => g,
         None => {
@@ -122,12 +121,9 @@ pub fn build(slot: &Slot, spec: &Spec) -> Result<Box<dyn Constraint>, String> {
                 }
                 .map_err(|e| format!("cannot use that structured-output request: {e}"))?,
             );
+            // byte-bounded cache: the oldest compiled grammars are evicted first
             let mut m = slot.grammars.lock().unwrap_or_else(|e| e.into_inner());
-            if m.len() >= 32 {
-                m.clear();
-            }
-            m.insert(key, g.clone());
-            g
+            m.insert(&key, g)
         }
     };
     let trie: Arc<TokenTrie> = slot
