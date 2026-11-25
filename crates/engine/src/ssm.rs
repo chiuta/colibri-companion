@@ -85,7 +85,7 @@ fn softplus(x: f32) -> f32 {
     if x > 20.0 {
         x
     } else {
-        crate::simd::rmath::exp(x).ln_1p()
+        crate::simd::rmath::ln64(1.0 + f64::from(crate::simd::rmath::exp(x))) as f32
     }
 }
 fn sigmoid(x: f32) -> f32 {
@@ -163,7 +163,7 @@ fn a_to_log(mut a: Vec<f32>, negated: bool) -> Result<Vec<f32>, SsmError> {
                     "ssm_a must hold negative values (A = -exp(A_log))".into(),
                 ));
             }
-            *v = (-*v).ln();
+            *v = crate::simd::rmath::ln64(f64::from(-*v)) as f32;
         }
     }
     Ok(a)
