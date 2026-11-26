@@ -54,6 +54,8 @@ fn round_trip_of_whatever_was_read_never_panics() {
                 export::Style::Apa,
                 export::Style::AuthorYear,
                 export::Style::Numeric,
+                export::Style::Chicago,
+                export::Style::Vancouver,
             ] {
                 let _ = export::bibliography(&e, st);
             }
@@ -172,6 +174,70 @@ fn file_formats_from_bytes() {
         for ext in ["pdf", "epub", "docx", "txt", "html"] {
             let _ = std::panic::catch_unwind(|| ingest::read_pages_bytes(ext, &b))
                 .unwrap_or_else(|_| panic!("panic: {ext} {n} bytes"));
+        }
+    }
+}
+
+#[test]
+fn search_by_meaning_with_hostile_vectors() {
+    let mut sh = shelf::Shelf::from_bytes(&[
+        (
+            "a.txt",
+            "txt",
+            "Râuri și poduri \u{1F30A} 川の橋 pontes.".as_bytes(),
+        ),
+        ("b.txt", "txt", b"Gardens and soil. More about gardens."),
+        ("c.txt", "txt", &[0xff, 0xfe, 0x00, 0x80, b'x']),
+    ]);
+    let n = sh.counts().1;
+    assert!(n >= 2);
+    let nan = vec![f32::NAN, 1.0];
+    let inf = vec![f32::INFINITY, f32::NEG_INFINITY];
+    let zero = vec![0.0f32; 2];
+    let huge = vec![f32::MAX; 2];
+    let tiny = vec![f32::MIN_POSITIVE / 1e10; 2];
+    let long = vec![0.5f32; 100_000];
+    for (i, v) in [
+        nan.clone(),
+        inf.clone(),
+        zero.clone(),
+        huge,
+        tiny,
+        long,
+        vec![],
+        vec![1.0],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let _ = sh.set_embedding(i % n, v);
+    }
+    assert!(sh.set_embedding(usize::MAX, vec![1.0]).is_err());
+    for q in [
+        &nan[..],
+        &inf,
+        &zero,
+        &[],
+        &[1.0],
+        &[1.0, 2.0, 3.0],
+        &vec![0.1f32; 70_000],
+    ] {
+        for text in [
+            "",
+            " ",
+            "pod",
+            "川",
+            "\u{1F30A}",
+            "\0\r\n",
+            &"x".repeat(100_000),
+        ] {
+            for k in [0usize, 1, 3, usize::MAX] {
+                let r = sh.search_by_meaning(text, k, q);
+                assert!(r.passages.len() <= 50);
+                for p in &r.passages {
+                    assert!(p.score.is_finite(), "{:?} for q={q:?}", p.score);
+                }
+            }
         }
     }
 }

@@ -10,6 +10,41 @@ pub const BATCH: usize = 16;
 /// The most characters of one passage that are sent.
 const MAX_CHARS: usize = 6000;
 
+/// The longest vector accepted (the largest embedding models stay below 16,384 numbers).
+const MAX_DIM: usize = 32_768;
+
+/// True when `base` points at this computer or a private network, where plain `http://` does not
+/// cross the open internet. A key is never sent anywhere else.
+fn is_private_host(base: &str) -> bool {
+    let rest = base.split("://").nth(1).unwrap_or(base);
+    let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let auth = auth.rsplit('@').next().unwrap_or(auth);
+    let host = if let Some(v6) = auth.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else {
+        auth.split(':').next().unwrap_or("")
+    }
+    .to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v) => v.is_loopback() || v.is_private() || v.is_link_local(),
+            std::net::IpAddr::V6(v) => {
+                v.is_loopback()
+                    || (v.segments()[0] & 0xfe00) == 0xfc00
+                    || (v.segments()[0] & 0xffc0) == 0xfe80
+            }
+        };
+    }
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+        || host.ends_with(".lan")
+        || !host.contains('.')
+}
+
 /// Embeds `inputs` in order. Every vector must be finite and all must have the same length.
 pub fn embed_batch(
     base: &str,
@@ -20,6 +55,12 @@ pub fn embed_batch(
 ) -> Result<Vec<Vec<f32>>, String> {
     if inputs.is_empty() {
         return Ok(Vec::new());
+    }
+    if bearer.is_some_and(|k| !k.trim().is_empty()) && !is_private_host(base) {
+        return Err(
+            "refusing to send the key in clear text (http://) to a computer outside your network"
+                .into(),
+        );
     }
     let clipped: Vec<String> = inputs
         .iter()
@@ -55,10 +96,13 @@ pub fn embed_batch(
     // `index` says where each one belongs; fall back to the order given
     let mut out: Vec<Option<Vec<f32>>> = vec![None; inputs.len()];
     for (pos, item) in data.iter().enumerate() {
-        let at = item
-            .get("index")
-            .and_then(Value::as_u64)
-            .map_or(pos, |i| i as usize);
+        let at = match item.get("index") {
+            None => pos,
+            Some(i) => i
+                .as_u64()
+                .and_then(|i| usize::try_from(i).ok())
+                .ok_or("an `index` is not a position")?,
+        };
         let emb = item
             .get("embedding")
             .and_then(Value::as_array)
@@ -67,6 +111,9 @@ pub fn embed_batch(
             .iter()
             .map(|x| x.as_f64().unwrap_or(f64::NAN) as f32)
             .collect();
+        if vec.len() > MAX_DIM {
+            return Err("an embedding is far larger than any real model produces".into());
+        }
         if vec.is_empty() || vec.iter().any(|x| !x.is_finite()) {
             return Err("an embedding is empty or not a finite number".into());
         }
@@ -88,6 +135,84 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn a_key_is_only_sent_inside_your_own_network() {
+        for ok in [
+            "http://127.0.0.1:8080",
+            "localhost:8080",
+            "http://[::1]:80/x",
+            "http://192.168.1.5:9",
+            "http://10.0.0.2",
+            "http://172.16.4.4",
+            "http://nas:8080",
+            "http://box.local/v1",
+            "http://user:pw@127.0.0.1:1",
+        ] {
+            assert!(is_private_host(ok), "{ok}");
+        }
+        for bad in [
+            "http://example.com",
+            "http://8.8.8.8:80",
+            "http://172.32.0.1",
+            "http://127.0.0.1.evil.com",
+            "http://localhost.evil.com",
+            "http://evil.com/@127.0.0.1",
+            "http://[2001:db8::1]:80",
+            "",
+            "http://",
+        ] {
+            assert!(!is_private_host(bad), "{bad}");
+        }
+        let r = embed_batch(
+            "http://example.com",
+            "m",
+            Some("secret"),
+            &["x".into()],
+            None,
+        );
+        assert!(
+            r.unwrap_err().contains("refusing"),
+            "the key must not leave"
+        );
+    }
+
+    #[test]
+    fn hostile_answers_are_refused_not_trusted() {
+        let big = format!(
+            r#"{{"data":[{{"index":0,"embedding":[{}]}}]}}"#,
+            vec!["0.5"; MAX_DIM + 1].join(",")
+        );
+        let big: &'static str = Box::leak(big.into_boxed_str());
+        let reply = |body: &str| -> &'static str {
+            Box::leak(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .into_boxed_str(),
+            )
+        };
+        for body in [
+            big,
+            r#"{"data":[{"index":5,"embedding":[1.0]}]}"#,
+            r#"{"data":[{"index":0,"embedding":[1e999]}]}"#,
+            r#"{"data":[{"index":0,"embedding":["a"]}]}"#,
+            r#"{"data":[{"index":-1,"embedding":[1.0]}]}"#,
+            r#"{"data":[{"index":0,"embedding":null}]}"#,
+            r#"{"data":[{"index":0,"embedding":[]}]}"#,
+            r#"{"data":"x"}"#,
+            r#"{"data":[]}"#,
+            r#"[1,2,3]"#,
+            "",
+            "<html>",
+            r#"{"data":[{"index":18446744073709551615,"embedding":[1.0]}]}"#,
+        ] {
+            let url = serve_once(reply(body));
+            let r = embed_batch(&url, "m", None, &["x".into()], None);
+            assert!(r.is_err(), "accepted: {}", &body[..body.len().min(60)]);
+        }
+    }
 
     fn serve_once(reply: &'static str) -> String {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();

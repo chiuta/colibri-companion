@@ -244,8 +244,9 @@ fn version_key(v: &str) -> Option<((u64, u64, u64), u64)> {
     Some((key, pre))
 }
 
-/// Is `latest` a newer version than `current`? A bare `0.1.0` build counts as the first
-/// alpha of 0.1.0 would: this app ships as 0.1.0-alpha.N until it has a final release.
+/// Is `latest` a newer version than `current`? Numbers compare as numbers (`alpha.10` is newer
+/// than `alpha.9`), and a final `0.1.0` is newer than every `0.1.0-alpha.N`. An old tag without a
+/// dot (`alpha3`) counts as older than `alpha.1`; anything unreadable is never newer.
 pub fn is_newer(latest: &str, current: &str) -> bool {
     match (version_key(latest), version_key(current)) {
         (Some(a), Some(b)) => a > b,
@@ -318,6 +319,23 @@ mod tests {
         assert!(!is_newer("v0.1.0-alpha.1", "0.1.0-alpha.1"));
         assert!(!is_newer("v0.1.0-alpha.1", "0.1.0"));
         assert!(!is_newer("nonsense", "0.1.0"));
+        assert!(is_newer("v0.1.0-alpha.10", "0.1.0-alpha.9"));
+        assert!(!is_newer("v0.1.0-alpha.9", "0.1.0-alpha.10"));
+        assert!(is_newer("v0.1.0-alpha.12", "0.1.0-alpha.11"));
+        assert!(is_newer("v0.1.0-alpha.1", "0.1.0-alpha3"));
+        assert!(!is_newer("v0.1.0-alpha3", "0.1.0-alpha.1"));
+        for junk in [
+            "",
+            "v",
+            "v1",
+            "1.2",
+            "v1.2.x",
+            "v99999999999999999999.0.0",
+            "\u{1F4A9}",
+            "v0.1.0-",
+        ] {
+            assert!(!is_newer(junk, "0.1.0-alpha.1"), "{junk:?}");
+        }
     }
 
     #[test]

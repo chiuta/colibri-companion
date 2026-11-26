@@ -1476,7 +1476,7 @@ impl CompanionApp {
             let mut last_status: Option<String> = None;
             loop {
                 let (coli, base, key, fast) = {
-                    let c = cfg.lock().unwrap();
+                    let c = cfg.lock().unwrap_or_else(|e| e.into_inner());
                     (c.coli.clone(), c.base.clone(), c.api_key.clone(), c.fast)
                 };
                 let client = ChatClient::new(&base, Some(key));
@@ -1532,7 +1532,7 @@ impl CompanionApp {
             fast,
         );
         if key != self.last_poll_sync {
-            let mut c = self.poll.lock().unwrap();
+            let mut c = self.poll.lock().unwrap_or_else(|e| e.into_inner());
             c.coli = self.coli.clone();
             c.base = key.1.clone();
             c.api_key = key.2.clone();
