@@ -130,6 +130,7 @@ impl CompanionApp {
             self.installed_row(ui, m, active_id.as_deref(), busy);
             ui.add_space(6.0);
         }
+        self.folders_section(ui, busy);
 
         // ---- add
         ui.add_space(8.0);
@@ -203,6 +204,133 @@ impl CompanionApp {
         );
     }
 
+    /// "Load models from a folder": folders to look in, and the GGUF files found there.
+    fn folders_section(&mut self, ui: &mut Ui, busy: bool) {
+        let p = self.p;
+        let open_now = !self.gguf_found.is_empty() || !self.s.extra_model_dirs.is_empty();
+        egui::CollapsingHeader::new(
+            RichText::new(self.t(
+                "Încarcă modele dintr-un folder",
+                "Load models from a folder",
+            ))
+            .semibold(),
+        )
+        .default_open(open_now)
+        .show(ui, |ui| {
+            self.scan_gguf_if_new();
+            muted(
+                ui,
+                &p,
+                self.t(
+                    "Alege un folder în care ții modele (fișiere .gguf sau foldere de model). Caut în el și în folderele de dedesubt. Modelele pe care nu le-a descărcat colibri apar în lista de mai sus. Poți și trage un folder în această fereastră.",
+                    "Add a folder where you keep models (.gguf files or model folders). I look inside it and the folders under it. Models that colibri did not download show up in the list above. You can also drag a folder onto this window.",
+                ),
+            );
+            let hint = self.t("Calea folderului", "Folder path");
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.folder_input)
+                        .desired_width(340.0)
+                        .hint_text(hint),
+                );
+                ui.add_enabled_ui(!self.folder_input.trim().is_empty(), |ui| {
+                    if secondary_button(ui, self.t("Adaugă folderul", "Add folder")).clicked() {
+                        let d = self.folder_input.trim().trim_matches('"').to_string();
+                        self.add_model_folder(d.into());
+                    }
+                });
+            });
+            let dirs = self.s.extra_model_dirs.clone();
+            for (i, d) in dirs.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(d.display().to_string()).small().color(p.muted));
+                    if secondary_button(ui, self.t("Elimină", "Remove")).clicked() {
+                        self.remove_model_folder(i);
+                    }
+                });
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!self.gguf_scanning, |ui| {
+                    if secondary_button(ui, self.t("Caută din nou", "Look again")).clicked() {
+                        self.scan_gguf();
+                        self.installed_read = None;
+                    }
+                });
+                if self.gguf_scanning {
+                    ui.spinner();
+                    muted(ui, &p, self.t("Caut modele…", "Looking for models…"));
+                }
+            });
+            let found = self.gguf_found.clone();
+            if found.is_empty() {
+                if self.gguf_scanned && !self.gguf_scanning {
+                    muted(
+                        ui,
+                        &p,
+                        self.t(
+                            "Nu am găsit fișiere .gguf în aceste foldere.",
+                            "I found no .gguf files in these folders.",
+                        ),
+                    );
+                }
+                return;
+            }
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(self.t(
+                    "Fișiere GGUF găsite (încă neconvertite)",
+                    "GGUF files found (not converted yet)",
+                ))
+                .semibold(),
+            );
+            muted(
+                ui,
+                &p,
+                self.t(
+                    "colibri le convertește într-un folder de model alăturat; are nevoie de loc liber cam cât modelul și poate dura.",
+                    "colibri converts them into a model folder beside them; it needs about as much free space as the model and can take a while.",
+                ),
+            );
+            for g in &found {
+                card(ui, &p, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(&g.name).size(16.0).semibold());
+                    let mut line = fmt_gb(g.bytes as f64 / 1e9);
+                    if g.parts > 1 {
+                        line.push_str(" · ");
+                        line.push_str(
+                            &self
+                                .t("{} părți", "{} parts")
+                                .replacen("{}", &g.parts.to_string(), 1),
+                        );
+                    }
+                    line.push_str(" · ");
+                    line.push_str(&g.first.display().to_string());
+                    ui.label(RichText::new(line).small().color(p.muted));
+                    if !g.missing.is_empty() {
+                        let m = self
+                            .t(
+                                "Lipsesc din același folder: {}",
+                                "Missing from the same folder: {}",
+                            )
+                            .replacen("{}", &g.missing.join(", "), 1);
+                        ui.label(RichText::new(m).small().color(p.warn));
+                    }
+                    ui.add_enabled_ui(!busy && g.missing.is_empty(), |ui| {
+                        if primary_button(ui, &p, self.t("Convertește și folosește", "Convert and use"))
+                            .clicked()
+                        {
+                            self.use_existing_model(g.first.clone());
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+            }
+        });
+        ui.add_space(6.0);
+    }
+
     fn installed_row(&mut self, ui: &mut Ui, m: &InstalledModel, active: Option<&str>, busy: bool) {
         let p = self.p;
         let name = self
@@ -228,7 +356,22 @@ impl CompanionApp {
                 } else if is_active && m.complete {
                     pill(ui, self.t("Ales", "Selected"), p.ok, p.accent_soft);
                 }
-                if !m.complete {
+                if m.local {
+                    pill(
+                        ui,
+                        self.t("Copie locală", "Local copy"),
+                        p.muted,
+                        p.accent_soft,
+                    );
+                }
+                if !m.complete && m.local {
+                    pill(
+                        ui,
+                        self.t("Copie neterminată", "Unfinished copy"),
+                        p.warn,
+                        p.warn_soft,
+                    );
+                } else if !m.complete {
                     pill(
                         ui,
                         &format!(
@@ -271,8 +414,8 @@ impl CompanionApp {
             }
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                ui.add_enabled_ui(!busy && !running, |ui| {
-                    let label = if !m.complete {
+                ui.add_enabled_ui(!busy && !running && !(m.local && !m.complete), |ui| {
+                    let label = if !m.complete && !m.local {
                         self.t("Continuă descărcarea", "Resume the download")
                     } else if is_active {
                         self.t("Pornește acest model", "Start this model")
@@ -283,11 +426,22 @@ impl CompanionApp {
                         self.switch_model(&m.id);
                     }
                 });
-                ui.add_enabled_ui(!busy && !is_active, |ui| {
-                    if secondary_button(ui, self.t("Șterge", "Delete")).clicked() {
+                ui.add_enabled_ui(!busy && !is_active && !m.local, |ui| {
+                    let r = secondary_button(ui, self.t("Șterge", "Delete"));
+                    if r.clicked() {
                         self.model_ask = Some(ModelAsk::Delete(m.id.clone()));
                     }
                 });
+                if m.local {
+                    ui.label(
+                        RichText::new(self.t(
+                            "Nu l-a descărcat colibri, deci nu îl șterg eu.",
+                            "colibri did not download it, so I do not delete it.",
+                        ))
+                        .small()
+                        .color(p.muted),
+                    );
+                }
                 if secondary_button(ui, self.t("Deschide folderul", "Open folder")).clicked() {
                     proc::open_externally(&m.dir.display().to_string());
                 }

@@ -14087,6 +14087,160 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A modell megváltozott: készítsd elő újra a polcot, különben csak a szavakat keresi.",
         ],
     ),
+    (
+        "Load models from a folder",
+        [
+            "Charger des modèles depuis un dossier",
+            "Carica modelli da una cartella",
+            "Cargar modelos desde una carpeta",
+            "Carregar modelos de uma pasta",
+            "Modelle aus einem Ordner laden",
+            "Modellek betöltése mappából",
+        ],
+    ),
+    (
+        "Add a folder where you keep models (.gguf files or model folders). I look inside it and the folders under it. Models that colibri did not download show up in the list above. You can also drag a folder onto this window.",
+        [
+            "Ajoutez un dossier où vous gardez des modèles (fichiers .gguf ou dossiers de modèle). Je regarde dedans et dans les dossiers en dessous. Les modèles que colibri n'a pas téléchargés apparaissent dans la liste ci-dessus. Vous pouvez aussi glisser un dossier sur cette fenêtre.",
+            "Aggiungi una cartella in cui tieni i modelli (file .gguf o cartelle di modello). Cerco al suo interno e nelle cartelle sotto. I modelli che colibri non ha scaricato compaiono nell'elenco qui sopra. Puoi anche trascinare una cartella su questa finestra.",
+            "Añade una carpeta donde guardas modelos (archivos .gguf o carpetas de modelo). Busco dentro y en las carpetas de debajo. Los modelos que colibri no descargó aparecen en la lista de arriba. También puedes arrastrar una carpeta a esta ventana.",
+            "Adiciona uma pasta onde guardas modelos (ficheiros .gguf ou pastas de modelo). Procuro lá dentro e nas pastas por baixo. Os modelos que o colibri não descarregou aparecem na lista acima. Também podes arrastar uma pasta para esta janela.",
+            "Füge einen Ordner hinzu, in dem du Modelle aufbewahrst (.gguf-Dateien oder Modellordner). Ich suche darin und in den Ordnern darunter. Modelle, die colibri nicht heruntergeladen hat, erscheinen in der Liste oben. Du kannst auch einen Ordner auf dieses Fenster ziehen.",
+            "Adj hozzá egy mappát, ahol modelleket tartasz (.gguf fájlok vagy modellmappák). Benne és az alatta lévő mappákban keresek. A modellek, amelyeket a colibri nem töltött le, a fenti listában jelennek meg. Mappát az ablakra is húzhatsz.",
+        ],
+    ),
+    (
+        "Folder path",
+        [
+            "Chemin du dossier",
+            "Percorso della cartella",
+            "Ruta de la carpeta",
+            "Caminho da pasta",
+            "Ordnerpfad",
+            "A mappa elérési útja",
+        ],
+    ),
+    (
+        "Add folder",
+        [
+            "Ajouter le dossier",
+            "Aggiungi la cartella",
+            "Añadir la carpeta",
+            "Adicionar a pasta",
+            "Ordner hinzufügen",
+            "Mappa hozzáadása",
+        ],
+    ),
+    (
+        "Looking for models…",
+        [
+            "Je cherche des modèles…",
+            "Cerco modelli…",
+            "Buscando modelos…",
+            "A procurar modelos…",
+            "Ich suche Modelle…",
+            "Modellek keresése…",
+        ],
+    ),
+    (
+        "I found no .gguf files in these folders.",
+        [
+            "Je n'ai trouvé aucun fichier .gguf dans ces dossiers.",
+            "Non ho trovato file .gguf in queste cartelle.",
+            "No encontré archivos .gguf en estas carpetas.",
+            "Não encontrei ficheiros .gguf nestas pastas.",
+            "Ich habe in diesen Ordnern keine .gguf-Dateien gefunden.",
+            "Nem találtam .gguf fájlt ezekben a mappákban.",
+        ],
+    ),
+    (
+        "GGUF files found (not converted yet)",
+        [
+            "Fichiers GGUF trouvés (pas encore convertis)",
+            "File GGUF trovati (non ancora convertiti)",
+            "Archivos GGUF encontrados (aún sin convertir)",
+            "Ficheiros GGUF encontrados (ainda não convertidos)",
+            "Gefundene GGUF-Dateien (noch nicht umgewandelt)",
+            "Talált GGUF fájlok (még nincsenek átalakítva)",
+        ],
+    ),
+    (
+        "colibri converts them into a model folder beside them; it needs about as much free space as the model and can take a while.",
+        [
+            "colibri les convertit en un dossier de modèle à côté ; il faut à peu près autant d'espace libre que le modèle, et cela peut prendre du temps.",
+            "colibri li converte in una cartella di modello accanto; serve circa tanto spazio libero quanto il modello e può richiedere tempo.",
+            "colibri los convierte en una carpeta de modelo al lado; necesita casi tanto espacio libre como el modelo y puede tardar.",
+            "O colibri converte-os numa pasta de modelo ao lado; precisa de quase tanto espaço livre como o modelo e pode demorar.",
+            "colibri wandelt sie in einen Modellordner daneben um; dafür braucht es etwa so viel freien Platz wie das Modell, und es kann dauern.",
+            "A colibri mellé egy modellmappává alakítja őket; nagyjából annyi szabad hely kell, mint a modell, és eltarthat egy ideig.",
+        ],
+    ),
+    (
+        "{} parts",
+        [
+            "{} parties",
+            "{} parti",
+            "{} partes",
+            "{} partes",
+            "{} Teile",
+            "{} rész",
+        ],
+    ),
+    (
+        "Convert and use",
+        [
+            "Convertir et utiliser",
+            "Converti e usa",
+            "Convertir y usar",
+            "Converter e usar",
+            "Umwandeln und verwenden",
+            "Átalakítás és használat",
+        ],
+    ),
+    (
+        "Local copy",
+        [
+            "Copie locale",
+            "Copia locale",
+            "Copia local",
+            "Cópia local",
+            "Lokale Kopie",
+            "Helyi másolat",
+        ],
+    ),
+    (
+        "Unfinished copy",
+        [
+            "Copie inachevée",
+            "Copia incompleta",
+            "Copia sin terminar",
+            "Cópia por terminar",
+            "Unfertige Kopie",
+            "Befejezetlen másolat",
+        ],
+    ),
+    (
+        "colibri did not download it, so I do not delete it.",
+        [
+            "colibri ne l'a pas téléchargé, donc je ne le supprime pas.",
+            "colibri non l'ha scaricato, quindi non lo elimino.",
+            "colibri no lo descargó, así que no lo borro.",
+            "O colibri não o descarregou, por isso não o apago.",
+            "colibri hat es nicht heruntergeladen, deshalb lösche ich es nicht.",
+            "A colibri nem töltötte le, ezért nem törlöm.",
+        ],
+    ),
+    (
+        "That is not a folder that exists.",
+        [
+            "Ce n'est pas un dossier existant.",
+            "Questa non è una cartella esistente.",
+            "Esa no es una carpeta que exista.",
+            "Essa não é uma pasta que exista.",
+            "Das ist kein vorhandener Ordner.",
+            "Ez nem létező mappa.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

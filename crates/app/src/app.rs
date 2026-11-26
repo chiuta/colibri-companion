@@ -20,7 +20,7 @@ use companion_core::update::{self, Release, Upstream};
 use companion_core::{Conversation, ConversationStore, Lang, Settings, StoredMessage, paths, proc};
 use egui_commonmark::CommonMarkCache;
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -138,6 +138,7 @@ pub enum Event {
         result: Result<companion_core::attach::Extracted, companion_core::attach::AttachError>,
     },
     Installed(Vec<InstalledModel>),
+    GgufFound(Vec<companion_core::models::GgufFile>),
     Resources(Box<ResView>),
     Npu(Option<String>),
     UpdateChecked {
@@ -417,7 +418,14 @@ pub struct CompanionApp {
     res_gen: Arc<AtomicU64>,
     res_targets: Arc<Mutex<Vec<(String, u32)>>>,
     pub installed: Vec<InstalledModel>,
-    installed_read: Option<Instant>,
+    /// GGUF files found in the model folders (not converted yet).
+    pub gguf_found: Vec<companion_core::models::GgufFile>,
+    pub gguf_scanning: bool,
+    pub gguf_scanned: bool,
+    /// The folder typed in "Load models from a folder".
+    pub folder_input: String,
+    use_after_stop: Option<PathBuf>,
+    pub installed_read: Option<Instant>,
     pub model_ask: Option<ModelAsk>,
     pub logs_view: Option<String>,
 
@@ -519,6 +527,11 @@ impl CompanionApp {
             mcp: Default::default(),
             sheets: Default::default(),
             existing_path: String::new(),
+            gguf_found: Vec::new(),
+            gguf_scanning: false,
+            gguf_scanned: false,
+            folder_input: String::new(),
+            use_after_stop: None,
             show_models: false,
             show_resources: false,
             npu: None,
@@ -835,6 +848,16 @@ impl CompanionApp {
     /// Runs colibri's own `setup --model <id>`: downloads what is missing (nothing, for a model
     /// that is already whole) and makes it the model colibri is set up for.
     pub fn begin_setup(&mut self, id: &str) {
+        // a model that colibri did not download is started from its own folder
+        if let Some(dir) = self
+            .installed
+            .iter()
+            .find(|m| m.id == id && m.local)
+            .map(|m| m.dir.clone())
+        {
+            self.use_existing_model(dir);
+            return;
+        }
         let Some(coli) = self.coli.clone() else {
             return;
         };
@@ -872,6 +895,21 @@ impl CompanionApp {
             return;
         };
         if self.phase() == Phase::Installing || self.install_spawning {
+            return;
+        }
+        if path.is_file() && !is_first_gguf(&path)
+            || path.is_dir() && !path.join("config.json").is_file()
+        {
+            // the checks below say why
+        } else if (self.server_ready()
+            || matches!(self.health, Health::Loading(_))
+            || self.starting_since.is_some())
+            && !self.demo
+        {
+            // the model that runs now stops first; it stays installed
+            self.use_after_stop = Some(path);
+            self.show_models = false;
+            self.stop_server();
             return;
         }
         if path.is_file() {
@@ -1214,10 +1252,80 @@ impl CompanionApp {
             .and_then(|s| s.setup.as_ref())
             .and_then(|s| s.model_dir.clone())
             .map(PathBuf::from);
-        let roots = models::roots(self.s.models_dir.as_deref(), active.as_deref());
+        let roots = models::roots_with(
+            self.s.models_dir.as_deref(),
+            active.as_deref(),
+            &self.s.extra_model_dirs,
+        );
         self.spawn(move |tx| {
             let _ = tx.send(Event::Installed(models::scan(&roots)));
         });
+    }
+
+    /// Looks for GGUF files in every model folder (and the ones added by hand), in the
+    /// background: a big or network disk can take a while.
+    pub fn scan_gguf(&mut self) {
+        if self.gguf_scanning {
+            return;
+        }
+        self.gguf_scanning = true;
+        let active = self
+            .status
+            .as_ref()
+            .and_then(|s| s.setup.as_ref())
+            .and_then(|s| s.model_dir.clone())
+            .map(PathBuf::from);
+        let roots = models::roots_with(
+            self.s.models_dir.as_deref(),
+            active.as_deref(),
+            &self.s.extra_model_dirs,
+        );
+        self.spawn(move |tx| {
+            let _ = tx.send(Event::GgufFound(models::find_gguf(&roots, 3)));
+        });
+    }
+
+    /// Looks once when the Models window opens, then only when asked.
+    pub fn scan_gguf_if_new(&mut self) {
+        if !self.gguf_scanned {
+            self.scan_gguf();
+        }
+    }
+
+    /// "Load models from a folder": remember the folder, list the models in it now.
+    pub fn add_model_folder(&mut self, dir: PathBuf) {
+        let dir = dir.components().collect::<PathBuf>();
+        if !dir.is_dir() {
+            self.toast(self.t(
+                "Acesta nu este un folder care există.",
+                "That is not a folder that exists.",
+            ));
+            return;
+        }
+        let same = |a: &Path, b: &Path| {
+            std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf())
+                == std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf())
+        };
+        if !self.s.extra_model_dirs.iter().any(|d| same(d, &dir)) {
+            self.s.extra_model_dirs.push(dir);
+            let _ = self.s.save();
+        }
+        self.folder_input.clear();
+        self.installed_read = None;
+        self.gguf_scanned = false;
+        self.scan_gguf();
+        self.refresh_installed();
+    }
+
+    pub fn remove_model_folder(&mut self, i: usize) {
+        if i < self.s.extra_model_dirs.len() {
+            self.s.extra_model_dirs.remove(i);
+            let _ = self.s.save();
+            self.installed_read = None;
+            self.gguf_scanned = false;
+            self.scan_gguf();
+            self.refresh_installed();
+        }
     }
 
     pub fn refresh_installed_if_stale(&mut self) {
@@ -1239,7 +1347,11 @@ impl CompanionApp {
             .and_then(|s| s.setup.as_ref())
             .and_then(|s| s.model_dir.clone())
             .map(PathBuf::from);
-        let roots = models::roots(self.s.models_dir.as_deref(), active.as_deref());
+        let roots = models::roots_with(
+            self.s.models_dir.as_deref(),
+            active.as_deref(),
+            &self.s.extra_model_dirs,
+        );
         self.spawn(move |tx| {
             let r = models::delete(&m.dir, &roots, active.as_deref())
                 .map(|_| m.id.clone())
@@ -1746,6 +1858,12 @@ impl CompanionApp {
     /// background and their text lands in the message box.
     pub fn attach_files(&mut self, paths: &[std::path::PathBuf]) {
         use companion_core::attach::{self, AttachError, Kind};
+        if self.show_models {
+            if let Some(d) = paths.iter().find(|p| p.is_dir()) {
+                self.add_model_folder(d.clone());
+                return;
+            }
+        }
         if let Some(g) = paths.iter().find(|p| {
             p.extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("gguf"))
@@ -2278,6 +2396,11 @@ impl CompanionApp {
                 }
             }
             Event::Installed(list) => self.installed = list,
+            Event::GgufFound(list) => {
+                self.gguf_found = list;
+                self.gguf_scanning = false;
+                self.gguf_scanned = true;
+            }
             Event::Npu(n) => self.npu = n,
             Event::Attached { name, result } => self.attached(name, result),
             Event::Picture(r) => self.picture_done(r),
@@ -2377,6 +2500,14 @@ impl CompanionApp {
                         if result.is_ok() {
                             self.auto_started = false;
                             self.begin_setup(&id);
+                        } else {
+                            self.force_autostart = false;
+                        }
+                    }
+                    if let Some(path) = self.use_after_stop.take() {
+                        if result.is_ok() {
+                            self.auto_started = false;
+                            self.use_existing_model(path);
                         } else {
                             self.force_autostart = false;
                         }
