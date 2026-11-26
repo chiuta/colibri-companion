@@ -540,6 +540,9 @@ fn with_lock<T>(path: &Path, f: impl FnOnce() -> T) -> T {
     }
     let started = Instant::now();
     let mut held = false;
+    // "access denied" with no lock file to be seen: a deletion has just finished (Windows) or the
+    // folder really is read-only; retry briefly before giving up on the lock
+    let mut denied = 0u32;
     while started.elapsed() < Duration::from_secs(10) {
         match std::fs::OpenOptions::new()
             .write(true)
@@ -568,6 +571,10 @@ fn with_lock<T>(path: &Path, f: impl FnOnce() -> T) -> T {
                 } else {
                     std::thread::sleep(Duration::from_millis(20));
                 }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && denied < 50 => {
+                denied += 1;
+                std::thread::sleep(Duration::from_millis(20));
             }
             Err(_) => break, // cannot lock here (read-only folder...): the write will say so
         }
