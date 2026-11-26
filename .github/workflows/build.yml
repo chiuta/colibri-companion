@@ -178,6 +178,11 @@ jobs:
           # the program reports the version in Cargo.toml: it must be the one being released
           want=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           [ "v$want" = "$TAG" ] || { echo "Cargo.toml says $want but the tag is $TAG" >&2; exit 1; }
+          # a tag that already points at another commit would label this build with old code
+          if old=$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null) && [ "$old" != "$SHA" ]; then
+            echo "tag $TAG already points at $old, not at $SHA: use a new version number" >&2
+            exit 1
+          fi
           gh release create "$TAG" dist/* --repo "$REPO" --target "$SHA" \
             --draft --prerelease --title "Colibri Companion $TAG" \
             --notes "Early alpha of the friendly desktop interface for colibri, in 8 languages. See the README and docs/ for what works today and what is still only a library. Windows and macOS builds come from CI and are not yet tested by hand. Apache-2.0. Does not bundle colibri."

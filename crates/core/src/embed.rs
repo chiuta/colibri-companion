@@ -94,9 +94,32 @@ mod tests {
         let addr = l.local_addr().unwrap();
         std::thread::spawn(move || {
             if let Ok((mut s, _)) = l.accept() {
+                // read the whole request first: closing with unread data makes Windows reset the
+                // connection and drop the reply
+                let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+                let mut got = Vec::new();
                 let mut buf = [0u8; 8192];
-                let _ = s.read(&mut buf);
+                while let Ok(n) = s.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    got.extend_from_slice(&buf[..n]);
+                    if let Some(h) = got.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&got[..h]).to_lowercase();
+                        let len = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if got.len() >= h + 4 + len {
+                            break;
+                        }
+                    }
+                }
                 let _ = s.write_all(reply.as_bytes());
+                let _ = s.flush();
+                let _ = s.shutdown(std::net::Shutdown::Write);
+                while s.read(&mut buf).is_ok_and(|n| n > 0) {}
             }
         });
         format!("http://{addr}")

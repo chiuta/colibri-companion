@@ -44,6 +44,10 @@ pub struct ResearchState {
     emb_cancel: Option<CancelToken>,
     emb_progress: (usize, usize),
     pending_query: String,
+    /// Collection and model the running embedding job was started for.
+    emb_job: Option<(String, String)>,
+    /// Collection and model whose passages carry embeddings in the loaded shelf.
+    emb_ready: Option<(String, String)>,
     pub query: String,
     pub hits: Vec<Passage>,
     pub searched: bool,
@@ -67,6 +71,7 @@ impl ResearchState {
     /// Forget the loaded shelf (a file was added or removed); it is read again when needed.
     pub fn drop_shelf(&mut self) {
         self.stop_embedding();
+        self.emb_ready = None;
         self.shelf = None;
         self.hits.clear();
         self.searched = false;
@@ -96,10 +101,17 @@ impl ResearchState {
             c.cancel();
         }
         self.emb_rx = None;
+        self.emb_job = None;
     }
 
     /// Embeds `texts` (batches) in a thread; `query` is the one question to embed instead.
-    fn start_embedding(&mut self, ctx: &egui::Context, texts: Vec<String>, is_query: bool) {
+    fn start_embedding(
+        &mut self,
+        ctx: &egui::Context,
+        coll: &str,
+        texts: Vec<String>,
+        is_query: bool,
+    ) {
         self.stop_embedding();
         let (tx, rx) = mpsc::channel();
         let cancel = CancelToken::new();
@@ -109,6 +121,7 @@ impl ResearchState {
         );
         let (c2, ctx2) = (cancel.clone(), ctx.clone());
         self.emb_progress = (0, texts.len());
+        let job = (coll.to_string(), model.clone());
         let spawned = std::thread::Builder::new()
             .name("embeddings".into())
             .spawn(move || {
@@ -143,6 +156,7 @@ impl ResearchState {
         if spawned.is_ok() {
             self.emb_rx = Some(rx);
             self.emb_cancel = Some(cancel);
+            self.emb_job = Some(job);
         }
     }
 
@@ -152,6 +166,8 @@ impl ResearchState {
             self.shelf = Some((coll.to_string(), s));
             self.hits.clear();
             self.searched = false;
+            self.stop_embedding();
+            self.emb_ready = None;
         }
     }
 }
@@ -349,6 +365,9 @@ impl CompanionApp {
     /// Takes in what the embedding thread has sent since the last frame.
     fn poll_embeddings(&mut self) {
         let coll = self.docs.selected.clone().unwrap_or_default();
+        let job = self.docs.research.emb_job.clone();
+        // a result that belongs to another collection is never applied to this one
+        let same = job.as_ref().is_some_and(|(c, _)| *c == coll);
         let mut msgs = Vec::new();
         if let Some(rx) = &self.docs.research.emb_rx {
             while let Ok(m) = rx.try_recv() {
@@ -361,30 +380,55 @@ impl CompanionApp {
                 EmbMsg::Progress(a, b) => self.docs.research.emb_progress = (a, b),
                 EmbMsg::Passages(v) => {
                     let mut ok = 0;
-                    if let Some(sh) = self.docs.research.shelf_mut(&coll) {
+                    let total = v.len();
+                    let fits = same
+                        && self
+                            .docs
+                            .research
+                            .shelf_of(&coll)
+                            .is_some_and(|s| s.counts().1 == total);
+                    if fits && let Some(sh) = self.docs.research.shelf_mut(&coll) {
                         for (i, e) in v.into_iter().enumerate() {
                             if sh.set_embedding(i, e).is_ok() {
                                 ok += 1;
                             }
                         }
                     }
-                    self.docs.research.message = format!(
-                        "{} {ok}",
+                    if fits && ok == total {
+                        if let Some((c, m)) = job.clone() {
+                            self.docs.research.emb_ready = Some((c, m));
+                        }
+                    } else {
+                        self.docs.research.emb_ready = None;
+                    }
+                    self.docs.research.message = if !fits {
                         self.t(
-                            "Pasaje pregătite pentru căutarea după sens:",
-                            "Passages ready for search by meaning:"
+                            "Raftul s-a schimbat cât timp se pregătea; apasă din nou „Pregătește raftul”.",
+                            "The shelf changed while it was being prepared; press “Prepare the shelf” again.",
                         )
-                    );
+                        .to_string()
+                    } else {
+                        format!(
+                            "{} {ok}",
+                            self.t(
+                                "Pasaje pregătite pentru căutarea după sens:",
+                                "Passages ready for search by meaning:"
+                            )
+                        )
+                    };
                     finished = true;
                 }
                 EmbMsg::Query(q) => {
                     let query = self.docs.research.pending_query.clone();
-                    let hits = self
-                        .docs
-                        .research
-                        .shelf_of(&coll)
-                        .map(|s| s.search_by_meaning(&query, 8, &q).passages)
-                        .unwrap_or_default();
+                    let hits = if same {
+                        self.docs
+                            .research
+                            .shelf_of(&coll)
+                            .map(|s| s.search_by_meaning(&query, 8, &q).passages)
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
                     self.docs.research.hits = hits;
                     finished = true;
                 }
@@ -467,7 +511,7 @@ impl CompanionApp {
                                 .map(|s| s.passage_texts())
                                 .unwrap_or_default();
                             let ctx = ui.ctx().clone();
-                            self.docs.research.start_embedding(&ctx, texts, false);
+                            self.docs.research.start_embedding(&ctx, coll, texts, false);
                         }
                     } else if secondary_button(ui, self.t("Oprește", "Stop")).clicked() {
                         self.docs.research.stop_embedding();
@@ -496,6 +540,21 @@ impl CompanionApp {
                     n.0 > 0,
                     egui::Checkbox::new(&mut self.docs.research.meaning, label),
                 );
+                let ready = self.docs.research.emb_ready
+                    == Some((
+                        coll.to_string(),
+                        self.docs.research.emb_model.trim().to_string(),
+                    ));
+                if self.docs.research.meaning && n.0 > 0 && !ready && !busy {
+                    muted(
+                        ui,
+                        &p,
+                        self.t(
+                            "Modelul s-a schimbat: pregătește raftul din nou, altfel se caută doar după cuvinte.",
+                            "The model changed: prepare the shelf again, or only the words are searched.",
+                        ),
+                    );
+                }
             });
     }
 
@@ -533,11 +592,18 @@ impl CompanionApp {
                         .docs
                         .research
                         .shelf_of(&coll)
-                        .is_some_and(|s| s.embedded() > 0);
+                        .is_some_and(|s| s.embedded() > 0)
+                    && self.docs.research.emb_ready
+                        == Some((
+                            coll.clone(),
+                            self.docs.research.emb_model.trim().to_string(),
+                        ));
                 if by_meaning {
                     self.docs.research.pending_query = q.clone();
                     let ctx = ui.ctx().clone();
-                    self.docs.research.start_embedding(&ctx, vec![q], true);
+                    self.docs
+                        .research
+                        .start_embedding(&ctx, &coll, vec![q], true);
                 } else {
                     let hits = self
                         .docs

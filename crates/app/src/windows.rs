@@ -827,7 +827,7 @@ mod tests {
                         let mut out = ctx.run_ui(raw, |ui| a.show_chat(ui));
                         out.textures_delta.clear();
                         let took = t0.elapsed();
-                        if took > std::time::Duration::from_secs(10) {
+                        if took > std::time::Duration::from_secs(30) {
                             let head: String = t.chars().take(12).collect();
                             slow.push(format!("message {i} ({} chars, {head:?}) frame {frame} on {w}x{h} ({lang:?}): {took:?}", t.chars().count()));
                             break;

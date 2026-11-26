@@ -14065,6 +14065,28 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A jelentés alapú keresés nem sikerült; kulcsszavakat használok:",
         ],
     ),
+    (
+        "The shelf changed while it was being prepared; press “Prepare the shelf” again.",
+        [
+            "L'étagère a changé pendant la préparation ; appuyez de nouveau sur « Préparer l'étagère ».",
+            "Lo scaffale è cambiato durante la preparazione; premi di nuovo «Prepara lo scaffale».",
+            "La estantería cambió durante la preparación; pulsa de nuevo «Preparar la estantería».",
+            "A estante mudou durante a preparação; carrega de novo em «Preparar a estante».",
+            "Das Regal hat sich während der Vorbereitung geändert; drücke erneut „Regal vorbereiten“.",
+            "A polc megváltozott az előkészítés közben; nyomd meg újra a „Polc előkészítése” gombot.",
+        ],
+    ),
+    (
+        "The model changed: prepare the shelf again, or only the words are searched.",
+        [
+            "Le modèle a changé : préparez de nouveau l'étagère, sinon seuls les mots sont cherchés.",
+            "Il modello è cambiato: prepara di nuovo lo scaffale, altrimenti si cercano solo le parole.",
+            "El modelo cambió: prepara de nuevo la estantería o solo se buscarán las palabras.",
+            "O modelo mudou: prepara de novo a estante, senão só se pesquisam as palavras.",
+            "Das Modell hat sich geändert: Bereite das Regal neu vor, sonst werden nur die Wörter gesucht.",
+            "A modell megváltozott: készítsd elő újra a polcot, különben csak a szavakat keresi.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

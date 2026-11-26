@@ -245,7 +245,7 @@ pub fn reference(e: &Entry, style: Style, n: usize) -> String {
             if !who.is_empty() {
                 parts.push(dot(&who));
             }
-            parts.push(format!("{year}."));
+            parts.push(dot(&year));
             if !e.title.is_empty() {
                 parts.push(format!(
                     "\u{201c}{}.\u{201d}",
@@ -481,6 +481,24 @@ mod tests {
         assert_eq!(used.len(), 2);
         let b = bibliography(&e, Style::Vancouver);
         assert!(b.starts_with("1. "), "{b}");
+    }
+
+    #[test]
+    fn chicago_and_vancouver_survive_bare_entries() {
+        let bare = bib::parse(
+            "@misc{x, title={Only a title}}\n@misc{y, author={{World Health Organization}}}\n@misc{z, year={2001}}\n",
+        );
+        for e in &bare {
+            for st in [Style::Chicago, Style::Vancouver] {
+                let r = reference(e, st, 1);
+                assert!(!r.contains(".."), "{st:?}: {r}");
+                assert!(!r.contains("  "), "{st:?}: {r}");
+                assert!(!r.trim().is_empty(), "{st:?}");
+                assert!(!r.contains(" ."), "{st:?}: {r}");
+            }
+        }
+        let c = reference(&bare[0], Style::Chicago, 0);
+        assert!(c.contains("n.d."), "{c}");
     }
 
     #[test]
