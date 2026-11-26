@@ -59,12 +59,77 @@ impl CompanionApp {
             .show(ui, |ui| self.chat_main(ui));
     }
 
+    /// Export and import of the whole history (one JSON file, or one Markdown file per chat).
+    fn history_tools(&mut self, ui: &mut Ui) {
+        egui::CollapsingHeader::new(self.t("Istoric: export / import", "History: export / import"))
+            .id_salt("history_tools")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.add_space(2.0);
+                if ui
+                    .button(self.t("Exportă tot (JSON)", "Export all (JSON)"))
+                    .on_hover_text(self.t(
+                        "Un singur fișier în Descărcări, într-un format deschis (docs/CHAT-HISTORY.md) pe care îl citește și CartaColibri",
+                        "One file in Downloads, in an open format (docs/CHAT-HISTORY.md) that CartaColibri reads too",
+                    ))
+                    .clicked()
+                {
+                    self.export_history_json(false);
+                }
+                if ui
+                    .button(self.t("Exportă tot, cu imagini", "Export all, with pictures"))
+                    .on_hover_text(self.t(
+                        "Ca mai sus, dar include și pozele trimise; fișierul poate fi mare",
+                        "As above, plus the pictures you sent; the file can be big",
+                    ))
+                    .clicked()
+                {
+                    self.export_history_json(true);
+                }
+                if ui
+                    .button(self.t("Exportă tot (fișiere .md)", "Export all (.md files)"))
+                    .on_hover_text(self.t(
+                        "Câte un fișier Markdown pentru fiecare conversație, într-un folder nou",
+                        "One Markdown file per conversation, in a new folder",
+                    ))
+                    .clicked()
+                {
+                    self.export_history_markdown();
+                }
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(self.t(
+                        "Importă: trage aici un fișier de istoric sau scrie calea lui.",
+                        "Import: drop a history file here or type its path.",
+                    ))
+                    .small(),
+                );
+                let hint = self.t("Calea fișierului .json", "Path of the .json file");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.history_input)
+                        .desired_width(ui.available_width())
+                        .hint_text(hint),
+                );
+                ui.add_enabled_ui(!self.history_input.trim().is_empty(), |ui| {
+                    if ui.button(self.t("Importă istoricul", "Import history")).clicked() {
+                        let p = std::path::PathBuf::from(
+                            self.history_input.trim().trim_matches('"'),
+                        );
+                        self.history_input.clear();
+                        self.import_history(&p);
+                    }
+                });
+                ui.add_space(4.0);
+            });
+    }
+
     fn sidebar(&mut self, ui: &mut Ui) {
         let p = self.p;
         Panel::bottom("sidebar_foot")
             .frame(Frame::new())
             .show(ui, |ui| {
                 ui.add_space(6.0);
+                self.history_tools(ui);
                 if !self.chat.conv.messages.is_empty() {
                     ui.horizontal(|ui| {
                         let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;

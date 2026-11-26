@@ -424,6 +424,8 @@ pub struct CompanionApp {
     pub gguf_scanned: bool,
     /// The folder typed in "Load models from a folder".
     pub folder_input: String,
+    /// The history file typed in "Import history".
+    pub history_input: String,
     use_after_stop: Option<PathBuf>,
     pub installed_read: Option<Instant>,
     pub model_ask: Option<ModelAsk>,
@@ -531,6 +533,7 @@ impl CompanionApp {
             gguf_scanning: false,
             gguf_scanned: false,
             folder_input: String::new(),
+            history_input: String::new(),
             use_after_stop: None,
             show_models: false,
             show_resources: false,
@@ -1731,6 +1734,108 @@ impl CompanionApp {
         self.chat.list = self.store.summaries();
     }
 
+    /// Saves every conversation as one portable file (see docs/CHAT-HISTORY.md).
+    pub fn export_history_json(&mut self, images: bool) {
+        let convs = self.store.list();
+        if convs.is_empty() {
+            self.toast(self.t(
+                "Nu ai conversații de exportat.",
+                "There are no conversations to export.",
+            ));
+            return;
+        }
+        self.finish_export(companion_core::history::export_file(
+            &companion_core::paths::downloads_dir(),
+            &convs,
+            images,
+        ));
+    }
+
+    /// Saves every conversation as its own Markdown file, in a new folder.
+    pub fn export_history_markdown(&mut self) {
+        let convs = self.store.list();
+        if convs.is_empty() {
+            self.toast(self.t(
+                "Nu ai conversații de exportat.",
+                "There are no conversations to export.",
+            ));
+            return;
+        }
+        let (me, ai) = (self.t("Eu", "Me"), "Colibri");
+        self.finish_export(companion_core::history::export_markdown_folder(
+            &companion_core::paths::downloads_dir(),
+            &convs,
+            me,
+            ai,
+        ));
+    }
+
+    fn finish_export(&mut self, r: std::io::Result<PathBuf>) {
+        match r {
+            Ok(path) => {
+                let msg = self.t("Salvat în {}", "Saved to {}").replacen(
+                    "{}",
+                    &path.display().to_string(),
+                    1,
+                );
+                self.toast(msg);
+                let dir = if path.is_dir() {
+                    Some(path.as_path())
+                } else {
+                    path.parent()
+                };
+                if let Some(dir) = dir {
+                    companion_core::proc::open_externally(&dir.display().to_string());
+                }
+            }
+            Err(e) => self.toast(format!(
+                "{}: {e}",
+                self.t("Nu am putut salva fișierul", "Could not save the file")
+            )),
+        }
+    }
+
+    /// Adds the conversations of a history file; a conversation already here is only replaced by
+    /// a newer copy of itself.
+    pub fn import_history(&mut self, path: &Path) {
+        match companion_core::history::import_file(&self.store, path) {
+            Ok(r) => {
+                self.chat.list = self.store.summaries();
+                let msg = self
+                    .t(
+                        "Istoric importat: {} noi, {} actualizate, {} deja aici, {} sărite.",
+                        "History imported: {} new, {} updated, {} already here, {} skipped.",
+                    )
+                    .replacen("{}", &r.added.to_string(), 1)
+                    .replacen("{}", &r.updated.to_string(), 1)
+                    .replacen("{}", &r.skipped.to_string(), 1)
+                    .replacen("{}", &r.rejected.to_string(), 1);
+                self.toast(msg);
+            }
+            Err(e) => {
+                let what = match e {
+                    companion_core::history::HistoryError::NotHistory => self
+                        .t(
+                            "Fișierul nu este un istoric de conversații.",
+                            "That file is not a chat history.",
+                        )
+                        .to_string(),
+                    companion_core::history::HistoryError::TooBig => self
+                        .t("Fișierul este prea mare.", "The file is too big.")
+                        .to_string(),
+                    companion_core::history::HistoryError::NewerVersion(_) => self
+                        .t(
+                            "Fișierul vine dintr-o versiune mai nouă; actualizează aplicația.",
+                            "The file comes from a newer version; update the app.",
+                        )
+                        .to_string(),
+                    companion_core::history::HistoryError::Read(m) => m,
+                };
+                self.toast(what);
+            }
+        }
+    }
+
     pub fn persist_conversation(&mut self) {
         if self.chat.conv.messages.iter().any(|m| m.role == "user") {
             self.chat.conv.updated = companion_core::store::now_secs();
@@ -1863,6 +1968,13 @@ impl CompanionApp {
                 self.add_model_folder(d.clone());
                 return;
             }
+        }
+        if let Some(h) = paths
+            .iter()
+            .find(|p| companion_core::history::looks_like_history(p))
+        {
+            self.import_history(h);
+            return;
         }
         if let Some(g) = paths.iter().find(|p| {
             p.extension()

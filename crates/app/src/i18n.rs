@@ -14241,6 +14241,171 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Ez nem létező mappa.",
         ],
     ),
+    (
+        "There are no conversations to export.",
+        [
+            "Vous n'avez aucune conversation à exporter.",
+            "Non ci sono conversazioni da esportare.",
+            "No hay conversaciones que exportar.",
+            "Não há conversas para exportar.",
+            "Es gibt keine Unterhaltungen zum Exportieren.",
+            "Nincs exportálható beszélgetés.",
+        ],
+    ),
+    (
+        "History imported: {} new, {} updated, {} already here, {} skipped.",
+        [
+            "Historique importé : {} nouvelles, {} mises à jour, {} déjà présentes, {} ignorées.",
+            "Cronologia importata: {} nuove, {} aggiornate, {} già presenti, {} saltate.",
+            "Historial importado: {} nuevas, {} actualizadas, {} ya estaban, {} omitidas.",
+            "Histórico importado: {} novas, {} atualizadas, {} já existiam, {} ignoradas.",
+            "Verlauf importiert: {} neu, {} aktualisiert, {} schon vorhanden, {} übersprungen.",
+            "Előzmények importálva: {} új, {} frissítve, {} már megvolt, {} kihagyva.",
+        ],
+    ),
+    (
+        "That file is not a chat history.",
+        [
+            "Ce fichier n'est pas un historique de conversations.",
+            "Questo file non è una cronologia di conversazioni.",
+            "Ese archivo no es un historial de conversaciones.",
+            "Esse ficheiro não é um histórico de conversas.",
+            "Diese Datei ist kein Unterhaltungsverlauf.",
+            "Ez a fájl nem beszélgetési előzmény.",
+        ],
+    ),
+    (
+        "The file is too big.",
+        [
+            "Le fichier est trop volumineux.",
+            "Il file è troppo grande.",
+            "El archivo es demasiado grande.",
+            "O ficheiro é demasiado grande.",
+            "Die Datei ist zu groß.",
+            "A fájl túl nagy.",
+        ],
+    ),
+    (
+        "The file comes from a newer version; update the app.",
+        [
+            "Le fichier vient d'une version plus récente ; mettez l'application à jour.",
+            "Il file viene da una versione più recente; aggiorna l'app.",
+            "El archivo viene de una versión más nueva; actualiza la aplicación.",
+            "O ficheiro vem de uma versão mais recente; atualiza a aplicação.",
+            "Die Datei stammt aus einer neueren Version; aktualisiere die App.",
+            "A fájl újabb verzióból származik; frissítsd az alkalmazást.",
+        ],
+    ),
+    (
+        "History: export / import",
+        [
+            "Historique : export / import",
+            "Cronologia: esporta / importa",
+            "Historial: exportar / importar",
+            "Histórico: exportar / importar",
+            "Verlauf: Export / Import",
+            "Előzmények: export / import",
+        ],
+    ),
+    (
+        "Export all (JSON)",
+        [
+            "Tout exporter (JSON)",
+            "Esporta tutto (JSON)",
+            "Exportar todo (JSON)",
+            "Exportar tudo (JSON)",
+            "Alles exportieren (JSON)",
+            "Összes exportálása (JSON)",
+        ],
+    ),
+    (
+        "One file in Downloads, in an open format (docs/CHAT-HISTORY.md) that CartaColibri reads too",
+        [
+            "Un seul fichier dans Téléchargements, au format ouvert (docs/CHAT-HISTORY.md), que CartaColibri lit aussi",
+            "Un solo file in Download, in un formato aperto (docs/CHAT-HISTORY.md) che legge anche CartaColibri",
+            "Un solo archivo en Descargas, en un formato abierto (docs/CHAT-HISTORY.md) que CartaColibri también lee",
+            "Um só ficheiro em Transferências, num formato aberto (docs/CHAT-HISTORY.md) que o CartaColibri também lê",
+            "Eine Datei in Downloads, in einem offenen Format (docs/CHAT-HISTORY.md), das auch CartaColibri liest",
+            "Egyetlen fájl a Letöltésekben, nyílt formátumban (docs/CHAT-HISTORY.md), amelyet a CartaColibri is olvas",
+        ],
+    ),
+    (
+        "Export all, with pictures",
+        [
+            "Tout exporter, avec les images",
+            "Esporta tutto, con le immagini",
+            "Exportar todo, con imágenes",
+            "Exportar tudo, com imagens",
+            "Alles exportieren, mit Bildern",
+            "Összes exportálása képekkel",
+        ],
+    ),
+    (
+        "As above, plus the pictures you sent; the file can be big",
+        [
+            "Comme ci-dessus, avec les images envoyées ; le fichier peut être gros",
+            "Come sopra, più le immagini inviate; il file può essere grande",
+            "Como arriba, más las imágenes enviadas; el archivo puede ser grande",
+            "Como acima, mais as imagens enviadas; o ficheiro pode ser grande",
+            "Wie oben, plus die gesendeten Bilder; die Datei kann groß sein",
+            "Mint fent, plusz az elküldött képek; a fájl nagy lehet",
+        ],
+    ),
+    (
+        "Export all (.md files)",
+        [
+            "Tout exporter (fichiers .md)",
+            "Esporta tutto (file .md)",
+            "Exportar todo (archivos .md)",
+            "Exportar tudo (ficheiros .md)",
+            "Alles exportieren (.md-Dateien)",
+            "Összes exportálása (.md fájlok)",
+        ],
+    ),
+    (
+        "One Markdown file per conversation, in a new folder",
+        [
+            "Un fichier Markdown par conversation, dans un nouveau dossier",
+            "Un file Markdown per conversazione, in una nuova cartella",
+            "Un archivo Markdown por conversación, en una carpeta nueva",
+            "Um ficheiro Markdown por conversa, numa pasta nova",
+            "Eine Markdown-Datei pro Unterhaltung, in einem neuen Ordner",
+            "Beszélgetésenként egy Markdown fájl, új mappában",
+        ],
+    ),
+    (
+        "Import: drop a history file here or type its path.",
+        [
+            "Importer : déposez un fichier d'historique ici ou saisissez son chemin.",
+            "Importa: trascina qui un file di cronologia o scrivi il suo percorso.",
+            "Importar: arrastra aquí un archivo de historial o escribe su ruta.",
+            "Importar: arrasta aqui um ficheiro de histórico ou escreve o caminho.",
+            "Import: Verlaufsdatei hierher ziehen oder den Pfad eintippen.",
+            "Import: húzz ide egy előzményfájlt, vagy írd be az útvonalát.",
+        ],
+    ),
+    (
+        "Path of the .json file",
+        [
+            "Chemin du fichier .json",
+            "Percorso del file .json",
+            "Ruta del archivo .json",
+            "Caminho do ficheiro .json",
+            "Pfad der .json-Datei",
+            "A .json fájl elérési útja",
+        ],
+    ),
+    (
+        "Import history",
+        [
+            "Importer l'historique",
+            "Importa la cronologia",
+            "Importar el historial",
+            "Importar o histórico",
+            "Verlauf importieren",
+            "Előzmények importálása",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

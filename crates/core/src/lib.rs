@@ -19,6 +19,7 @@ pub mod fetch;
 pub mod flow_eval;
 pub mod flows;
 pub mod gpu;
+pub mod history;
 pub mod http;
 pub mod legatorocr;
 pub mod light_models;
