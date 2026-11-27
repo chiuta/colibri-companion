@@ -1022,7 +1022,15 @@ pub fn imported_dir(first: &Path, after: std::time::SystemTime) -> Option<PathBu
     fs::read_dir(parent)
         .ok()?
         .flatten()
-        .filter(|e| e.path().join("config.json").is_file())
+        .filter(|e| {
+            let p = e.path();
+            // `coli import X.gguf` writes `X.colibri` beside the file; older versions wrote a plain
+            // model folder. A folder counts if it carries either mark.
+            p.is_dir()
+                && (p.join("config.json").is_file()
+                    || p.extension()
+                        .is_some_and(|x| x.eq_ignore_ascii_case("colibri")))
+        })
         .filter_map(|e| {
             let t = e.metadata().ok()?.modified().ok()?;
             (t >= after).then_some((t, e.path()))
@@ -1031,9 +1039,180 @@ pub fn imported_dir(first: &Path, after: std::time::SystemTime) -> Option<PathBu
         .map(|(_, p)| p)
 }
 
+/// The `general.architecture` a GGUF file declares (`gemma4`, `qwen3moe`, …), read from its header
+/// only. `None` for anything that is not a well-formed GGUF header.
+pub fn gguf_arch(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    fs::File::open(path)
+        .ok()?
+        .take(4 << 20)
+        .read_to_end(&mut head)
+        .ok()?;
+    struct C<'a>(&'a [u8], usize);
+    impl C<'_> {
+        fn take(&mut self, n: usize) -> Option<&[u8]> {
+            let e = self.1.checked_add(n)?;
+            let r = self.0.get(self.1..e)?;
+            self.1 = e;
+            Some(r)
+        }
+        fn u32(&mut self) -> Option<u32> {
+            Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+        }
+        fn u64(&mut self) -> Option<u64> {
+            Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
+        }
+        fn string(&mut self) -> Option<&[u8]> {
+            let n = usize::try_from(self.u64()?).ok()?;
+            self.take(n)
+        }
+        fn skip(&mut self, ty: u32, depth: u32) -> Option<()> {
+            let fixed = |t: u32| -> Option<usize> {
+                Some(match t {
+                    0 | 1 | 7 => 1,
+                    2 | 3 | 6 => 4,
+                    4 | 5 | 10 | 11 | 12 => 8,
+                    _ => return None,
+                })
+            };
+            match ty {
+                8 => self.string().map(|_| ()),
+                9 if depth < 2 => {
+                    let t = self.u32()?;
+                    let n = usize::try_from(self.u64()?).ok()?;
+                    if let Some(w) = fixed(t) {
+                        self.take(n.checked_mul(w)?).map(|_| ())
+                    } else {
+                        (0..n).try_for_each(|_| self.skip(t, depth + 1))
+                    }
+                }
+                t => self.take(fixed(t)?).map(|_| ()),
+            }
+        }
+    }
+    let mut c = C(&head, 0);
+    if c.take(4)? != b"GGUF" {
+        return None;
+    }
+    if !(2..=3).contains(&c.u32()?) {
+        return None;
+    }
+    let (_tensors, kvs) = (c.u64()?, c.u64()?);
+    for _ in 0..kvs.min(4096) {
+        let key = c.string()?.to_vec();
+        let ty = c.u32()?;
+        if key == b"general.architecture" {
+            if ty != 8 {
+                return None;
+            }
+            let v = c.string()?;
+            return std::str::from_utf8(v)
+                .ok()
+                .filter(|a| !a.is_empty() && a.len() <= 64)
+                .map(str::to_string);
+        }
+        c.skip(ty, 0)?;
+    }
+    None
+}
+
+/// The last few lines of a program's log that say what went wrong: non-empty, not the banner.
+pub fn log_tail(log: &str, lines: usize) -> String {
+    let v: Vec<&str> = log
+        .lines()
+        .map(str::trim)
+        .filter(|l| {
+            !l.is_empty()
+                && !l.starts_with('(')
+                && !l.starts_with(')')
+                && !l.starts_with('/')
+                && !l.starts_with('─')
+                && !l.contains("tiny engine")
+                && !l.contains("model families")
+        })
+        .collect();
+    let from = v.len().saturating_sub(lines);
+    v[from..].join(" | ").chars().take(400).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gguf_with(kvs: &[(&str, u32, Vec<u8>)]) -> Vec<u8> {
+        let mut b = b"GGUF".to_vec();
+        b.extend(3u32.to_le_bytes());
+        b.extend(0u64.to_le_bytes());
+        b.extend((kvs.len() as u64).to_le_bytes());
+        for (k, t, v) in kvs {
+            b.extend((k.len() as u64).to_le_bytes());
+            b.extend(k.as_bytes());
+            b.extend(t.to_le_bytes());
+            b.extend(v);
+        }
+        b
+    }
+    fn st(s: &str) -> Vec<u8> {
+        let mut v = (s.len() as u64).to_le_bytes().to_vec();
+        v.extend(s.as_bytes());
+        v
+    }
+
+    #[test]
+    fn the_architecture_is_read_from_the_header_even_after_other_values() {
+        let d = std::env::temp_dir().join(format!("gguf-arch-{}", std::process::id()));
+        fs::create_dir_all(&d).unwrap();
+        let mut arr = 8u32.to_le_bytes().to_vec(); // array of strings
+        arr.extend(2u64.to_le_bytes());
+        arr.extend(st("a"));
+        arr.extend(st("bc"));
+        let f = d.join("m.gguf");
+        fs::write(
+            &f,
+            gguf_with(&[
+                ("tokens", 9, arr),
+                ("n", 4, 7u64.to_le_bytes().to_vec()),
+                ("general.architecture", 8, st("gemma4")),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(gguf_arch(&f).as_deref(), Some("gemma4"));
+        // hostile: truncated, wrong magic, absurd lengths, not a file
+        fs::write(&f, b"GGUF\x03\0\0\0").unwrap();
+        assert_eq!(gguf_arch(&f), None);
+        fs::write(&f, b"NOPE").unwrap();
+        assert_eq!(gguf_arch(&f), None);
+        let mut huge = gguf_with(&[]);
+        huge.extend(u64::MAX.to_le_bytes());
+        fs::write(&f, huge).unwrap();
+        assert_eq!(gguf_arch(&f), None);
+        assert_eq!(gguf_arch(&d.join("missing.gguf")), None);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_imported_colibri_folder_is_found_with_or_without_config_json() {
+        let d = std::env::temp_dir().join(format!("imp-dir-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("x.colibri")).unwrap();
+        fs::write(d.join("x.gguf"), b"g").unwrap();
+        let before = std::time::SystemTime::now() - std::time::Duration::from_secs(5);
+        assert_eq!(
+            imported_dir(&d.join("x.gguf"), before),
+            Some(d.join("x.colibri"))
+        );
+        fs::create_dir_all(d.join("plain")).unwrap();
+        fs::remove_dir_all(d.join("x.colibri")).unwrap();
+        assert_eq!(imported_dir(&d.join("x.gguf"), before), None);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_log_tail_skips_the_banner() {
+        let log = "   (\\      colibri v2.1.0\n  )·>     tiny engine, immense model\n / \\      13 model families · CPU\n  ──────\nerror: unsupported architecture gemma4\n";
+        assert_eq!(log_tail(log, 3), "error: unsupported architecture gemma4");
+    }
 
     const CATALOG: &str = r#"[
       {"id":"a","name":"A","download_gb":19.4,"ram_min_gb":8,"ram_good_gb":18,"dense_gb":3.6,"kind":"text",

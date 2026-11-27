@@ -14439,6 +14439,39 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Csak a --packs kapcsolóval indított corbullal: az egyes szakaszokon végzett munka megmarad és tetszőleges sorrendben újrahasznosul. Más motorral a szokásos csevegés működik.",
         ],
     ),
+    (
+        "“{}” could not be used with colibri.",
+        [
+            "«{}» n'a pas pu être utilisé avec colibri.",
+            "«{}» non ha potuto essere usato con colibri.",
+            "«{}» no se pudo usar con colibri.",
+            "«{}» não pôde ser usado com o colibri.",
+            "„{}“ konnte mit colibri nicht verwendet werden.",
+            "A(z) „{}” nem használható a colibrivel.",
+        ],
+    ),
+    (
+        "The file's architecture is “{}”. colibri only runs the families it implements (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…) and this one is not listed among them.",
+        [
+            "L'architecture du fichier est « {} ». colibri ne fait tourner que les familles qu'il implémente (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…) et celle-ci n'en fait pas partie.",
+            "L'architettura del file è «{}». colibri esegue solo le famiglie che implementa (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…) e questa non è tra quelle elencate.",
+            "La arquitectura del archivo es «{}». colibri solo ejecuta las familias que implementa (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…) y esta no figura entre ellas.",
+            "A arquitetura do ficheiro é «{}». O colibri só executa as famílias que implementa (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…) e esta não consta entre elas.",
+            "Die Architektur der Datei ist „{}“. colibri führt nur die Familien aus, die es implementiert (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…); diese gehört nicht dazu.",
+            "A fájl architektúrája „{}”. A colibri csak a megvalósított családokat futtatja (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…), ez nincs közöttük.",
+        ],
+    ),
+    (
+        "Details: {}",
+        [
+            "Détails : {}",
+            "Dettagli: {}",
+            "Detalles: {}",
+            "Detalhes: {}",
+            "Einzelheiten: {}",
+            "Részletek: {}",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

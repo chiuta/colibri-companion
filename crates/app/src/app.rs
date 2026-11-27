@@ -365,6 +365,8 @@ pub struct CompanionApp {
     pub install_log: String,
     install_log_read: Option<Instant>,
     pub install_exit: Option<i32>,
+    /// The GGUF being imported, so that a failure can say why.
+    pub import_of: Option<std::path::PathBuf>,
     pub busy: Option<String>,
     pub starting_since: Option<Instant>,
     pub auto_started: bool,
@@ -505,6 +507,7 @@ impl CompanionApp {
             install_log: String::new(),
             install_log_read: None,
             install_exit: None,
+            import_of: None,
             busy: None,
             starting_since: None,
             auto_started: false,
@@ -956,6 +959,41 @@ impl CompanionApp {
         self.use_existing_now(path);
     }
 
+    /// Say why a GGUF could not be used, instead of silently going back to the installed model.
+    fn explain_import_failure(&mut self, file: &std::path::Path) {
+        let name = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut msg = self
+            .t(
+                "«{}» nu a putut fi folosit cu colibri.",
+                "“{}” could not be used with colibri.",
+            )
+            .replacen("{}", &name, 1);
+        if let Some(arch) = companion_core::coli::gguf_arch(file) {
+            msg.push(' ');
+            msg.push_str(
+                &self
+                    .t(
+                        "Arhitectura fișierului este «{}». colibri rulează doar familiile pe care le implementează (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…), iar aceasta nu figurează printre ele.",
+                        "The file's architecture is “{}”. colibri only runs the families it implements (Qwen3.x, DeepSeek, GLM, Mistral-Large, MiMo…) and this one is not listed among them.",
+                    )
+                    .replacen("{}", &arch, 1),
+            );
+        }
+        let tail = companion_core::coli::log_tail(&self.install_log, 2);
+        if !tail.is_empty() {
+            msg.push(' ');
+            msg.push_str(
+                &self
+                    .t("Detalii: {}", "Details: {}")
+                    .replacen("{}", &tail, 1),
+            );
+        }
+        self.toast(msg);
+    }
+
     /// Starts the import/use of a model once nothing else runs.
     fn use_existing_now(&mut self, path: std::path::PathBuf) {
         use companion_core::coli::imported_dir;
@@ -969,6 +1007,7 @@ impl CompanionApp {
         self.installing_since = Some(Instant::now());
         self.install_exit = None;
         self.install_log.clear();
+        self.import_of = path.is_file().then(|| path.clone());
         self.show_models = false;
         self.force_autostart = true;
         self.auto_started = false;
@@ -2677,6 +2716,11 @@ impl CompanionApp {
                 self.install_exit = code;
                 self.refresh_installed();
                 self.refresh_install_log();
+                if let Some(f) = self.import_of.take()
+                    && code != Some(0)
+                {
+                    self.explain_import_failure(&f);
+                }
                 if let Some(coli) = self.coli.clone() {
                     self.spawn(move |tx| {
                         let _ = tx.send(Event::Status(coli.status()));
