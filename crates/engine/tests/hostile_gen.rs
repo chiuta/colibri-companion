@@ -390,7 +390,7 @@ fn shown(b: &[u8]) -> String {
 
 /// Runs `f` on many hostile strings derived from `seeds`.
 pub fn hammer_str(name: &str, seeds: &[&str], f: impl Fn(&str)) {
-    hammer_str_cap(name, Duration::from_secs(5), seeds, f)
+    hammer_str_cap(name, Duration::from_secs(30), seeds, f)
 }
 
 pub fn hammer_str_cap(name: &str, cap: Duration, seeds: &[&str], f: impl Fn(&str)) {
@@ -434,7 +434,7 @@ pub fn hammer_str_cap(name: &str, cap: Duration, seeds: &[&str], f: impl Fn(&str
 
 /// Runs `f` on many hostile byte strings derived from `seeds` (valid files to mutate).
 pub fn hammer_bytes(name: &str, seeds: &[Vec<u8>], f: impl Fn(&[u8])) {
-    hammer_bytes_cap(name, Duration::from_secs(5), seeds, f)
+    hammer_bytes_cap(name, Duration::from_secs(30), seeds, f)
 }
 
 pub fn hammer_bytes_cap(name: &str, cap: Duration, seeds: &[Vec<u8>], f: impl Fn(&[u8])) {
@@ -470,7 +470,7 @@ pub fn hammer_bytes_cap(name: &str, cap: Duration, seeds: &[Vec<u8>], f: impl Fn
 
 /// Runs `f(rng)` `n` times with a fresh generator state each time (for numeric/structured fuzzing).
 pub fn hammer_rng(name: &str, f: impl Fn(&mut Rng)) {
-    hammer_rng_cap(name, Duration::from_secs(5), f)
+    hammer_rng_cap(name, Duration::from_secs(30), f)
 }
 
 pub fn hammer_rng_cap(name: &str, cap: Duration, f: impl Fn(&mut Rng)) {
