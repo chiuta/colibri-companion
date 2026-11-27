@@ -24,6 +24,7 @@ pub mod autoquant;
 pub mod backend;
 pub mod bert;
 pub mod confidence;
+pub mod ctxpack;
 pub mod eval;
 pub mod family;
 pub mod gguf;

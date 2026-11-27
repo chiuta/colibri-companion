@@ -797,6 +797,38 @@ impl Plane {
             }
         }
     }
+    /// One position, decoded to f32 (`kd` values).
+    fn read(&self, slot: usize, kd: usize, hd: usize, out: &mut [f32]) {
+        let (lo, hi) = (slot * kd, (slot + 1) * kd);
+        match self {
+            Plane::F32(v) => out.copy_from_slice(&v[lo..hi]),
+            Plane::F16(v) => {
+                let l = f16_lut();
+                for (d, s) in out.iter_mut().zip(&v[lo..hi]) {
+                    *d = l[*s as usize];
+                }
+            }
+            Plane::Q8 { q, s } => {
+                let kvh = kd / hd;
+                for h in 0..kvh {
+                    let sc = s[slot * kvh + h];
+                    for (d, x) in out[h * hd..(h + 1) * hd]
+                        .iter_mut()
+                        .zip(&q[lo + h * hd..lo + (h + 1) * hd])
+                    {
+                        *d = *x as f32 * sc;
+                    }
+                }
+            }
+        }
+    }
+    fn len_slots(&self, kd: usize, kvh: usize) -> usize {
+        match self {
+            Plane::F32(v) => v.len() / kd.max(1),
+            Plane::F16(v) => v.len() / kd.max(1),
+            Plane::Q8 { s, .. } => s.len() / kvh.max(1),
+        }
+    }
     fn dot(&self, slot: usize, kd: usize, hd: usize, head: usize, qh: &[f32]) -> f32 {
         let o = slot * kd + head * hd;
         match self {
@@ -918,6 +950,9 @@ pub struct State {
     /// Route quantised batched products through the per-token (activation-quantised) path, so a
     /// batch gives bit-identical logits to feeding the tokens one at a time. See [`State::set_exact_batch`].
     exact_batch: bool,
+    /// Slot ranges (sorted, disjoint) whose cache rows were moved in from another state and not yet
+    /// recomputed: they are close to, but not exactly, what a full prefill would have written.
+    approx: Vec<(usize, usize)>,
 }
 impl State {
     /// Exact-batch mode. Off (default): a batch of 4 or more tokens through a quantised weight decodes
@@ -978,6 +1013,10 @@ impl State {
         self.tokens.truncate(pos);
         self.last = None;
         self.kvx.after_truncate(pos);
+        self.approx.retain_mut(|r| {
+            r.1 = r.1.min(pos);
+            r.0 < r.1
+        });
         Ok(())
     }
     /// Back to an empty conversation (keeps the cache precision and the buffers).
@@ -991,6 +1030,7 @@ impl State {
         self.tokens.clear();
         self.last = None;
         self.kvx.after_truncate(0);
+        self.approx.clear();
         for m in &mut self.moe_last {
             m.clear();
         }
@@ -1015,7 +1055,244 @@ impl State {
             dev: None,
             kvx: self.kvx.clone(),
             exact_batch: self.exact_batch,
+            approx: self.approx.clone(),
         })
+    }
+}
+
+// ------------------------------------------------------------------ cache splicing
+// Moving cache rows between states, for reusing the work done on a text in another context.
+// Keys are stored after rotary embedding, and rotations add up, so a key computed at position `p`
+// is turned into the key for position `q` by rotating it by `q - p` more steps: exact, whatever
+// the rotary table (without a second `mscale`). What cannot be moved is the *context*: a row
+// holds what the token saw before it, so rows of the same text computed alone differ from the
+// ones a full prefill would write (more in the later layers). `refresh_slots` repairs that and
+// measures how big the difference was.
+
+/// Rotate one head by `delta` positions (either way); the first `2 * inv.len()` dimensions only.
+fn rope_shift(head: &mut [f32], delta: i64, inv: &[f64]) {
+    let half = inv.len();
+    for (i, f) in inv.iter().enumerate() {
+        let (s, c) = crate::simd::rmath::sin_cos64(delta as f64 * f);
+        let (a, b) = (head[i] as f64, head[i + half] as f64);
+        head[i] = (a * c - b * s) as f32;
+        head[i + half] = (a * s + b * c) as f32;
+    }
+}
+
+impl State {
+    /// Is every cache row exactly what a full prefill of [`State::tokens`] would have written?
+    /// False after [`Model::splice_cache`] until [`Model::refresh_slots`] has recomputed the rows.
+    pub fn is_exact(&self) -> bool {
+        self.approx.is_empty()
+    }
+    /// How many cache rows are moved-in and not yet recomputed.
+    pub fn approx_slots(&self) -> usize {
+        self.approx.iter().map(|r| r.1 - r.0).sum()
+    }
+    fn mark_approx(&mut self, lo: usize, hi: usize) {
+        self.approx.push((lo, hi));
+        self.approx.sort_unstable();
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        for r in self.approx.drain(..) {
+            match out.last_mut() {
+                Some(l) if r.0 <= l.1 => l.1 = l.1.max(r.1),
+                _ => out.push(r),
+            }
+        }
+        self.approx = out;
+    }
+    fn mark_exact(&mut self, lo: usize, hi: usize) {
+        let mut out = Vec::new();
+        for r in self.approx.drain(..) {
+            if r.1 <= lo || r.0 >= hi {
+                out.push(r);
+                continue;
+            }
+            if r.0 < lo {
+                out.push((r.0, lo));
+            }
+            if r.1 > hi {
+                out.push((hi, r.1));
+            }
+        }
+        self.approx = out;
+    }
+    /// One key row as f32 (for tests and diagnostics).
+    pub fn key_row(&self, layer: usize, slot: usize) -> Option<Vec<f32>> {
+        let l = self.kv.get(layer)?;
+        if slot >= self.pos || slot >= l.k.len_slots(l.kd, l.kvh) {
+            return None;
+        }
+        let mut out = vec![0f32; l.kd];
+        l.k.read(slot, l.kd, l.kd / l.kvh.max(1), &mut out);
+        Some(out)
+    }
+}
+
+impl Model {
+    /// The same checks for every operation that edits cache rows in place.
+    fn editable(&self, st: &State) -> Result<(), ModelError> {
+        let unsupported = |m: &str| Err(ModelError::Shape(m.into()));
+        if self.accel.is_some() || st.dev.is_some() {
+            return unsupported(
+                "cache rows cannot be edited when the cache lives on an accelerator",
+            );
+        }
+        if st.kv.len() != self.spec.layers as usize {
+            return unsupported("the state was not made by new_state");
+        }
+        if st.is_compacted() || st.kvx.acc.is_some() {
+            return unsupported(
+                "cache rows cannot be edited after eviction or while scores are tracked",
+            );
+        }
+        if st.kv.iter().any(|l| l.cap > 0) {
+            return unsupported(
+                "cache rows cannot be edited in a model with sliding-window layers",
+            );
+        }
+        if st.tokens.len() != st.pos {
+            return unsupported("the state does not know all its tokens");
+        }
+        Ok(())
+    }
+
+    /// Append `src`'s cache rows `range` to `dst`, rotating the keys to their new positions. `src`
+    /// must be exact and made by this model with the same cache precision (F32 or F16). Cheap:
+    /// no weights are read. `dst` is then approximate over those rows (see [`State::is_exact`]),
+    /// except when it was empty and the rows came from the start of `src` (nothing moved).
+    /// Nothing is changed on an `Err`.
+    pub fn splice_cache(
+        &self,
+        dst: &mut State,
+        src: &State,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), ModelError> {
+        self.editable(dst)?;
+        self.editable(src)?;
+        let bad = |m: &str| Err(ModelError::Shape(m.into()));
+        if !src.is_exact() || !dst.is_exact() {
+            return bad("only exact states can be spliced");
+        }
+        if range.start >= range.end || range.end > src.pos {
+            return bad("the range of rows to splice is empty or outside the source state");
+        }
+        if dst.kv_kind() != src.kv_kind() || dst.kv_kind() == KvKind::Q8 {
+            return bad("splicing needs the same cache precision, F32 or F16");
+        }
+        let n = range.end - range.start;
+        if dst.pos + n > self.spec.context as usize {
+            return Err(ModelError::ContextFull(self.spec.context as usize));
+        }
+        let delta = dst.pos as i64 - range.start as i64;
+        let hd = self.spec.head_dim as usize;
+        let inv = &self.rope_global.0;
+        let (mut kr, mut vr) = (Vec::new(), Vec::new());
+        let at = dst.pos;
+        for (ld, ls) in dst.kv.iter_mut().zip(&src.kv) {
+            let kd = ld.kd;
+            if ls.kd != kd || kd % hd != 0 || ls.k.len_slots(kd, ls.kvh) < range.end {
+                return bad("the two caches do not have the same shape");
+            }
+            kr.resize(kd, 0.0);
+            vr.resize(kd, 0.0);
+            for (j, slot) in range.clone().enumerate() {
+                ls.k.read(slot, kd, hd, &mut kr);
+                ls.v.read(slot, kd, hd, &mut vr);
+                if delta != 0 {
+                    for head in kr.chunks_mut(hd) {
+                        rope_shift(head, delta, inv);
+                    }
+                }
+                ld.k.write(at + j, kd, hd, &kr);
+                ld.v.write(at + j, kd, hd, &vr);
+            }
+        }
+        dst.tokens.extend_from_slice(&src.tokens[range]);
+        dst.pos += n;
+        dst.last = None;
+        if !(at == 0 && delta == 0) {
+            dst.mark_approx(at, at + n);
+        }
+        Ok(())
+    }
+
+    /// Recompute cache rows `from..from + len` of `st` from the tokens it already holds, in place,
+    /// attending to the rows before `from` as they are now. Rows after the range are not touched
+    /// (so repair runs from the start of a spliced text towards its end). Returns, per row, how
+    /// much the recomputation changed it: the mean over layers of the relative change of the key
+    /// and of the value. Zero means the moved-in row was already what a full prefill writes.
+    pub fn refresh_slots(
+        &self,
+        st: &mut State,
+        from: usize,
+        len: usize,
+    ) -> Result<Vec<f32>, ModelError> {
+        self.editable(st)?;
+        if len == 0 || from + len > st.pos {
+            return Err(ModelError::Shape(
+                "the rows to refresh are outside the state".into(),
+            ));
+        }
+        let toks: Vec<usize> = st.tokens[from..from + len].to_vec();
+        if toks.iter().any(|&t| t >= self.spec.vocab as usize) {
+            let bad = toks
+                .iter()
+                .copied()
+                .find(|&t| t >= self.spec.vocab as usize);
+            return Err(ModelError::Token(bad.unwrap_or(0)));
+        }
+        let (h, nl) = (self.spec.hidden as usize, self.w.layers.len());
+        let kd = st.kv.first().map(|l| l.kd).unwrap_or(0);
+        let hd = self.spec.head_dim as usize;
+        // rows as they are now
+        let mut old = vec![0f32; nl * len * 2 * kd];
+        for (li, l) in st.kv.iter().enumerate() {
+            for t in 0..len {
+                let o = (li * len + t) * 2 * kd;
+                l.k.read(from + t, kd, hd, &mut old[o..o + kd]);
+                l.v.read(from + t, kd, hd, &mut old[o + kd..o + 2 * kd]);
+            }
+        }
+        let moe_len: Vec<usize> = st.moe_last.iter().map(Vec::len).collect();
+        let mut done = 0usize;
+        while done < len {
+            let c = (len - done).min(PREFILL_CHUNK);
+            let mut x = std::mem::take(&mut st.sc.x);
+            fit(&mut x, c * h);
+            let r = self
+                .embed_rows(&toks[done..done + c], &mut x, &mut st.sc.rowtmp)
+                .and_then(|()| self.layers_core(st, 0..nl, &mut x, c, from + done));
+            st.sc.x = x;
+            r?;
+            done += c;
+        }
+        for (m, n) in st.moe_last.iter_mut().zip(moe_len) {
+            m.truncate(n);
+        }
+        let (mut kn, mut vn) = (vec![0f32; kd], vec![0f32; kd]);
+        let mut drift = vec![0f32; len];
+        for (li, l) in st.kv.iter().enumerate() {
+            for (t, d) in drift.iter_mut().enumerate() {
+                let o = (li * len + t) * 2 * kd;
+                l.k.read(from + t, kd, hd, &mut kn);
+                l.v.read(from + t, kd, hd, &mut vn);
+                let rel = |a: &[f32], b: &[f32]| {
+                    let (mut diff, mut base) = (0f64, 0f64);
+                    for (x, y) in a.iter().zip(b) {
+                        diff += ((x - y) as f64).powi(2);
+                        base += (*y as f64).powi(2);
+                    }
+                    (diff.sqrt() / (base.sqrt() + 1e-6)) as f32
+                };
+                *d += 0.5 * (rel(&kn, &old[o..o + kd]) + rel(&vn, &old[o + kd..o + 2 * kd]));
+            }
+        }
+        drift.iter_mut().for_each(|d| *d /= nl.max(1) as f32);
+        st.last = None;
+        st.mark_exact(from, from + len);
+        Ok(drift)
     }
 }
 

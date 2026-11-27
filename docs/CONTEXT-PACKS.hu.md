@@ -1,0 +1,13 @@
+# Kontextcsomagok
+
+Újrahasznosítja egy szövegen végzett munkát, amikor az másik promptban újra megjelenik (csak a corbul motor; clean-room, saját kód).
+
+Az előtag-gyorsítótár csak akkor talál, ha a közös szöveg áll elöl. A *csomag* egy önállóan kiszámított szöveg KV-gyorsítótára, polcon tárolva (aláírt, LRU-korlátos pillanatkép-tár).
+
+A `compose` egymás után fűzi a csomagokat: a sorokat másolja, a kulcsokat a pozíciókülönbséggel elforgatja (pontos); majd minden további csomag elejét növekvő ablakokban újraszámolja, amíg a mért változás egy tűrés alá nem csökken. A kérdést mindig újonnan számolja.
+
+A `tolerance = 0` mindent újraszámol, és pontosan a teljes prefillt adja. A csúszóablakos rétegű, kiürített vagy gyorsítón élő gyorsítótárú modelleket elutasítja, és a szokásos prefillre vált.
+
+Javításig nem pontos: az áthelyezett sorokat tartalmazó állapot `is_exact() == false`-t jelez, és soha nem íródik lemezre.
+
+Korlátok: JustVugg colibri motorja nem tud gyorsítótárat exportálni, ezért csak a corbullal működik. Kis szintetikus modelleken tesztelve; valódi modelleken a minőséget még nem mértük.

@@ -373,6 +373,12 @@ pub fn encode_keyed(model: &Model, st: &State, opts: SnapOptions, key: &[u8]) ->
 }
 
 fn encode_with(model: &Model, st: &State, opts: SnapOptions, key: Option<&[u8]>) -> Res<Vec<u8>> {
+    if !st.is_exact() {
+        // a snapshot is named after its tokens and trusted to equal a full prefill of them
+        return Err(SnapshotError::Unsupported(
+            "a state with moved-in cache rows that were not recomputed is not exact and cannot be saved".into(),
+        ));
+    }
     let views = st.kv_views();
     if views.len() != model.spec.layers as usize {
         return Err(SnapshotError::Unsupported(
