@@ -3,6 +3,7 @@
 /// Options that never take a value.
 pub const FLAGS: &[&str] = &[
     "raw",
+    "check",
     "no-mmap",
     "quiet",
     "help",

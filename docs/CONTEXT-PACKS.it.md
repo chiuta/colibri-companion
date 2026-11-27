@@ -11,3 +11,7 @@ Una cache di prefisso funziona solo se il testo comune viene per primo. Un *pacc
 Non esatto finché non riparato: uno stato con righe spostate dichiara `is_exact() == false` e non viene mai scritto su disco.
 
 Limiti: il motore colibri di JustVugg non può esportare le cache, quindi funziona solo con corbul. Provato su piccoli modelli sintetici; la qualità su modelli reali non è ancora misurata.
+
+## Riga di comando
+
+`corbul packs MODEL --session DIR --pack FILE… --question TESTO [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` mette ogni file sullo scaffale una sola volta, poi risponde con i pacchetti salvati, in qualsiasi ordine. `--check` esegue anche un prefill completo e mostra la differenza di punteggio e il tempo di ciascuno.

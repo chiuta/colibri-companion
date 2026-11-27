@@ -11,3 +11,7 @@ A `tolerance = 0` mindent újraszámol, és pontosan a teljes prefillt adja. A c
 Javításig nem pontos: az áthelyezett sorokat tartalmazó állapot `is_exact() == false`-t jelez, és soha nem íródik lemezre.
 
 Korlátok: JustVugg colibri motorja nem tud gyorsítótárat exportálni, ezért csak a corbullal működik. Kis szintetikus modelleken tesztelve; valódi modelleken a minőséget még nem mértük.
+
+## Parancssor
+
+`corbul packs MODEL --session DIR --pack FÁJL… --question SZÖVEG [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` minden fájlt egyszer a polcra tesz, majd a tárolt csomagokkal válaszol, tetszőleges sorrendben. A `--check` teljes prefillt is futtat, és kiírja a pontszámkülönbséget és mindkettő idejét.

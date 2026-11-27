@@ -11,3 +11,7 @@ Uma cache de prefixo só acerta se o texto comum vier primeiro. Um *pacote* é a
 Não exato até ser reparado: um estado com linhas movidas indica `is_exact() == false` e nunca é escrito em disco.
 
 Limites: o motor colibri de JustVugg não exporta caches, por isso só funciona com o corbul. Testado em modelos sintéticos pequenos; a qualidade em modelos reais ainda não foi medida.
+
+## Linha de comandos
+
+`corbul packs MODEL --session DIR --pack FICHEIRO… --question TEXTO [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` guarda cada ficheiro uma só vez e depois responde com os pacotes guardados, em qualquer ordem. `--check` também executa um prefill completo e mostra a diferença de pontuação e o tempo de cada um.

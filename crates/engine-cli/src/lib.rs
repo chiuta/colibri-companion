@@ -53,6 +53,7 @@ pub mod lorasrc;
 pub mod merge_cmd;
 pub mod metrics;
 pub mod modelfile;
+pub mod packs_cmd;
 pub mod quant_cmd;
 pub mod quotes;
 pub mod rag_cmd;

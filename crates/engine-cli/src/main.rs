@@ -37,6 +37,7 @@ USAGE
   corbul quantize <in> <out.gguf> --type Q4_K_M | --recipe F [--imatrix F] write a quantised GGUF
   corbul merge    <config.json> [--out F.safetensors] [--dry-run]         merge models (linear, slerp, task, TIES, DARE, slices)
   corbul steer    train|apply|lens <model> …                              control vectors and a logit lens
+  corbul packs    MODEL --session DIR --pack FILE… [--question Q] [--check]   reuse the work done on texts that come back in a new order
   corbul rag      add LIB FILE… | search LIB --query Q | ask LIB MODEL --question Q   local document library, quote-locked answers
   corbul watermark detect <model> --key K --text T | --file F             test a text for the mark made by generate --watermark
   corbul embed    <bert-folder> TEXT… [--file F --pool cls|mean --no-normalize --json]   sentence vectors from a BERT encoder
@@ -147,6 +148,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         "quantize" => corbul::quant_cmd::quantize_cmd(&args),
         "steer" => corbul::steer_cmd::cmd(&args),
         "merge" => corbul::merge_cmd::cmd(&args),
+        "packs" => corbul::packs_cmd::cmd(&args),
         "rag" => corbul::rag_cmd::cmd(&args),
         "search" => corbul::search_cmd::cmd(&args),
         "watermark" => corbul::wm::cmd(&args),

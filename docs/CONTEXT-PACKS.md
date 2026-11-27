@@ -11,3 +11,7 @@ A prefix cache only hits when the shared text comes first. A *pack* is the KV ca
 Not exact until repaired: a state with moved-in rows reports `is_exact() == false` and is never written to disk.
 
 Limits: JustVugg's colibri engine cannot export caches, so this works only with corbul. Tested on small synthetic models; quality on real models is not yet measured.
+
+## Command line
+
+`corbul packs MODEL --session DIR --pack FILE… --question TEXT [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` shelves every file once, then answers using the stored packs in any order. `--check` also runs a full prefill and prints the score difference and the time of each.

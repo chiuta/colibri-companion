@@ -11,3 +11,7 @@ Un cache de préfixe ne sert que si le texte commun vient en premier. Un *paquet
 Inexact tant qu'il n'est pas réparé : un état avec des lignes déplacées renvoie `is_exact() == false` et n'est jamais écrit sur disque.
 
 Limites : le moteur colibri de JustVugg ne peut pas exporter ses caches ; cela ne marche donc qu'avec corbul. Testé sur de petits modèles synthétiques ; la qualité sur de vrais modèles n'est pas encore mesurée.
+
+## Ligne de commande
+
+`corbul packs MODEL --session DIR --pack FICHIER… --question TEXTE [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` range chaque fichier une seule fois, puis répond avec les paquets stockés, dans n'importe quel ordre. `--check` lance aussi un prefill complet et affiche l'écart de scores et la durée de chacun.

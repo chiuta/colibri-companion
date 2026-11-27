@@ -11,3 +11,7 @@ Un cache de prefix funcționează doar când textul comun e primul. Un *pachet* 
 Neexact până la reparare: o stare cu rânduri mutate raportează `is_exact() == false` și nu se scrie niciodată pe disc.
 
 Limite: motorul colibri al lui JustVugg nu poate exporta cache-uri, deci merge doar cu corbul. Testat pe modele sintetice mici; calitatea pe modele reale nu e încă măsurată.
+
+## Linia de comandă
+
+`corbul packs MODEL --session DIR --pack FIȘIER… --question TEXT [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` pune fiecare fișier pe raft o singură dată, apoi răspunde folosind pachetele păstrate, în orice ordine. `--check` rulează și un prefill complet și afișează diferența de scoruri și timpul fiecăruia.

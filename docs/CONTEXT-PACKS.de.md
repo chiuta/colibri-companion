@@ -11,3 +11,7 @@ Ein Präfix-Cache greift nur, wenn der gemeinsame Text zuerst steht. Ein *Paket*
 Bis zur Reparatur nicht exakt: Ein Zustand mit verschobenen Zeilen meldet `is_exact() == false` und wird nie auf die Platte geschrieben.
 
 Grenzen: JustVuggs colibri-Engine kann keine Caches exportieren, daher nur mit corbul. Mit kleinen synthetischen Modellen getestet; die Qualität bei echten Modellen ist noch nicht gemessen.
+
+## Kommandozeile
+
+`corbul packs MODEL --session DIR --pack DATEI… --question TEXT [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` legt jede Datei einmal ins Regal und antwortet danach mit den gespeicherten Paketen in beliebiger Reihenfolge. `--check` führt zusätzlich einen vollständigen Prefill aus und zeigt Punktedifferenz und Zeit beider.

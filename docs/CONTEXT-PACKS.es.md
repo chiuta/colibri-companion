@@ -11,3 +11,7 @@ Una caché de prefijo solo acierta si el texto común va primero. Un *paquete* e
 No exacto hasta repararse: un estado con filas movidas informa `is_exact() == false` y nunca se escribe en disco.
 
 Límites: el motor colibri de JustVugg no puede exportar cachés, así que solo funciona con corbul. Probado con modelos sintéticos pequeños; la calidad con modelos reales aún no se ha medido.
+
+## Línea de comandos
+
+`corbul packs MODEL --session DIR --pack ARCHIVO… --question TEXTO [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` guarda cada archivo una sola vez y luego responde con los paquetes guardados, en cualquier orden. `--check` también ejecuta un prefill completo y muestra la diferencia de puntuación y el tiempo de cada uno.
