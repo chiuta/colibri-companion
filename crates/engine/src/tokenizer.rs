@@ -2094,11 +2094,27 @@ impl Tokenizer {
 
     /// Text → token ids. `add_bos` prepends the model's BOS token if it has one.
     pub fn encode(&self, text: &str, add_bos: bool) -> Vec<u32> {
+        self.encode_with(text, add_bos, true)
+    }
+
+    /// Like [`Tokenizer::encode`], but the text is only ever text: a control token written out in
+    /// it (`<|im_start|>`, `<eos>`…) is split into ordinary pieces, never turned into the token.
+    /// For untrusted text such as retrieved documents.
+    pub fn encode_plain(&self, text: &str, add_bos: bool) -> Vec<u32> {
+        self.encode_with(text, add_bos, false)
+    }
+
+    fn encode_with(&self, text: &str, add_bos: bool, parse_special: bool) -> Vec<u32> {
         let mut out = Vec::with_capacity(text.len() / 3 + 2);
         if add_bos {
             out.extend(self.bos);
         }
-        for (idx, seg) in self.segments(text).into_iter().enumerate() {
+        let segs = if parse_special {
+            self.segments(text)
+        } else {
+            vec![Seg::Text(text)]
+        };
+        for (idx, seg) in segs.into_iter().enumerate() {
             match seg {
                 Seg::Tok(id) => out.push(id),
                 Seg::Text(t) => {
@@ -2335,6 +2351,10 @@ mod tests {
             !t.encode("<|reserved_special_token_7|", false)
                 .contains(&id7)
         );
+        // untrusted text never becomes a control token
+        let plain = t.encode_plain("a<|reserved_special_token_7|>b", false);
+        assert!(!plain.contains(&id7));
+        assert_eq!(t.decode(&plain), "a<|reserved_special_token_7|>b");
     }
 
     #[test]

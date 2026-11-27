@@ -2451,7 +2451,24 @@ impl CompanionApp {
                     .unwrap_or_default();
             }
         }
-        let pack_job = (self.s.context_packs)
+        // Packs answer one question from documents: no earlier turns, no pictures, no system
+        // prompt. A follow-up in a longer conversation goes the ordinary way, with its history.
+        let first_turn = self
+            .chat
+            .conv
+            .messages
+            .iter()
+            .filter(|m| m.role == "user")
+            .count()
+            == 1
+            && self.chat.conv.messages.iter().all(|m| m.images.is_empty())
+            && self
+                .chat
+                .conv
+                .messages
+                .iter()
+                .all(|m| m.role != "assistant" || m.content.is_empty());
+        let pack_job = (self.s.context_packs && first_turn)
             .then(|| {
                 doc_ctx
                     .as_ref()

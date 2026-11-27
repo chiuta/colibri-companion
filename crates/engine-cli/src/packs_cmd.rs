@@ -129,8 +129,12 @@ pub fn answer(
     log: &mut dyn FnMut(String),
 ) -> Result<Answer, String> {
     let ctx = model.spec.context as usize;
+    // the texts are documents and a question from outside: control tokens written in them stay text
     let ids = |t: &str, bos: bool| -> Vec<usize> {
-        tok.encode(t, bos).into_iter().map(|t| t as usize).collect()
+        tok.encode_plain(t, bos)
+            .into_iter()
+            .map(|t| t as usize)
+            .collect()
     };
     let mut segs: Vec<Vec<usize>> = Vec::new();
     let head = ids("", true);
@@ -144,9 +148,10 @@ pub fn answer(
         }
         segs.push(v);
     }
-    if segs.iter().map(Vec::len).sum::<usize>() >= ctx {
+    let tail_len = question.map_or(0, |q| ids(q, false).len());
+    if segs.iter().map(Vec::len).sum::<usize>() + tail_len >= ctx {
         return Err(format!(
-            "the texts do not fit the {ctx}-token context window"
+            "the texts and the question do not fit the {ctx}-token context window"
         ));
     }
     let (mut states, mut shelved): (Vec<State>, Vec<bool>) = (Vec::new(), Vec::new());
