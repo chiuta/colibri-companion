@@ -30,6 +30,6 @@ Der Unterhaltungsverlauf ist eine einfache JSON-Datei, damit Colibri Companion, 
 - `role` ist `user`, `assistant` oder `system`. Optionale Nachrichtenfelder: `reasoning`, `display`, `sources` (Liste von Texten), `stopped` (true), `images` (nur `data:image/…`-URLs, und nur beim Export „mit Bildern“).
 - Unbekannte Felder werden ignoriert, andere Programme können also eigene hinzufügen.
 - Der Import fügt neue `id` hinzu und ersetzt eine bekannte `id` nur, wenn `updated` in der Datei neuer ist. Unterhaltungen ohne Nachrichten werden übersprungen.
-- Grenzen beim Lesen: Datei 512 MB, 100.000 Unterhaltungen, 100.000 Nachrichten pro Unterhaltung.
+- Grenzen beim Lesen: Datei 128 MB, 20.000 Unterhaltungen, 100.000 Nachrichten pro Unterhaltung.
 
 Eine Verlaufsdatei auf das Fenster zu ziehen importiert sie.

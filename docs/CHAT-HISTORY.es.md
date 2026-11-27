@@ -30,6 +30,6 @@ El historial de conversaciones es un único archivo JSON sencillo, para que Coli
 - `role` es `user`, `assistant` o `system`. Campos opcionales del mensaje: `reasoning`, `display`, `sources` (lista de textos), `stopped` (true), `images` (solo URL `data:image/…`, y solo al exportar «con imágenes»).
 - Los campos desconocidos se ignoran, así que otros programas pueden añadir los suyos.
 - La importación añade los `id` nuevos y solo reemplaza un `id` conocido si `updated` del archivo es más reciente. Las conversaciones sin mensajes se omiten.
-- Límites al leer: archivo 512 MB, 100.000 conversaciones, 100.000 mensajes por conversación.
+- Límites al leer: archivo 128 MB, 20.000 conversaciones, 100.000 mensajes por conversación.
 
 Arrastrar un archivo de historial sobre la ventana lo importa.

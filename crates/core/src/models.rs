@@ -178,9 +178,9 @@ pub fn roots_with(
     out
 }
 
-fn read_one(dir: &Path) -> Option<InstalledModel> {
+fn read_one(dir: &Path, left: &mut usize) -> Option<InstalledModel> {
     let Ok(text) = fs::read_to_string(dir.join(MANIFEST)) else {
-        return read_local(dir);
+        return read_local(dir, left);
     };
     let m: Manifest = serde_json::from_str(&text).ok()?;
     let id = dir.file_name()?.to_string_lossy().into_owned();
@@ -218,6 +218,9 @@ const WEIGHT_EXT: [&str; 6] = ["safetensors", "gguf", "bin", "npz", "pt", "pth"]
 const MIN_WEIGHT_BYTES: u64 = 1 << 20;
 /// Stop looking after this many directory entries in one folder tree (a huge or network disk).
 const MAX_ENTRIES: usize = 20_000;
+/// One whole scan (every folder together) looks at no more entries than this, so a folder
+/// added by mistake (a whole disk) cannot keep the disk busy.
+const SCAN_BUDGET: usize = 300_000;
 
 fn ext_of(p: &Path) -> String {
     p.extension()
@@ -227,7 +230,7 @@ fn ext_of(p: &Path) -> String {
 
 /// A folder holding a model that colibri did not download: a `config.json` and weight files
 /// (up to two levels down). Unfinished copies (`.part`, `.tmp`, `.crdownload`) make it not complete.
-fn read_local(dir: &Path) -> Option<InstalledModel> {
+fn read_local(dir: &Path, left: &mut usize) -> Option<InstalledModel> {
     if !dir.join("config.json").is_file() {
         return None;
     }
@@ -239,9 +242,10 @@ fn read_local(dir: &Path) -> Option<InstalledModel> {
         let Ok(rd) = fs::read_dir(&d) else { continue };
         for e in rd.flatten() {
             seen += 1;
-            if seen > MAX_ENTRIES {
+            if seen > MAX_ENTRIES || *left == 0 {
                 break;
             }
+            *left -= 1;
             let Ok(ft) = e.file_type() else { continue };
             if ft.is_symlink() {
                 continue; // never follow a link out of the folder (or into a loop)
@@ -280,6 +284,7 @@ fn read_local(dir: &Path) -> Option<InstalledModel> {
 /// The models found in `roots`, complete ones first, then by name.
 pub fn scan(roots: &[PathBuf]) -> Vec<InstalledModel> {
     let mut out: Vec<InstalledModel> = Vec::new();
+    let mut left = SCAN_BUDGET;
     let push = |m: InstalledModel, out: &mut Vec<InstalledModel>| {
         if !out.iter().any(|o| o.dir == m.dir) {
             out.push(m);
@@ -287,18 +292,25 @@ pub fn scan(roots: &[PathBuf]) -> Vec<InstalledModel> {
     };
     for root in roots {
         // the folder itself may be a model (a folder dragged in from the file manager)
-        if let Some(m) = read_local(root) {
+        if left == 0 {
+            break;
+        }
+        if let Some(m) = read_local(root, &mut left) {
             push(m, &mut out);
             continue;
         }
         let Ok(rd) = fs::read_dir(root) else { continue };
         for entry in rd.flatten().take(MAX_ENTRIES) {
+            if left == 0 {
+                break;
+            }
+            left -= 1;
             let Ok(ft) = entry.file_type() else { continue };
             if ft.is_symlink() || !ft.is_dir() {
                 continue;
             }
             let path = entry.path();
-            if let Some(m) = read_one(&path) {
+            if let Some(m) = read_one(&path, &mut left) {
                 push(m, &mut out);
                 continue;
             }
@@ -311,7 +323,11 @@ pub fn scan(roots: &[PathBuf]) -> Vec<InstalledModel> {
                 if ft2.is_symlink() || !ft2.is_dir() {
                     continue;
                 }
-                if let Some(m) = read_one(&e2.path()) {
+                if left == 0 {
+                    break;
+                }
+                left -= 1;
+                if let Some(m) = read_one(&e2.path(), &mut left) {
                     push(m, &mut out);
                 }
             }
@@ -592,6 +608,41 @@ mod tests {
         // a folder that does not exist, and an empty list, are fine
         assert!(find_gguf(&[PathBuf::from("/no/such/folder")], 3).is_empty());
         assert!(find_gguf(&[], 3).is_empty());
+    }
+
+    #[test]
+    fn a_local_folder_with_the_same_name_does_not_hide_the_download() {
+        let root = temp("same-name");
+        let other = temp("same-name-extra");
+        model(&root, "alpha", true, 0);
+        let l = other.join("alpha");
+        fs::create_dir_all(&l).unwrap();
+        fs::write(l.join("config.json"), "{}").unwrap();
+        fs::write(l.join("w.safetensors"), vec![0u8; 2 << 20]).unwrap();
+        let found = scan(&[root.clone(), other.clone()]);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found.iter().filter(|m| m.local).count(), 1);
+        // only colibri's own copy is ever deletable
+        let own = found.iter().find(|m| !m.local).unwrap();
+        assert!(check_delete(&own.dir, std::slice::from_ref(&root), None).is_ok());
+        let loc = found.iter().find(|m| m.local).unwrap();
+        assert!(check_delete(&loc.dir, &[root, other], None).is_err());
+    }
+
+    #[test]
+    fn links_are_never_followed_by_the_scan() {
+        #[cfg(unix)]
+        {
+            let root = temp("links");
+            let outside = temp("links-outside");
+            fs::write(outside.join("config.json"), "{}").unwrap();
+            fs::write(outside.join("w.bin"), vec![0u8; 2 << 20]).unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
+            // a loop back to the root
+            std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+            assert!(scan(std::slice::from_ref(&root)).is_empty());
+            assert!(find_gguf(std::slice::from_ref(&root), 3).is_empty());
+        }
     }
 
     #[test]

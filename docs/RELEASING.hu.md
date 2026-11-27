@@ -9,3 +9,7 @@ Hogyan készül egy verzió (a karbantartónak)
 ## Ha tévedésből közzétettek egy számot
 
 Ne használd újra. Töröld kézzel azt a kiadást és a címkéjét, és add ki a következő számot.
+
+## A kiadást soha ne hozd létre kézzel
+
+A `build` workflow maga hozza létre a piszkozatot, minden fájllal csatolva. Az azonos címkével kézzel létrehozott kiadás (piszkozatként is) üres, és elbuktatja az utolsó lépést. Ha megtörtént: töröld az üres kiadást (a címkét tartsd meg), és a `build` futtatásán használd a **Re-run failed jobs** gombot.

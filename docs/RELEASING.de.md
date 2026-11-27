@@ -9,3 +9,7 @@ Wie eine Version entsteht (für die Betreuenden)
 ## Falls eine Nummer versehentlich veröffentlicht wurde
 
 Verwende sie nicht wieder. Lösche dieses Release und sein Tag von Hand und veröffentliche die nächste Nummer.
+
+## Das Release nie von Hand anlegen
+
+Der `build`-Workflow legt den Entwurf selbst an, mit allen Dateien im Anhang. Ein von Hand angelegtes Release mit demselben Tag (auch als Entwurf) ist leer und lässt den letzten Schritt scheitern. Falls es passiert: das leere Release löschen (den Tag behalten) und beim `build`-Lauf **Re-run failed jobs** benutzen.

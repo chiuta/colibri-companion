@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 pub const FORMAT: &str = "colibri-chat-history";
 pub const VERSION: u64 = 1;
 /// A history file larger than this is refused (it is read into memory).
-pub const MAX_FILE_BYTES: u64 = 512 << 20;
-const MAX_CONVERSATIONS: usize = 100_000;
+pub const MAX_FILE_BYTES: u64 = 128 << 20;
+const MAX_CONVERSATIONS: usize = 20_000;
 const MAX_MESSAGES: usize = 100_000;
 const MAX_TEXT: usize = 32 << 20;
 const MAX_IMAGE: usize = 16 << 20;
@@ -426,6 +426,17 @@ mod tests {
         let s = store("evil");
         import_into(&s, bad).unwrap();
         assert!(s.load("etcpasswd").is_some());
+    }
+
+    #[test]
+    fn too_many_conversations_are_counted_not_stored() {
+        let one = r#"{"id":"c","messages":[{"role":"user","content":"x"}]}"#;
+        let list = vec![one; MAX_CONVERSATIONS + 5].join(",");
+        let text =
+            format!(r#"{{"format":"colibri-chat-history","version":1,"conversations":[{list}]}}"#);
+        let (v, rejected) = parse(&text).unwrap();
+        assert_eq!(v.len(), MAX_CONVERSATIONS);
+        assert_eq!(rejected, 5);
     }
 
     #[test]

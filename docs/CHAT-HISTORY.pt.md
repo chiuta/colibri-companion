@@ -30,6 +30,6 @@ O histórico de conversas é um único ficheiro JSON simples, para que o Colibri
 - `role` é `user`, `assistant` ou `system`. Campos opcionais da mensagem: `reasoning`, `display`, `sources` (lista de textos), `stopped` (true), `images` (só URLs `data:image/…`, e só na exportação «com imagens»).
 - Os campos desconhecidos são ignorados, por isso outros programas podem juntar os seus.
 - A importação junta os `id` novos e só substitui um `id` conhecido se `updated` do ficheiro for mais recente. As conversas sem mensagens são saltadas.
-- Limites na leitura: ficheiro 512 MB, 100.000 conversas, 100.000 mensagens por conversa.
+- Limites na leitura: ficheiro 128 MB, 20.000 conversas, 100.000 mensagens por conversa.
 
 Arrastar um ficheiro de histórico para a janela importa-o.

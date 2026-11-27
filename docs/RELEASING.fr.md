@@ -9,3 +9,7 @@ Comment faire une version (pour le mainteneur)
 ## Si un numéro a été publié par erreur
 
 Ne le réutilise pas. Supprime à la main cette version et son tag, puis publie le numéro suivant.
+
+## Ne créez jamais la version à la main
+
+Le workflow `build` crée lui-même le brouillon, avec tous les fichiers joints. Une version créée à la main avec le même tag (même en brouillon) est vide et fait échouer l'étape finale. Si cela arrive : supprimez la version vide (gardez le tag) et utilisez **Re-run failed jobs** sur l'exécution `build`.

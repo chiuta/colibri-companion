@@ -9,3 +9,7 @@ Como se faz uma versão (para o mantenedor)
 ## Se um número foi publicado por engano
 
 Não o reutilizes. Apaga à mão essa versão e a sua etiqueta e publica o número seguinte.
+
+## Nunca crie a versão à mão
+
+O workflow `build` cria ele próprio o rascunho, com todos os ficheiros anexados. Uma versão criada à mão com a mesma etiqueta (mesmo como rascunho) fica vazia e faz falhar o passo final. Se acontecer: apague a versão vazia (mantenha a etiqueta) e use **Re-run failed jobs** na execução `build`.

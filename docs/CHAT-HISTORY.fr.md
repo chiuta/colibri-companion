@@ -30,6 +30,6 @@ L'historique des conversations est un simple fichier JSON, pour que Colibri Comp
 - `role` vaut `user`, `assistant` ou `system`. Champs facultatifs d'un message : `reasoning`, `display`, `sources` (liste de textes), `stopped` (true), `images` (seulement des URL `data:image/…`, et seulement pour l'export « avec images »).
 - Les champs inconnus sont ignorés ; d'autres programmes peuvent donc ajouter les leurs.
 - L'import ajoute les nouveaux `id` et ne remplace un `id` connu que si `updated` du fichier est plus récent. Les conversations sans message sont ignorées.
-- Limites à la lecture : fichier 512 Mo, 100 000 conversations, 100 000 messages par conversation.
+- Limites à la lecture : fichier 128 Mo, 20 000 conversations, 100 000 messages par conversation.
 
 Déposer un fichier d'historique sur la fenêtre l'importe.

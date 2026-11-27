@@ -30,6 +30,6 @@ Istoricul conversațiilor este un singur fișier JSON simplu, ca Colibri Compani
 - `role` este `user`, `assistant` sau `system`. Câmpuri opționale ale mesajului: `reasoning`, `display`, `sources` (listă de texte), `stopped` (true), `images` (doar URL-uri `data:image/…`, și doar la exportul „cu imagini”).
 - Câmpurile necunoscute se ignoră, deci alte programe își pot adăuga ale lor.
 - Importul adaugă id-urile noi și înlocuiește un id cunoscut doar dacă `updated` din fișier e mai nou. Conversațiile fără mesaje se sar.
-- Limite la citire: fișier 512 MB, 100.000 de conversații, 100.000 de mesaje pe conversație.
+- Limite la citire: fișier 128 MB, 20.000 de conversații, 100.000 de mesaje pe conversație.
 
 Tragerea unui fișier de istoric peste fereastră îl importă.

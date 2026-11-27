@@ -339,7 +339,19 @@ impl CompanionApp {
             .and_then(|c| c.iter().find(|x| x.id == m.id))
             .map(|x| x.name.clone())
             .unwrap_or_else(|| m.id.clone());
-        let is_active = active == Some(m.id.as_str());
+        // the running model is told apart by its folder too: a model started from a folder of
+        // its own may be reported by colibri under another name
+        let active_dir = self
+            .status
+            .as_ref()
+            .and_then(|s| s.setup.as_ref())
+            .and_then(|s| s.model_dir.clone())
+            .map(std::path::PathBuf::from);
+        let is_active = if m.local {
+            active_dir.as_deref() == Some(m.dir.as_path())
+        } else {
+            active == Some(m.id.as_str())
+        };
         let running = is_active && self.server_ready() && !self.demo;
         let gb = m.total_bytes as f64 / 1e9;
         card(ui, &p, |ui| {

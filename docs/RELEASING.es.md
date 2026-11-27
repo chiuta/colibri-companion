@@ -9,3 +9,7 @@ Cómo se hace una versión (para el mantenedor)
 ## Si se publicó un número por error
 
 No lo reutilices. Borra a mano esa versión y su etiqueta y publica el número siguiente.
+
+## No crees nunca la versión a mano
+
+El workflow `build` crea él mismo el borrador, con todos los archivos adjuntos. Una versión creada a mano con la misma etiqueta (incluso como borrador) está vacía y hace fallar el paso final. Si ocurre: borra la versión vacía (conserva la etiqueta) y usa **Re-run failed jobs** en la ejecución `build`.

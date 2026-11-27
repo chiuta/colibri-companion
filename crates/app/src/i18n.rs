@@ -14406,6 +14406,17 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Előzmények importálása",
         ],
     ),
+    (
+        "The model folder is gone or has been moved.",
+        [
+            "Le dossier du modèle n'existe plus ou a été déplacé.",
+            "La cartella del modello non esiste più o è stata spostata.",
+            "La carpeta del modelo ya no existe o se ha movido.",
+            "A pasta do modelo já não existe ou foi movida.",
+            "Der Modellordner existiert nicht mehr oder wurde verschoben.",
+            "A modell mappája már nincs meg, vagy áthelyezték.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

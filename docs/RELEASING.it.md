@@ -9,3 +9,7 @@ Come si fa una versione (per il manutentore)
 ## Se un numero è stato pubblicato per errore
 
 Non riutilizzarlo. Elimina a mano quella release e il suo tag e pubblica il numero successivo.
+
+## Non creare mai la release a mano
+
+Il workflow `build` crea da solo la bozza, con tutti i file allegati. Una release creata a mano con lo stesso tag (anche come bozza) è vuota e fa fallire il passo finale. Se succede: elimina la release vuota (tieni il tag) e usa **Re-run failed jobs** sull'esecuzione `build`.

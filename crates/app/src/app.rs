@@ -428,6 +428,8 @@ pub struct CompanionApp {
     pub history_input: String,
     use_after_stop: Option<PathBuf>,
     pub installed_read: Option<Instant>,
+    /// A scan of the model folders is running (never start a second one on top of it).
+    installed_scanning: bool,
     pub model_ask: Option<ModelAsk>,
     pub logs_view: Option<String>,
 
@@ -558,6 +560,7 @@ impl CompanionApp {
             res_targets: Arc::new(Mutex::new(Vec::new())),
             installed: Vec::new(),
             installed_read: None,
+            installed_scanning: false,
             model_ask: None,
             logs_view: None,
             chat: ChatState {
@@ -852,13 +855,23 @@ impl CompanionApp {
     /// that is already whole) and makes it the model colibri is set up for.
     pub fn begin_setup(&mut self, id: &str) {
         // a model that colibri did not download is started from its own folder
+        let colibri_has_it = self.installed.iter().any(|m| m.id == id && !m.local);
         if let Some(dir) = self
             .installed
             .iter()
-            .find(|m| m.id == id && m.local)
+            .find(|m| m.id == id && m.local && !colibri_has_it)
             .map(|m| m.dir.clone())
         {
-            self.use_existing_model(dir);
+            // switch_model has already stopped what ran; nothing else runs when Start is shown
+            if dir.join("config.json").is_file() {
+                self.use_existing_now(dir);
+            } else {
+                self.installed_read = None;
+                self.toast(self.t(
+                    "Folderul modelului nu mai există sau a fost mutat.",
+                    "The model folder is gone or has been moved.",
+                ));
+            }
             return;
         }
         let Some(coli) = self.coli.clone() else {
@@ -893,28 +906,15 @@ impl CompanionApp {
     /// A model the person already downloaded: a split GGUF (give the first part) is converted
     /// with `coli import`, a ready model folder is used as it is; then colibri is set up for it.
     pub fn use_existing_model(&mut self, path: std::path::PathBuf) {
-        use companion_core::coli::{imported_dir, is_first_gguf, missing_gguf_parts};
-        let Some(coli) = self.coli.clone() else {
+        use companion_core::coli::{is_first_gguf, missing_gguf_parts};
+        if self.coli.is_none() {
             return;
-        };
+        }
         if self.phase() == Phase::Installing || self.install_spawning {
             return;
         }
-        if path.is_file() && !is_first_gguf(&path)
-            || path.is_dir() && !path.join("config.json").is_file()
-        {
-            // the checks below say why
-        } else if (self.server_ready()
-            || matches!(self.health, Health::Loading(_))
-            || self.starting_since.is_some())
-            && !self.demo
-        {
-            // the model that runs now stops first; it stays installed
-            self.use_after_stop = Some(path);
-            self.show_models = false;
-            self.stop_server();
-            return;
-        }
+        // everything that can be wrong is checked first: a bad path must not stop the model
+        // that is running now
         if path.is_file() {
             if !is_first_gguf(&path) {
                 self.toast(self.t(
@@ -939,6 +939,30 @@ impl CompanionApp {
                 "Folderul nu pare un model colibri (lipsește config.json).",
                 "That folder doesn't look like a colibri model (config.json is missing).",
             ));
+            return;
+        }
+        if (self.server_ready()
+            || matches!(self.health, Health::Loading(_))
+            || self.starting_since.is_some())
+            && !self.demo
+        {
+            // the model that runs now stops first and stays installed; the stop handler then
+            // calls `use_existing_now`, which does not look at the running server again
+            self.use_after_stop = Some(path);
+            self.show_models = false;
+            self.stop_server();
+            return;
+        }
+        self.use_existing_now(path);
+    }
+
+    /// Starts the import/use of a model once nothing else runs.
+    fn use_existing_now(&mut self, path: std::path::PathBuf) {
+        use companion_core::coli::imported_dir;
+        let Some(coli) = self.coli.clone() else {
+            return;
+        };
+        if self.phase() == Phase::Installing || self.install_spawning {
             return;
         }
         self.install_spawning = true;
@@ -1248,6 +1272,10 @@ impl CompanionApp {
     }
 
     pub fn refresh_installed(&mut self) {
+        if self.installed_scanning {
+            return;
+        }
+        self.installed_scanning = true;
         self.installed_read = Some(Instant::now());
         let active = self
             .status
@@ -1297,6 +1325,8 @@ impl CompanionApp {
 
     /// "Load models from a folder": remember the folder, list the models in it now.
     pub fn add_model_folder(&mut self, dir: PathBuf) {
+        // kept as an absolute path: a relative one would mean another folder after a `cd`
+        let dir = std::path::absolute(&dir).unwrap_or(dir);
         let dir = dir.components().collect::<PathBuf>();
         if !dir.is_dir() {
             self.toast(self.t(
@@ -1332,16 +1362,28 @@ impl CompanionApp {
     }
 
     pub fn refresh_installed_if_stale(&mut self) {
+        // folders added by hand can be big or on the network: look at them less often
+        let wait = if self.s.extra_model_dirs.is_empty() {
+            4
+        } else {
+            20
+        };
         if self
             .installed_read
-            .is_none_or(|t| t.elapsed() > Duration::from_secs(4))
+            .is_none_or(|t| t.elapsed() > Duration::from_secs(wait))
         {
             self.refresh_installed();
         }
     }
 
     pub fn delete_model(&mut self, id: &str) {
-        let Some(m) = self.installed.iter().find(|m| m.id == id).cloned() else {
+        // never a local copy: colibri did not download those, so it does not delete them
+        let Some(m) = self
+            .installed
+            .iter()
+            .find(|m| m.id == id && !m.local)
+            .cloned()
+        else {
             return;
         };
         let active = self
@@ -2507,7 +2549,10 @@ impl CompanionApp {
                     )),
                 }
             }
-            Event::Installed(list) => self.installed = list,
+            Event::Installed(list) => {
+                self.installed = list;
+                self.installed_scanning = false;
+            }
             Event::GgufFound(list) => {
                 self.gguf_found = list;
                 self.gguf_scanning = false;
@@ -2619,7 +2664,7 @@ impl CompanionApp {
                     if let Some(path) = self.use_after_stop.take() {
                         if result.is_ok() {
                             self.auto_started = false;
-                            self.use_existing_model(path);
+                            self.use_existing_now(path);
                         } else {
                             self.force_autostart = false;
                         }

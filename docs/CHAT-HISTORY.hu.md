@@ -30,6 +30,6 @@ A beszélgetési előzmények egyetlen egyszerű JSON-fájl, hogy a Colibri Comp
 - A `role` értéke `user`, `assistant` vagy `system`. Az üzenet választható mezői: `reasoning`, `display`, `sources` (szövegek listája), `stopped` (true), `images` (csak `data:image/…` URL-ek, és csak a „képekkel” exportnál).
 - Az ismeretlen mezőket figyelmen kívül hagyjuk, így más programok hozzáadhatják a sajátjaikat.
 - Az import hozzáadja az új `id`-kat, és ismert `id`-t csak akkor cserél, ha a fájl `updated` értéke újabb. Az üzenet nélküli beszélgetéseket kihagyja.
-- Olvasáskor a korlátok: 512 MB fájl, 100 000 beszélgetés, beszélgetésenként 100 000 üzenet.
+- Olvasáskor a korlátok: 128 MB fájl, 20 000 beszélgetés, beszélgetésenként 100 000 üzenet.
 
 Egy előzményfájl az ablakra húzva importálódik.

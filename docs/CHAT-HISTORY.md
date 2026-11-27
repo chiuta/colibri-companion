@@ -30,6 +30,6 @@ The chat history is one plain JSON file, so that Colibri Companion, CartaColibri
 - `role` is `user`, `assistant` or `system`. Optional message fields: `reasoning`, `display`, `sources` (list of texts), `stopped` (true), `images` (only `data:image/…` URLs, and only when exported “with pictures”).
 - Unknown fields are ignored, so other programs may add their own.
 - Importing adds new ids and replaces a known id only when the file’s `updated` is newer. Conversations without messages are skipped.
-- Limits when reading: file 512 MB, 100,000 conversations, 100,000 messages per conversation.
+- Limits when reading: file 128 MB, 20,000 conversations, 100,000 messages per conversation.
 
 Dropping a history file onto the window imports it.

@@ -30,6 +30,6 @@ La cronologia delle conversazioni è un semplice file JSON, così Colibri Compan
 - `role` è `user`, `assistant` o `system`. Campi facoltativi del messaggio: `reasoning`, `display`, `sources` (elenco di testi), `stopped` (true), `images` (solo URL `data:image/…`, e solo con l'esportazione «con immagini»).
 - I campi sconosciuti vengono ignorati, quindi altri programmi possono aggiungere i propri.
 - L'importazione aggiunge gli `id` nuovi e sostituisce un `id` noto solo se `updated` del file è più recente. Le conversazioni senza messaggi vengono saltate.
-- Limiti in lettura: file 512 MB, 100.000 conversazioni, 100.000 messaggi per conversazione.
+- Limiti in lettura: file 128 MB, 20.000 conversazioni, 100.000 messaggi per conversazione.
 
 Trascinare un file di cronologia sulla finestra lo importa.

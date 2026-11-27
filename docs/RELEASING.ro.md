@@ -9,3 +9,7 @@ Cum se face o versiune (pentru administrator)
 ## Dacă s-a publicat un număr din greșeală
 
 Nu îl refolosi. Șterge manual acel release și tag-ul lui și publică numărul următor.
+
+## Nu crea niciodată release-ul de mână
+
+Workflow-ul `build` creează singur ciorna, cu toate fișierele atașate. Un release făcut de mână cu același tag (chiar și ciornă) e gol și face să eșueze pasul final. Dacă s-a întâmplat: șterge release-ul gol (păstrează tag-ul) și apasă **Re-run failed jobs** pe rularea `build`.
