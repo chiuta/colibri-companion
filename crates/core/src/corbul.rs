@@ -44,6 +44,12 @@ pub fn free_port() -> io::Result<u16> {
 
 /// The arguments of `corbul serve` for one model file. Never listens beyond the loopback.
 pub fn serve_args(model: &Path, port: u16, packs: &Path) -> Vec<std::ffi::OsString> {
+    // A relative name starting with "-" would be read as an option: always hand over a path.
+    let model = if model.is_absolute() {
+        model.to_path_buf()
+    } else {
+        Path::new(".").join(model)
+    };
     let mut a: Vec<std::ffi::OsString> = vec!["serve".into(), model.into()];
     for (k, v) in [
         ("--host", "127.0.0.1".to_string()),
@@ -140,6 +146,11 @@ mod tests {
         assert!(s.windows(2).any(|w| w == ["--port", "4321"]));
         assert!(s.windows(2).any(|w| w == ["--packs", "/p q"]));
         assert!(!s.iter().any(|x| x.contains("0.0.0.0")));
+        let r = serve_args(Path::new("--port"), 1, Path::new("/p"));
+        assert_eq!(
+            r[1],
+            std::ffi::OsString::from(Path::new(".").join("--port"))
+        );
     }
 
     #[test]
