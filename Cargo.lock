@@ -687,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "colibri-companion"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "companion-core",
  "companion-scholar",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "colibri-rs-cli"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "companion-engine",
  "companion-engine-gpu",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "companion-core"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "expert-streamer",
  "libc",
@@ -739,7 +739,7 @@ dependencies = [
 
 [[package]]
 name = "companion-engine"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "memmap2",
  "serde_json",
@@ -747,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "companion-engine-gpu"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "companion-engine",
  "naga",
@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "companion-scholar"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "lopdf",
  "serde",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "expert-streamer"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "serde_json",
 ]
