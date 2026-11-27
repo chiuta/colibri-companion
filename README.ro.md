@@ -20,6 +20,8 @@ cargo run --release -p colibri-companion -- --demo  # demo, fără colibri
 
 Chat: răspunsuri în flux, Stop instant, Markdown, raționament pliabil, conversații salvate, stil (Precis / Echilibrat / Creativ), copiere și regenerare. Teme: deschisă, închisă, contrast ridicat.
 
+**Orice model de pe disc și istoricul tău:** **Modele** listează și modelele pe care nu le-a descărcat colibri (un folder cu `config.json` și ponderi, de exemplu Gemma, apare ca „Copie locală”; aplicația nu le șterge niciodată). **Încarcă modele dintr-un folder** reține folderele adăugate (prin cale sau prin tragere), listează fișierele .gguf din ele, iar **Convertește și folosește** convertește și pornește unul. În bara din stânga, **Istoric: export / import** salvează toate conversațiile într-un singur fișier JSON, în format deschis ([docs/CHAT-HISTORY.ro.md](docs/CHAT-HISTORY.ro.md), citit și de CartaColibri) sau câte un fișier Markdown pe chat, și le importă înapoi (o copie mai nouă o înlocuiește pe cea veche, niciodată invers). Testat doar cu fișiere simulate, nu cu un model real.
+
 ## Cum funcționează
 
 Aplicația nu include colibri. Rulează comenzile JSON ale lui colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) și vorbește cu gateway-ul OpenAI-compatibil de pe `127.0.0.1`. Nu instalează niciodată pachete de sistem: dacă lipsește ceva, îți arată comanda de copiat. Datele (setări, conversații) stau local în folderul de date al utilizatorului; `COLIBRI_COMPANION_HOME` îl poate schimba.

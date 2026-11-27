@@ -20,6 +20,8 @@ cargo run --release -p colibri-companion -- --demo  # demó, colibri nélkül
 
 Csevegés: folyamatos válaszok, azonnali leállítás, Markdown, összecsukható gondolkodás, mentett beszélgetések, stílus (Pontos / Kiegyensúlyozott / Kreatív), másolás és újragenerálás. Témák: világos, sötét, nagy kontraszt.
 
+**Minden modell a lemezeden, és az előzményeid:** A **Modellek** azokat a modelleket is felsorolja, amelyeket a colibri nem töltött le (egy `config.json`-t és súlyokat tartalmazó mappa, például a Gemma, „Helyi másolat” néven jelenik meg; az alkalmazás ezeket soha nem törli). A **Modellek betöltése mappából** megjegyzi a hozzáadott mappákat (útvonallal vagy húzással), felsorolja a bennük lévő .gguf fájlokat, az **Átalakítás és használat** pedig átalakít és elindít egyet. Az oldalsávban az **Előzmények: export / import** az összes beszélgetést egyetlen JSON-fájlba menti nyílt formátumban ([docs/CHAT-HISTORY.hu.md](docs/CHAT-HISTORY.hu.md), a CartaColibri is olvassa) vagy csevegésenként egy Markdown-fájlba, és vissza is importálja őket (az újabb példány felülírja a régebbit, soha fordítva). Csak szimulált fájlokkal tesztelve, valódi modellel nem.
+
 ## Hogyan működik
 
 Az alkalmazás nem tartalmazza a colibrit. A colibri JSON-parancsait futtatja (`setup --list --json`, `status --json`, `setup`, `start`, `stop`), és a `127.0.0.1`-en lévő OpenAI-kompatibilis átjárójával beszélget. Soha nem telepít rendszercsomagokat: ha valami hiányzik, megmutatja a másolható parancsot. Az adataid (beállítások, beszélgetések) helyben maradnak a felhasználói adatmappában; a `COLIBRI_COMPANION_HOME` ezt megváltoztathatja.

@@ -20,6 +20,8 @@ cargo run --release -p colibri-companion -- --demo  # demo, senza colibri
 
 Chat: risposte in streaming, Stop immediato, Markdown, ragionamento comprimibile, conversazioni salvate, stile (Preciso / Equilibrato / Creativo), copia e rigenera. Temi: chiaro, scuro, alto contrasto.
 
+**Ogni modello sul tuo disco, e la tua cronologia:** **Modelli** elenca anche i modelli che colibri non ha scaricato (una cartella con `config.json` e pesi, per esempio Gemma, compare come «Copia locale»; l'app non li elimina mai). **Carica modelli da una cartella** ricorda le cartelle aggiunte (con il percorso o trascinandole), elenca i file .gguf al loro interno e **Converti e usa** ne converte e avvia uno. Nella barra laterale, **Cronologia: esporta / importa** salva tutte le conversazioni in un solo file JSON in formato aperto ([docs/CHAT-HISTORY.it.md](docs/CHAT-HISTORY.it.md), letto anche da CartaColibri) o in un file Markdown per chat, e le reimporta (una copia più recente sostituisce una più vecchia, mai il contrario). Provato solo con file simulati, non con un modello reale.
+
 ## Come funziona
 
 L'app non include colibri. Esegue i comandi JSON di colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) e dialoga con il suo gateway compatibile OpenAI su `127.0.0.1`. Non installa mai pacchetti di sistema: se manca qualcosa, ti mostra il comando da copiare. I tuoi dati (impostazioni, conversazioni) restano in locale nella cartella dati dell'utente; `COLIBRI_COMPANION_HOME` può cambiarla.

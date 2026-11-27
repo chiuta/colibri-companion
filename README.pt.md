@@ -20,6 +20,8 @@ cargo run --release -p colibri-companion -- --demo  # demonstração, sem colibr
 
 Conversa: respostas em fluxo, Parar instantâneo, Markdown, raciocínio recolhível, conversas guardadas, estilo (Preciso / Equilibrado / Criativo), copiar e regenerar. Temas: claro, escuro, contraste elevado.
 
+**Todos os modelos do teu disco, e o teu histórico:** **Modelos** lista também os modelos que o colibri não descarregou (uma pasta com `config.json` e pesos, por exemplo Gemma, aparece como «Cópia local»; a aplicação nunca os apaga). **Carregar modelos de uma pasta** lembra as pastas que adicionas (por caminho ou arrastando), lista os ficheiros .gguf lá dentro e **Converter e usar** converte e arranca um. Na barra lateral, **Histórico: exportar / importar** guarda todas as conversas num só ficheiro JSON de formato aberto ([docs/CHAT-HISTORY.pt.md](docs/CHAT-HISTORY.pt.md), lido também pelo CartaColibri) ou num ficheiro Markdown por chat, e importa-as de volta (uma cópia mais recente substitui uma mais antiga, nunca o contrário). Testado só com ficheiros simulados, não com um modelo real.
+
 ## Como funciona
 
 A aplicação não inclui o colibri. Executa os comandos JSON do colibri (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) e comunica com o seu gateway compatível com OpenAI em `127.0.0.1`. Nunca instala pacotes do sistema: se faltar algo, mostra-te o comando para copiar. Os teus dados (definições, conversas) ficam locais, na pasta de dados do utilizador; `COLIBRI_COMPANION_HOME` permite alterá-la.

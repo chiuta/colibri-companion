@@ -20,6 +20,8 @@ cargo run --release -p colibri-companion -- --demo  # Demo, ohne colibri
 
 Chat: Antworten im Datenstrom, sofortiger Stopp, Markdown, einklappbares Denken, gespeicherte Unterhaltungen, Stil (Präzise / Ausgewogen / Kreativ), Kopieren und Neu generieren. Designs: hell, dunkel, hoher Kontrast.
 
+**Jedes Modell auf deiner Festplatte, und dein Verlauf:** **Modelle** listet auch Modelle auf, die colibri nicht heruntergeladen hat (ein Ordner mit `config.json` und Gewichten, zum Beispiel Gemma, erscheint als „Lokale Kopie“; die App löscht sie nie). **Modelle aus einem Ordner laden** merkt sich die hinzugefügten Ordner (per Pfad oder Ziehen), listet die darin liegenden .gguf-Dateien auf, und **Umwandeln und verwenden** wandelt eine um und startet sie. In der Seitenleiste speichert **Verlauf: Export / Import** alle Unterhaltungen als eine JSON-Datei in einem offenen Format ([docs/CHAT-HISTORY.de.md](docs/CHAT-HISTORY.de.md), auch von CartaColibri gelesen) oder als eine Markdown-Datei pro Chat und importiert sie wieder (eine neuere Kopie ersetzt eine ältere, nie umgekehrt). Nur mit simulierten Dateien getestet, nicht mit einem echten Modell.
+
 ## So funktioniert es
 
 Die App enthält colibri nicht. Sie führt die JSON-Befehle von colibri aus (`setup --list --json`, `status --json`, `setup`, `start`, `stop`) und spricht mit dessen OpenAI-kompatiblem Gateway auf `127.0.0.1`. Sie installiert nie Systempakete: Fehlt etwas, zeigt sie dir den Befehl zum Kopieren. Deine Daten (Einstellungen, Unterhaltungen) bleiben lokal im Datenordner des Benutzers; `COLIBRI_COMPANION_HOME` kann ihn ändern.
