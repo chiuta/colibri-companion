@@ -367,6 +367,11 @@ pub struct CompanionApp {
     pub install_exit: Option<i32>,
     /// The GGUF being imported, so that a failure can say why.
     pub import_of: Option<std::path::PathBuf>,
+    /// A model run by corbul (Companion's own engine) instead of colibri.
+    pub corbul: Option<companion_core::corbul::Running>,
+    pub corbul_bin: Option<std::path::PathBuf>,
+    corbul_name: String,
+    corbul_after_stop: Option<PathBuf>,
     pub busy: Option<String>,
     pub starting_since: Option<Instant>,
     pub auto_started: bool,
@@ -508,6 +513,10 @@ impl CompanionApp {
             install_log_read: None,
             install_exit: None,
             import_of: None,
+            corbul: None,
+            corbul_bin: companion_core::corbul::find(),
+            corbul_name: String::new(),
+            corbul_after_stop: None,
             busy: None,
             starting_since: None,
             auto_started: false,
@@ -639,6 +648,9 @@ impl CompanionApp {
 
     /// Where the OpenAI-compatible server is right now.
     pub fn base(&self) -> String {
+        if let Some(r) = &self.corbul {
+            return r.base();
+        }
         if let Some(b) = &self.override_base {
             return b.clone();
         }
@@ -804,6 +816,9 @@ impl CompanionApp {
     pub fn phase(&self) -> Phase {
         if self.server_ready() || self.browse_history {
             return Phase::Chat;
+        }
+        if self.corbul.is_some() {
+            return Phase::Loading;
         }
         let Some(_) = &self.coli else {
             return match (&self.python, self.root_searched) {
@@ -991,7 +1006,101 @@ impl CompanionApp {
                     .replacen("{}", &tail, 1),
             );
         }
-        self.toast(msg);
+        if self.corbul_bin.is_some() && file.is_file() {
+            msg.push(' ');
+            msg.push_str(self.t(
+                "Încerc cu motorul propriu (corbul).",
+                "Trying Companion's own engine (corbul).",
+            ));
+            self.toast(msg);
+            self.run_with_corbul(file.to_path_buf());
+        } else {
+            self.toast(msg);
+        }
+    }
+
+    /// Run a GGUF with corbul, Companion's own engine (a family colibri does not implement).
+    pub fn run_with_corbul(&mut self, path: std::path::PathBuf) {
+        use companion_core::coli::{is_first_gguf, missing_gguf_parts};
+        if self.corbul_bin.is_none() {
+            self.toast(self.t(
+                "corbul nu a fost găsit lângă aplicație sau în PATH.",
+                "corbul was not found next to the app or on the PATH.",
+            ));
+            return;
+        }
+        if self.phase() == Phase::Installing || self.install_spawning {
+            return;
+        }
+        if !path.is_file() || !is_first_gguf(&path) || !missing_gguf_parts(&path).is_empty() {
+            self.toast(self.t(
+                "Alege un fișier .gguf întreg sau primul fișier al unui model în părți.",
+                "Pick a whole .gguf file, or the first file of a split model.",
+            ));
+            return;
+        }
+        if (self.server_ready()
+            || matches!(self.health, Health::Loading(_))
+            || self.starting_since.is_some())
+            && !self.demo
+        {
+            self.corbul_after_stop = Some(path);
+            self.show_models = false;
+            self.stop_server();
+            return;
+        }
+        self.run_corbul_now(path);
+    }
+
+    fn run_corbul_now(&mut self, path: std::path::PathBuf) {
+        let Some(bin) = self.corbul_bin.clone() else {
+            return;
+        };
+        self.corbul = None;
+        let packs = paths::data_dir().join("packs");
+        let log = paths::logs_dir().join("corbul.log");
+        match companion_core::corbul::start(&bin, &path, &packs, &log) {
+            Ok(r) => {
+                self.corbul_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.corbul = Some(r);
+                self.health = Health::Down;
+                self.starting_since = Some(Instant::now());
+                self.force_autostart = false;
+                self.auto_started = true;
+                self.show_models = false;
+                self.browse_history = false;
+            }
+            Err(e) => self.toast(format!(
+                "{}: {e}",
+                self.t("corbul nu a pornit", "corbul could not be started")
+            )),
+        }
+    }
+
+    /// Called every frame: notice a corbul that stopped by itself and say what its log ended with.
+    fn corbul_watch(&mut self) {
+        let Some(r) = self.corbul.as_mut() else {
+            return;
+        };
+        let Some(code) = r.exited() else {
+            return;
+        };
+        self.corbul = None;
+        self.starting_since = None;
+        self.health = Health::Down;
+        let log = std::fs::read_to_string(paths::logs_dir().join("corbul.log")).unwrap_or_default();
+        let tail = companion_core::coli::log_tail(&log, 3);
+        let mut m = self
+            .t("corbul s-a oprit ({}).", "corbul stopped ({}).")
+            .replacen("{}", &code.to_string(), 1);
+        if !tail.is_empty() {
+            m.push(' ');
+            m.push_str(&tail);
+        }
+        self.toast(m);
     }
 
     /// Starts the import/use of a model once nothing else runs.
@@ -1635,6 +1744,15 @@ impl CompanionApp {
     }
 
     pub fn stop_server(&mut self) {
+        if self.corbul.take().is_some() {
+            // dropping it stopped the program; the handler below carries on with what was waiting
+            self.stop_generation();
+            let _ = self.tx.send(Event::ServerAction {
+                what: ServerAction::Stop,
+                result: Ok(()),
+            });
+            return;
+        }
         let Some(coli) = self.coli.clone() else {
             return;
         };
@@ -1650,6 +1768,13 @@ impl CompanionApp {
     }
 
     pub fn fetch_logs(&mut self, install: bool) {
+        if self.corbul.is_some() {
+            let text =
+                std::fs::read_to_string(paths::logs_dir().join("corbul.log")).unwrap_or_default();
+            let lines: Vec<&str> = text.lines().collect();
+            self.logs_view = Some(lines[lines.len().saturating_sub(120)..].join("\n"));
+            return;
+        }
         let Some(coli) = self.coli.clone() else {
             return;
         };
@@ -2748,6 +2873,11 @@ impl CompanionApp {
                             self.force_autostart = false;
                         }
                     }
+                    if let Some(path) = self.corbul_after_stop.take() {
+                        if result.is_ok() {
+                            self.run_corbul_now(path);
+                        }
+                    }
                     if let Some(path) = self.use_after_stop.take() {
                         if result.is_ok() {
                             self.auto_started = false;
@@ -2853,6 +2983,7 @@ impl CompanionApp {
         self.flows_tick();
         self.tools_tick();
         self.memory_tick();
+        self.corbul_watch();
         self.sync_poller();
         if self.show_resources {
             self.sync_resource_targets();

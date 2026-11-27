@@ -324,6 +324,22 @@ impl CompanionApp {
                             self.use_existing_model(g.first.clone());
                         }
                     });
+                    if self.corbul_bin.is_some() {
+                        ui.add_enabled_ui(!busy && g.missing.is_empty(), |ui| {
+                            if secondary_button(
+                                ui,
+                                self.t("Rulează cu corbul (motor propriu)", "Run with corbul"),
+                            )
+                            .on_hover_text(self.t(
+                                "Pentru fișiere pe care colibri nu le acceptă (de exemplu Gemma). Mai lent decât colibri pe modele mari.",
+                                "For files colibri cannot import (Gemma, for example). Slower than colibri on large models.",
+                            ))
+                            .clicked()
+                            {
+                                self.run_with_corbul(g.first.clone());
+                            }
+                        });
+                    }
                 });
                 ui.add_space(4.0);
             }

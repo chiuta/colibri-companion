@@ -14472,6 +14472,83 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Részletek: {}",
         ],
     ),
+    (
+        "corbul was not found next to the app or on the PATH.",
+        [
+            "corbul est introuvable à côté de l'application ou dans le PATH.",
+            "corbul non è stato trovato accanto all'app né nel PATH.",
+            "No se encontró corbul junto a la aplicación ni en el PATH.",
+            "O corbul não foi encontrado junto à aplicação nem no PATH.",
+            "corbul wurde weder neben der App noch im PATH gefunden.",
+            "A corbul nem található az alkalmazás mellett vagy a PATH-ban.",
+        ],
+    ),
+    (
+        "Trying Companion's own engine (corbul).",
+        [
+            "Essai avec le moteur propre de Companion (corbul).",
+            "Provo con il motore proprio di Companion (corbul).",
+            "Probando con el motor propio de Companion (corbul).",
+            "A tentar com o motor próprio do Companion (corbul).",
+            "Versuch mit Companions eigener Engine (corbul).",
+            "Próbálkozás a Companion saját motorjával (corbul).",
+        ],
+    ),
+    (
+        "Pick a whole .gguf file, or the first file of a split model.",
+        [
+            "Choisissez un fichier .gguf entier ou le premier fichier d'un modèle découpé.",
+            "Scegli un file .gguf intero o il primo file di un modello diviso.",
+            "Elige un archivo .gguf completo o el primer archivo de un modelo dividido.",
+            "Escolha um ficheiro .gguf inteiro ou o primeiro ficheiro de um modelo dividido.",
+            "Wähle eine ganze .gguf-Datei oder die erste Datei eines geteilten Modells.",
+            "Válassz egy egész .gguf fájlt, vagy egy részekre bontott modell első fájlját.",
+        ],
+    ),
+    (
+        "corbul could not be started",
+        [
+            "corbul n'a pas pu démarrer",
+            "corbul non è partito",
+            "corbul no pudo iniciarse",
+            "O corbul não pôde iniciar",
+            "corbul konnte nicht gestartet werden",
+            "A corbul nem indítható",
+        ],
+    ),
+    (
+        "corbul stopped ({}).",
+        [
+            "corbul s'est arrêté ({}).",
+            "corbul si è fermato ({}).",
+            "corbul se detuvo ({}).",
+            "O corbul parou ({}).",
+            "corbul wurde beendet ({}).",
+            "A corbul leállt ({}).",
+        ],
+    ),
+    (
+        "Run with corbul",
+        [
+            "Lancer avec corbul",
+            "Esegui con corbul",
+            "Ejecutar con corbul",
+            "Executar com o corbul",
+            "Mit corbul ausführen",
+            "Futtatás corbullal",
+        ],
+    ),
+    (
+        "For files colibri cannot import (Gemma, for example). Slower than colibri on large models.",
+        [
+            "Pour les fichiers que colibri ne sait pas importer (Gemma, par exemple). Plus lent que colibri sur les grands modèles.",
+            "Per i file che colibri non sa importare (Gemma, per esempio). Più lento di colibri sui modelli grandi.",
+            "Para archivos que colibri no puede importar (Gemma, por ejemplo). Más lento que colibri en modelos grandes.",
+            "Para ficheiros que o colibri não consegue importar (Gemma, por exemplo). Mais lento do que o colibri em modelos grandes.",
+            "Für Dateien, die colibri nicht importieren kann (z. B. Gemma). Bei großen Modellen langsamer als colibri.",
+            "Olyan fájlokhoz, amelyeket a colibri nem tud importálni (például Gemma). Nagy modelleknél lassabb a colibrinél.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

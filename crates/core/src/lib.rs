@@ -12,6 +12,7 @@ pub mod blocks;
 pub mod chat;
 pub mod coli;
 pub mod connect;
+pub mod corbul;
 pub mod diskbench;
 pub mod duel;
 pub mod embed;

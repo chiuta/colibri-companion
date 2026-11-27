@@ -67,6 +67,8 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked -p colibri-companion --target ${{ matrix.target }}
+      # corbul, Companion's own engine: runs the GGUF files colibri cannot import
+      - run: cargo build --release --locked -p colibri-rs-cli --bin corbul --target ${{ matrix.target }}
       - name: Binary size (informational)
         shell: bash
         env:
@@ -84,6 +86,7 @@ jobs:
           cp LICENSE NOTICE README*.md THIRD_PARTY_LICENSES.md "$d"/ && cp -r licenses "$d"/
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
           cp "target/${{ matrix.target }}/release/colibri-companion$ext" "$d"/
+          cp "target/${{ matrix.target }}/release/corbul$ext" "$d"/
           if [ "${{ runner.os }}" = "Linux" ]; then cp -r packaging "$d"/; fi
           if [ "${{ runner.os }}" = "Windows" ]; then 7z a "$d.zip" "$d"; else tar czf "$d.tar.gz" "$d"; fi
       - uses: actions/upload-artifact@v5
@@ -122,6 +125,11 @@ jobs:
         env:
           RUST_TARGET: ${{ matrix.rust }}
         run: cargo zigbuild --release --locked -p colibri-companion --target "$RUST_TARGET.2.17"
+      - name: Build corbul against glibc 2.17 (optional here)
+        continue-on-error: true
+        env:
+          RUST_TARGET: ${{ matrix.rust }}
+        run: cargo zigbuild --release --locked -p colibri-rs-cli --bin corbul --target "$RUST_TARGET.2.17"
       - name: Check the glibc baseline
         env:
           RUST_TARGET: ${{ matrix.rust }}
@@ -144,6 +152,7 @@ jobs:
           d=colibri-companion-${{ matrix.name }}; mkdir "$d"
           cp LICENSE NOTICE README*.md THIRD_PARTY_LICENSES.md "$d"/ && cp -r licenses "$d"/
           cp "target/${{ matrix.rust }}/release/colibri-companion" "$d"/
+          if [ -f "target/${{ matrix.rust }}/release/corbul" ]; then cp "target/${{ matrix.rust }}/release/corbul" "$d"/; fi
           cp -r packaging "$d"/
           tar czf "$d.tar.gz" "$d"
       - uses: actions/upload-artifact@v5
