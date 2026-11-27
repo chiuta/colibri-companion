@@ -6,6 +6,7 @@ pub const FLAGS: &[&str] = &[
     "check",
     "no-mmap",
     "pack-compress",
+    "no-refit",
     "packs-compress",
     "quiet",
     "help",

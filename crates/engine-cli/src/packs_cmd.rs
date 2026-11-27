@@ -11,13 +11,19 @@
 //! * `--probe N` (default 8) rows recomputed before the first measurement.
 //! * `--pack-kv f16` keeps the packs in F16 (half the size, F16 rounding on every row), `--pack-compress`
 //!   compresses the pack files without loss.
+//! * `--shrink auto|R` shortens the packs: `auto` only when the texts would not fit the context
+//!   window, `R` (0.1 to 1) always, keeping about that fraction of each pack's rows; `--shrink-skip N`
+//!   (default 1) leaves the first N texts whole, `--shrink-window N` (default 16) sets the rows that
+//!   vote, `--no-refit` skips the fit of the kept values (see `docs/KV-FIT.md`).
 //! * `--max-new N` (default 64) tokens to write; `--check` also runs the plain full prefill and prints
 //!   how far the two answers' first-token scores are apart and the time each took.
 //!
 //! Without `--question` the files are only shelved.
 use crate::args::{Args, parse_size};
 use crate::cmds;
-use companion_engine::ctxpack::{ComposeOptions, ComposeReport, Shelf, compose};
+use companion_engine::ctxpack::{
+    ComposeOptions, ComposeReport, Shelf, ShrinkOptions, compose, shrink_pack,
+};
 use companion_engine::model::{KvKind, Model, State};
 use companion_engine::snapshot::SnapshotStore;
 use companion_engine::tokenizer::Tokenizer;
@@ -93,6 +99,26 @@ pub fn cmd(a: &Args) -> Result<(), String> {
     };
     let max_new: usize = a.num("max-new")?.unwrap_or(64);
     let q = a.get("question");
+    let shrink = match a.get("shrink") {
+        None => None,
+        Some("auto") => Some(Shrink::default()),
+        Some(v) => Some(Shrink {
+            ratio: Some(v.parse::<f32>().map_err(|_| {
+                format!("packs: --shrink {v}: give auto or a fraction between 0.1 and 1")
+            })?),
+            ..Shrink::default()
+        }),
+    }
+    .map(|mut sh| -> Result<Shrink, String> {
+        sh.skip = a.num("shrink-skip")?.unwrap_or(sh.skip);
+        sh.opts.window = a.num("shrink-window")?.unwrap_or(sh.opts.window);
+        sh.opts.refit = !a.flag("no-refit");
+        if sh.opts.window == 0 {
+            return Err("packs: --shrink-window must be at least 1".into());
+        }
+        Ok(sh)
+    })
+    .transpose()?;
     let r = answer(
         &model,
         &prep.tok,
@@ -103,6 +129,7 @@ pub fn cmd(a: &Args) -> Result<(), String> {
         &opts,
         max_new,
         a.flag("check"),
+        shrink.as_ref(),
         &mut |l| eprintln!("{l}"),
     )?;
     if q.is_some() {
@@ -111,8 +138,35 @@ pub fn cmd(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// Shorten packs when asked to, or when the texts would not fit the context window.
+#[derive(Clone, Debug)]
+pub struct Shrink {
+    /// Keep this fraction of the rows of every shrinkable pack (`None`: only as much as needed).
+    pub ratio: Option<f32>,
+    /// With no `ratio`: shrink only when the texts and the question would not fit.
+    pub auto: bool,
+    /// The first this-many texts are never shrunk (they usually hold the instructions). The BOS
+    /// pack is never shrunk either.
+    pub skip: usize,
+    pub opts: ShrinkOptions,
+}
+impl Default for Shrink {
+    fn default() -> Self {
+        Shrink {
+            ratio: None,
+            auto: true,
+            skip: 1,
+            opts: ShrinkOptions::default(),
+        }
+    }
+}
+/// Lowest fraction of a pack's rows that is ever asked for.
+pub const MIN_SHRINK_RATIO: f32 = 0.1;
+
 /// What [`answer`] found.
 pub struct Answer {
+    /// Per shrunk pack: its index, tokens before, tokens after.
+    pub shrunk: Vec<(usize, usize, usize)>,
     pub text: String,
     pub report: ComposeReport,
     /// Per text: was its pack already on the shelf?
@@ -134,6 +188,7 @@ pub fn answer(
     opts: &ComposeOptions,
     max_new: usize,
     check: bool,
+    shrink: Option<&Shrink>,
     log: &mut dyn FnMut(String),
 ) -> Result<Answer, String> {
     let ctx = model.spec.context as usize;
@@ -157,9 +212,15 @@ pub fn answer(
         segs.push(v);
     }
     let tail_len = question.map_or(0, |q| ids(q, false).len());
-    if segs.iter().map(Vec::len).sum::<usize>() + tail_len >= ctx {
+    let orig_total: usize = segs.iter().map(Vec::len).sum();
+    if shrink.is_none() && orig_total + tail_len >= ctx {
         return Err(format!(
             "the texts and the question do not fit the {ctx}-token context window"
+        ));
+    }
+    if segs.iter().any(|s| s.len() + tail_len >= ctx) {
+        return Err(format!(
+            "a text and the question do not fit the {ctx}-token context window"
         ));
     }
     let (mut states, mut shelved): (Vec<State>, Vec<bool>) = (Vec::new(), Vec::new());
@@ -179,11 +240,57 @@ pub fn answer(
         states.push(st);
         shelved.push(hit);
     }
+    let mut shrunk = Vec::new();
+    if let (Some(sh), true) = (shrink, question.is_some()) {
+        let first = (segs.len() - texts.len()) + sh.skip;
+        let lens: Vec<usize> = states.iter().map(|s| s.tokens().len()).collect();
+        let eligible: usize = lens.iter().skip(first).sum();
+        // leave room for the answer: at most 256 tokens of it count against the window
+        let need = (orig_total + tail_len + max_new.min(256)).saturating_sub(ctx.saturating_sub(1));
+        let ratio = match sh.ratio {
+            Some(r) if r.is_nan() || !(0.0..=1.0).contains(&r) => {
+                return Err("the shrink ratio must be between 0 and 1".into());
+            }
+            Some(r) => Some(r.max(MIN_SHRINK_RATIO)),
+            None if sh.auto && need > 0 => {
+                if eligible <= need {
+                    return Err(format!(
+                        "the texts do not fit the {ctx}-token context window even with every shrinkable text removed"
+                    ));
+                }
+                Some(((eligible - need) as f32 / eligible as f32).max(MIN_SHRINK_RATIO))
+            }
+            None => None,
+        };
+        if let Some(r) = ratio.filter(|r| *r < 1.0) {
+            for i in first..states.len() {
+                let t0 = Instant::now();
+                let st = shrink_pack(model, &states[i], r, &sh.opts).map_err(|e| e.to_string())?;
+                if st.tokens().len() < lens[i] {
+                    log(format!(
+                        "pack {i}: shrunk {} -> {} tokens ({:.2}s)",
+                        lens[i],
+                        st.tokens().len(),
+                        t0.elapsed().as_secs_f64()
+                    ));
+                    shrunk.push((i, lens[i], st.tokens().len()));
+                    states[i] = st;
+                }
+            }
+        }
+        let now: usize = states.iter().map(|s| s.tokens().len()).sum();
+        if now + tail_len >= ctx {
+            return Err(format!(
+                "the texts and the question do not fit the {ctx}-token context window even shrunk"
+            ));
+        }
+    }
     let mut out = Answer {
+        shrunk,
         text: String::new(),
         report: ComposeReport::default(),
         shelved,
-        prompt_tokens: segs.iter().map(Vec::len).sum(),
+        prompt_tokens: states.iter().map(|s| s.tokens().len()).sum(),
         completion_tokens: 0,
     };
     let Some(q) = question else {
@@ -213,7 +320,9 @@ pub fn answer(
         ));
     }
     out.report = rep;
-    if check {
+    if check && orig_total + tail_len >= ctx {
+        log("check: skipped, the whole text does not fit the context window".into());
+    } else if check {
         let all: Vec<usize> = segs.iter().flatten().chain(&tail).copied().collect();
         let mut full = model.new_state_with(KvKind::F32);
         let t1 = Instant::now();
@@ -297,6 +406,67 @@ mod tests {
         let mut bad = args(true, "0");
         bad.opts.retain(|(k, _)| k != "pack");
         assert!(cmd(&bad).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn texts_that_do_not_fit_are_shrunk_when_asked_and_refused_otherwise() {
+        let d = tmpdir("packs-shrink");
+        let m = d.join("m");
+        std::fs::create_dir_all(&m).unwrap();
+        write_model(&m, false);
+        let files: Vec<_> = (0..3).map(|i| d.join(format!("t{i}.txt"))).collect();
+        std::fs::write(&files[0], "Answer only from the texts below.").unwrap();
+        std::fs::write(
+            &files[1],
+            "The harbour opens at six and ferries leave until dusk.",
+        )
+        .unwrap();
+        std::fs::write(
+            &files[2],
+            "Tickets cost four coins and children travel free.",
+        )
+        .unwrap();
+        let args = |extra: &[(&str, Option<&str>)]| {
+            let mut v: Vec<String> = vec![m.display().to_string()];
+            for (k, val) in [
+                ("session", d.join("s").display().to_string()),
+                ("question", "When does it open".into()),
+                ("max-new", "2".into()),
+            ] {
+                v.push(format!("--{k}"));
+                v.push(val);
+            }
+            for f in &files {
+                v.push("--pack".into());
+                v.push(f.display().to_string());
+            }
+            for (k, val) in extra {
+                v.push(format!("--{k}"));
+                if let Some(x) = val {
+                    v.push((*x).to_string());
+                }
+            }
+            Args::parse(&v)
+        };
+        // together they are longer than the 96-token window
+        assert!(cmd(&args(&[])).is_err());
+        cmd(&args(&[("shrink", Some("auto"))])).unwrap();
+        cmd(&args(&[("shrink", Some("auto")), ("no-refit", None)])).unwrap();
+        cmd(&args(&[("shrink", Some("0.05"))])).unwrap();
+        cmd(&args(&[
+            ("shrink", Some("0.5")),
+            ("shrink-skip", Some("0")),
+        ]))
+        .unwrap();
+        assert!(cmd(&args(&[("shrink", Some("7"))])).is_err());
+        assert!(cmd(&args(&[("shrink", Some("abc"))])).is_err());
+        assert!(
+            cmd(&args(&[
+                ("shrink", Some("auto")),
+                ("shrink-window", Some("0"))
+            ]))
+            .is_err()
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 }

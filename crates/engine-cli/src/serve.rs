@@ -2256,6 +2256,21 @@ fn packs_complete(app: &App, req: &http::Request, who: &Principal) -> Result<Val
         max_refresh: usize::MAX,
     };
     let max_new = num("max_tokens").map_or(app.cfg.max_tokens, |v| v.clamp(1.0, 8192.0) as usize);
+    let shrink = match body.get("shrink") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+        Some(Value::String(t)) if t == "auto" => Some(crate::packs_cmd::Shrink::default()),
+        Some(v) => match v.as_f64() {
+            Some(r) if (0.0..=1.0).contains(&r) => Some(crate::packs_cmd::Shrink {
+                ratio: Some(r as f32),
+                ..Default::default()
+            }),
+            _ => {
+                return Err(bad(
+                    "`shrink` must be \"auto\" or a fraction between 0.1 and 1",
+                ));
+            }
+        },
+    };
     let slot = slot_for(app, who, body.get("model").and_then(Value::as_str))?;
     let waited = Instant::now();
     let _gate = loop {
@@ -2285,6 +2300,7 @@ fn packs_complete(app: &App, req: &http::Request, who: &Principal) -> Result<Val
         &opts,
         max_new,
         false,
+        shrink.as_ref(),
         &mut |_| {},
     )
     .map_err(bad)?;
@@ -2300,6 +2316,7 @@ fn packs_complete(app: &App, req: &http::Request, who: &Principal) -> Result<Val
             "rows_recomputed": r.refreshed,
             "rows_fresh": r.fresh,
             "rows_saved": r.saved(),
+            "shrunk": a.shrunk.iter().map(|(i, from, to)| json!({"pack": i, "from": from, "to": to})).collect::<Vec<_>>(),
             "joins": r.joins.iter().map(|(n, d)| json!({"rows": n, "change": d})).collect::<Vec<_>>(),
         },
     }))
@@ -2985,6 +3002,26 @@ mod tests {
         let b = post(h.addr, "/v1/packs/complete", body, "").json();
         assert_eq!(b["packs"]["shelved"][0], true);
         assert_eq!(a.json()["text"], b["text"]);
+        // texts longer than the 96-token window: refused, then shrunk when asked
+        let long = r#"{"packs":["Answer only from the texts below.","The harbour opens at six and ferries leave until dusk.","Tickets cost four coins and children travel free."],"question":"When does it open","max_tokens":2"#;
+        assert_eq!(
+            post(h.addr, "/v1/packs/complete", &format!("{long}}}"), "").status,
+            400
+        );
+        let r = post(
+            h.addr,
+            "/v1/packs/complete",
+            &format!(r#"{long},"shrink":"auto"}}"#),
+            "",
+        );
+        assert_eq!(r.status, 200, "{}", r.text());
+        let j = r.json();
+        assert_eq!(j["packs"]["shrunk"].as_array().unwrap().len(), 2);
+        assert!(j["packs"]["shrunk"][0]["to"].as_u64() < j["packs"]["shrunk"][0]["from"].as_u64());
+        for bad in [r#","shrink":7"#, r#","shrink":"lots""#, r#","shrink":[1]"#] {
+            let r = post(h.addr, "/v1/packs/complete", &format!("{long}{bad}}}"), "");
+            assert_eq!(r.status, 400, "{bad}");
+        }
         for bad in [
             r#"{"packs":[],"question":"x"}"#,
             r#"{"packs":["a"],"question":""}"#,

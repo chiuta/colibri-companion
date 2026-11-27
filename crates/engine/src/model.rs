@@ -1218,6 +1218,63 @@ impl Model {
         Ok(())
     }
 
+    /// After eviction ([`State::compact`], [`State::apply_policy`]): rotate every kept key to the
+    /// position of its slot, so the state looks like a plain cache of its (shortened) token list:
+    /// no position table, no gap. Distances between kept tokens shrink to the number of kept
+    /// tokens between them, as if the dropped tokens had never been in the text. That is what lets a
+    /// shrunk pack be spliced and repaired like any other ([`crate::ctxpack`]), and what keeps the
+    /// positions inside the length the model was trained for. Refused with sliding-window layers, an
+    /// accelerator-side cache, Q8, tracked scores or recorded queries (turn them off first).
+    pub fn squeeze_cache(&self, st: &mut State) -> Result<(), ModelError> {
+        let bad = |m: &str| Err(ModelError::Shape(format!("cannot squeeze the cache: {m}")));
+        if self.accel.is_some() || st.dev.is_some() {
+            return bad("the cache lives on an accelerator");
+        }
+        if st.kv.len() != self.spec.layers as usize || st.tokens.len() != st.pos {
+            return bad("the state was not made by new_state or does not know all its tokens");
+        }
+        if st.kvx.acc.is_some() || st.kvx.qrec.is_some() {
+            return bad("turn off track_scores and record_queries first");
+        }
+        if st.kv.iter().any(|l| l.cap > 0) {
+            return bad("the model has sliding-window layers");
+        }
+        if st.kv_kind() == KvKind::Q8 {
+            return bad("Q8 caches cannot be rotated without extra rounding");
+        }
+        if !st.is_compacted() {
+            return Ok(());
+        }
+        let hd = self.spec.head_dim as usize;
+        let inv = &self.rope_global.0;
+        let moves: Vec<(usize, i64)> = (0..st.pos)
+            .filter_map(|i| {
+                let d = i as i64 - st.abs_pos(i) as i64;
+                (d != 0).then_some((i, d))
+            })
+            .collect();
+        let mut kr = Vec::new();
+        for l in st.kv.iter_mut() {
+            let kd = l.kd;
+            if kd % hd != 0 {
+                return bad("the head size does not divide the cache row");
+            }
+            kr.resize(kd, 0.0);
+            for &(i, d) in &moves {
+                l.k.read(i, kd, hd, &mut kr);
+                for head in kr.chunks_mut(hd) {
+                    rope_shift(head, d, inv);
+                }
+                l.k.write(i, kd, hd, &kr);
+            }
+        }
+        st.kvx.abs.clear();
+        st.kvx.gap = 0;
+        st.last = None;
+        st.reused = 0;
+        Ok(())
+    }
+
     /// Recompute cache rows `from..from + len` of `st` from the tokens it already holds, in place,
     /// attending to the rows before `from` as they are now. Rows after the range are not touched
     /// (so repair runs from the start of a spliced text towards its end). Returns, per row, how

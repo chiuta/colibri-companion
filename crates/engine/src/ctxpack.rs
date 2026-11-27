@@ -134,6 +134,109 @@ pub fn compose(
     Ok((st, logits, rep))
 }
 
+/// How [`shrink_pack`] shortens a pack.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShrinkOptions {
+    /// The last `window` tokens of the pack are re-read to vote for the rows to keep (and, with
+    /// `refit`, become the probes the kept values are fitted to).
+    pub window: usize,
+    /// Smoothing of the votes over neighbouring rows (SnapKV).
+    pub pool: usize,
+    /// The first rows are always kept: they are where attention piles up.
+    pub sinks: usize,
+    /// Refit the kept values (see `kvfit.rs`).
+    pub refit: bool,
+    /// How strongly the refit stays near the old values.
+    pub ridge: f32,
+}
+impl Default for ShrinkOptions {
+    fn default() -> Self {
+        ShrinkOptions {
+            window: 16,
+            pool: 5,
+            sinks: 4,
+            refit: true,
+            ridge: 0.01,
+        }
+    }
+}
+
+/// SnapKV that always keeps the first `sinks` rows.
+struct Sinked {
+    inner: crate::kvpolicy::SnapKv,
+    sinks: usize,
+}
+impl crate::kvpolicy::Policy for Sinked {
+    fn select_keep(&self, scores: &[f32], len: usize, budget: usize) -> Vec<usize> {
+        let s = self.sinks.min(budget / 2).min(len);
+        let mut k = self
+            .inner
+            .select_keep(scores, len, budget.saturating_sub(s));
+        k.extend(0..s);
+        k.sort_unstable();
+        k.dedup();
+        k
+    }
+    fn needs_scores(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &'static str {
+        "snapkv+sinks"
+    }
+}
+
+/// A shorter version of `pack`: about `ratio` of its rows are kept, chosen by what its own last
+/// `window` tokens attend to, optionally with the kept values refitted, and the keys rotated to
+/// their new slots ([`Model::squeeze_cache`]). The result is the cache of the pack's text *with the
+/// dropped tokens left out* (its `tokens()` are the kept ones), so it can be spliced and repaired
+/// like any pack. It is an approximation: the kept rows were computed with the dropped tokens in
+/// view. `ratio >= 1`, or a pack too short to vote, returns a copy.
+///
+/// Costs a re-read of `window` tokens, plus the fit when `refit` is on. Needs a cache that
+/// [`Model::splice_cache`] accepts (no sliding window, no accelerator, not Q8).
+pub fn shrink_pack(
+    model: &Model,
+    pack: &State,
+    ratio: f32,
+    o: &ShrinkOptions,
+) -> Result<State, ModelError> {
+    let n = pack.tokens().len();
+    let w = o.window.min(n.saturating_sub(1));
+    let budget = ((n as f64) * ratio.clamp(0.0, 1.0) as f64).ceil() as usize;
+    let budget = budget.max(w + o.sinks + 1);
+    if !pack.is_exact() {
+        return Err(ModelError::Shape("a pack must be exact".into()));
+    }
+    if ratio.is_nan() || budget >= n || w == 0 {
+        return pack.fork();
+    }
+    let tokens = pack.tokens().to_vec();
+    let mut st = pack.fork()?;
+    st.truncate(n - w)?;
+    st.track_scores(true);
+    if o.refit {
+        st.record_queries(w);
+    }
+    model.forward_batch(&mut st, &tokens[n - w..])?;
+    let policy = Sinked {
+        inner: crate::kvpolicy::SnapKv {
+            window: w,
+            pool: o.pool,
+        },
+        sinks: o.sinks,
+    };
+    let layers = crate::kvpolicy::LayerBudgets::Uniform;
+    if o.refit {
+        st.apply_policy_fitted(&policy, budget, &layers, o.ridge)?;
+    } else {
+        st.apply_policy(&policy, budget, &layers)?;
+    }
+    st.track_scores(false);
+    st.record_queries(0);
+    model.squeeze_cache(&mut st)?;
+    Ok(st)
+}
+
 /// Packs kept on disk (an LRU-capped [`SnapshotStore`], optionally signed), made on demand.
 ///
 /// Packs are F32 by default. [`Shelf::with_kind`] keeps them in F16 instead, half the size on disk
@@ -402,5 +505,59 @@ mod tests {
         let (back, hit) = s16.pack(&m, &a).unwrap();
         assert!(!hit && back.kv_kind() == KvKind::F16);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn a_shrunk_pack_is_the_cache_of_its_shortened_text() {
+        let m = tiny(4, 2, false);
+        let v = m.spec.vocab as usize;
+        let (a, b, q) = (toks(21, 10, v), toks(22, 14, v), toks(23, 3, v));
+        let (pa, pb) = (packed(&m, &a), packed(&m, &b));
+        for refit in [false, true] {
+            let o = ShrinkOptions {
+                window: 4,
+                sinks: 2,
+                refit,
+                ..Default::default()
+            };
+            let sb = shrink_pack(&m, &pb, 0.5, &o).unwrap();
+            assert!(sb.is_exact() && !sb.is_compacted());
+            assert_eq!(sb.pos, sb.tokens().len());
+            assert!(sb.pos < 14 && sb.pos >= 7);
+            assert_eq!(sb.kv_kind(), pb.kv_kind());
+            // the kept tokens are a subsequence of the pack's, the first ones always, the last window too
+            let mut it = b.iter();
+            assert!(sb.tokens().iter().all(|t| it.any(|x| x == t)));
+            assert_eq!(&sb.tokens()[..2], &b[..2]);
+            assert_eq!(sb.tokens()[sb.pos - 4..], b[10..]);
+            // layer-0 keys depend only on the token and its slot: the rotation put them where a
+            // prefill of the shortened text puts them
+            let direct = packed(&m, sb.tokens());
+            for i in 0..sb.pos {
+                let (x, y) = (sb.key_row(0, i).unwrap(), direct.key_row(0, i).unwrap());
+                assert!(close(&x, &y, 1e-3), "refit {refit} slot {i}");
+            }
+            // composed with everything repaired = a full prefill of the shortened text
+            let full = ComposeOptions {
+                tolerance: 0.0,
+                ..Default::default()
+            };
+            let (st, logits, rep) = compose(&m, &[&pa, &sb], &q, &full).unwrap();
+            let all: Vec<usize> = [a.clone(), sb.tokens().to_vec(), q.clone()].concat();
+            assert!(close(&logits, &reference_logits(&m, &all), 2e-3));
+            assert!(st.is_exact() || st.approx_slots() == 0);
+            assert_eq!(rep.spliced, 10 + sb.pos);
+        }
+        // nothing to shrink: a copy
+        let o = ShrinkOptions::default();
+        for r in [1.0, 2.0, f32::NAN] {
+            let c = shrink_pack(&m, &pb, r, &o).unwrap();
+            assert_eq!(c.tokens(), pb.tokens());
+        }
+        let tiny_pack = packed(&m, &toks(24, 3, v));
+        assert_eq!(shrink_pack(&m, &tiny_pack, 0.1, &o).unwrap().pos, 3);
+        // an approximate pack is refused
+        let mut st = pa.fork().unwrap();
+        m.splice_cache(&mut st, &pb, 0..14).unwrap();
+        assert!(shrink_pack(&m, &st, 0.5, &o).is_err());
     }
 }
