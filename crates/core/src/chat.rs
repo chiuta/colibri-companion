@@ -586,9 +586,31 @@ mod tests {
         let addr = l.local_addr().unwrap();
         std::thread::spawn(move || {
             if let Ok((mut c, _)) = l.accept() {
+                // Read the whole request first: closing with unread bytes makes Windows reset the
+                // connection before the client has read the reply.
+                let mut got = Vec::new();
                 let mut buf = [0u8; 4096];
-                let _ = c.read(&mut buf);
+                loop {
+                    let n = c.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    got.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&got).to_lowercase();
+                    if let Some(h) = text.find("\r\n\r\n") {
+                        let len = text[..h]
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if got.len() >= h + 4 + len {
+                            break;
+                        }
+                    }
+                }
                 let _ = c.write_all(reply.as_bytes());
+                let _ = c.flush();
+                let _ = c.shutdown(std::net::Shutdown::Write);
             }
         });
         format!("http://{addr}")
