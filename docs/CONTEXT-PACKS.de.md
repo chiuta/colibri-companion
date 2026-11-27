@@ -19,3 +19,7 @@ Grenzen: JustVuggs colibri-Engine kann keine Caches exportieren, daher nur mit c
 ## Server
 
 `corbul serve MODEL --packs DIR [--packs-cap 2g]` fügt `POST /v1/packs/complete` hinzu mit `{"packs": [Text, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. Die Antwort enthält `text`, `usage` und ein `packs`-Objekt (bereits abgelegte Texte, kopierte, neu berechnete, frische und eingesparte Zeilen, gemessene Änderung an jeder Naht). Einfache Text-Vervollständigung, greedy, ohne Chat-Vorlage.
+
+## In Colibri Companion
+
+Ist die Dokumentensuche an, setze den Haken bei *Frühere Arbeit wiederverwenden*. Jede gefundene Passage wird zu einem Paket, das nach seiner Quelle (nicht nach dem Rang) benannt ist; dieselbe Passage wird deshalb in jeder Reihenfolge wiederverwendet. Nötig ist corbul mit `--packs`; bei jeder anderen Engine wird die Einstellung ignoriert und der normale Chat läuft. Die Antwort kommt als Ganzes.

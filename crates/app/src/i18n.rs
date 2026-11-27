@@ -14417,6 +14417,28 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A modell mappája már nincs meg, vagy áthelyezték.",
         ],
     ),
+    (
+        "Reuse earlier work",
+        [
+            "Réutiliser le calcul",
+            "Riusa il calcolo",
+            "Reutilizar el cálculo",
+            "Reaproveitar o cálculo",
+            "Frühere Arbeit wiederverwenden",
+            "Korábbi munka újrahasznosítása",
+        ],
+    ),
+    (
+        "Only with corbul started with --packs: the work done on each passage is kept and reused, in any order. With another engine the ordinary chat is used.",
+        [
+            "Uniquement avec corbul lancé avec --packs : le travail fait sur chaque passage est conservé et réutilisé, dans n'importe quel ordre. Avec un autre moteur, le chat ordinaire est utilisé.",
+            "Solo con corbul avviato con --packs: il lavoro fatto su ogni brano viene conservato e riusato, in qualsiasi ordine. Con un altro motore si usa la chat normale.",
+            "Solo con corbul iniciado con --packs: el trabajo hecho en cada pasaje se guarda y se reutiliza, en cualquier orden. Con otro motor se usa el chat normal.",
+            "Só com o corbul iniciado com --packs: o trabalho feito em cada passagem é guardado e reaproveitado, em qualquer ordem. Com outro motor usa-se o chat normal.",
+            "Nur mit corbul, das mit --packs gestartet wurde: Die Arbeit an jeder Passage wird gespeichert und in beliebiger Reihenfolge wiederverwendet. Mit einer anderen Engine wird der normale Chat benutzt.",
+            "Csak a --packs kapcsolóval indított corbullal: az egyes szakaszokon végzett munka megmarad és tetszőleges sorrendben újrahasznosul. Más motorral a szokásos csevegés működik.",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

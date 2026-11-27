@@ -2287,6 +2287,14 @@ impl CompanionApp {
                     .unwrap_or_default();
             }
         }
+        let pack_job = (self.s.context_packs)
+            .then(|| {
+                doc_ctx
+                    .as_ref()
+                    .filter(|c| !c.passages.is_empty())
+                    .map(|c| companion_core::rag::pack_inputs(c, &question))
+            })
+            .flatten();
         let extra = match doc_ctx {
             Some(c) if extra.is_empty() => c.text,
             Some(c) => format!("{extra}\n\n{}", c.text),
@@ -2322,7 +2330,42 @@ impl CompanionApp {
         });
         self.begin_meter(turn);
         let (client, tx, ctx) = (self.client(), self.tx.clone(), self.ctx.clone());
+        let max_new = self.s.max_tokens.unwrap_or(1024);
         thread::spawn(move || {
+            // corbul with --packs: reuse the work done on each passage. Anything else (another
+            // engine, corbul without --packs, a failure) falls through to the ordinary chat.
+            if let Some((packs, q)) = pack_job {
+                match client.pack_complete(&packs, &q, max_new, &cancel) {
+                    Ok(r) => {
+                        let _ = tx.send(Event::ChatDelta {
+                            turn,
+                            ev: StreamEvent::Content(r.text),
+                        });
+                        let summary = companion_core::chat::StreamSummary {
+                            finish_reason: Some("stop".into()),
+                            prompt_tokens: Some(r.prompt_tokens),
+                            completion_tokens: Some(r.completion_tokens),
+                            total_ms: 0,
+                            ..Default::default()
+                        };
+                        let _ = tx.send(Event::ChatDone {
+                            turn,
+                            result: Ok(summary),
+                        });
+                        ctx.request_repaint();
+                        return;
+                    }
+                    Err(companion_core::chat::PackFail::Unsupported) => {}
+                    Err(companion_core::chat::PackFail::Error(e)) => {
+                        let _ = tx.send(Event::ChatDone {
+                            turn,
+                            result: Err(e),
+                        });
+                        ctx.request_repaint();
+                        return;
+                    }
+                }
+            }
             let result = client.stream_chat(&req, &cancel, |ev| {
                 let _ = tx.send(Event::ChatDelta { turn, ev });
                 // At most about 30 redraws a second while text streams in: a fast model sends

@@ -311,6 +311,24 @@ impl ServerFacts {
 
 // ------------------------------------------------------------------ client
 
+/// What `/v1/packs/complete` answered.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PackReply {
+    pub text: String,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub rows_copied: u64,
+    pub rows_recomputed: u64,
+    /// Rows that did not have to go through the network because an earlier run had them.
+    pub rows_saved: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PackFail {
+    Unsupported,
+    Error(ChatError),
+}
+
 #[derive(Clone, Debug)]
 pub struct ChatClient {
     /// Without trailing slash and without `/v1`, e.g. `http://127.0.0.1:8000`.
@@ -373,6 +391,46 @@ impl ChatClient {
                     .to_string(),
             ),
         }
+    }
+
+    /// Ask corbul to answer from `packs` (texts it keeps the work for) and `question`: the
+    /// non-streaming `/v1/packs/complete`. [`PackFail::Unsupported`] means this server has no such
+    /// endpoint (any other engine, or corbul started without `--packs`): use the ordinary chat.
+    pub fn pack_complete(
+        &self,
+        packs: &[String],
+        question: &str,
+        max_tokens: u32,
+        cancel: &CancelToken,
+    ) -> Result<PackReply, PackFail> {
+        let body = serde_json::json!({
+            "packs": packs, "question": question, "max_tokens": max_tokens,
+        });
+        let resp = http::send(
+            &self.base,
+            "POST",
+            "/v1/packs/complete",
+            Some(&body.to_string()),
+            &self.opts(None, Some(cancel)),
+        )
+        .map_err(|e| PackFail::Error(unreachable(e)))?;
+        let (status, text) = (resp.status, resp.text());
+        if matches!(status, 404 | 405 | 501) {
+            return Err(PackFail::Unsupported);
+        }
+        if status != 200 {
+            return Err(PackFail::Error(parse_error_body(status, &text)));
+        }
+        let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        let n = |p: &str| v.pointer(p).and_then(Value::as_u64).unwrap_or(0);
+        Ok(PackReply {
+            text: v["text"].as_str().unwrap_or("").to_string(),
+            prompt_tokens: n("/usage/prompt_tokens"),
+            completion_tokens: n("/usage/completion_tokens"),
+            rows_copied: n("/packs/rows_copied"),
+            rows_recomputed: n("/packs/rows_recomputed"),
+            rows_saved: n("/packs/rows_saved"),
+        })
     }
 
     pub fn model_ids(&self) -> Result<Vec<String>, ChatError> {
@@ -521,6 +579,45 @@ fn unreachable(e: std::io::Error) -> ChatError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn one_shot(reply: &'static str) -> String {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut c, _)) = l.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf);
+                let _ = c.write_all(reply.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn pack_complete_reads_the_answer_and_tells_unsupported_apart() {
+        let ok = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 142\r\nConnection: close\r\n\r\n{\"text\":\"six\",\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":1},\"packs\":{\"rows_copied\":7,\"rows_recomputed\":2,\"rows_saved\":5}}";
+        let body = ok.split("\r\n\r\n").nth(1).unwrap().len();
+        let ok = Box::leak(ok.replace("142", &body.to_string()).into_boxed_str());
+        let c = ChatClient::new(&one_shot(ok), None);
+        let r = c
+            .pack_complete(&["a".into()], "q", 8, &CancelToken::new())
+            .unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.rows_saved, r.prompt_tokens),
+            ("six", 5, 9)
+        );
+        let c = ChatClient::new(
+            &one_shot(
+                "HTTP/1.1 501 Not Implemented\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            ),
+            None,
+        );
+        assert_eq!(
+            c.pack_complete(&["a".into()], "q", 8, &CancelToken::new()),
+            Err(PackFail::Unsupported)
+        );
+    }
     use std::sync::Arc;
     use std::thread;
 

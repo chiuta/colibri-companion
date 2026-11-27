@@ -19,3 +19,7 @@ Korlátok: JustVugg colibri motorja nem tud gyorsítótárat exportálni, ezért
 ## Szerver
 
 A `corbul serve MODEL --packs DIR [--packs-cap 2g]` hozzáadja a `POST /v1/packs/complete` végpontot ezzel: `{"packs": [szöveg, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. A válasz tartalmaz `text`, `usage` és `packs` mezőt (már polcon lévő szövegek, másolt, újraszámolt, friss és megspórolt sorok, illesztésenkénti mért változás). Egyszerű, mohó szövegkiegészítés, chat-sablon nélkül.
+
+## A Colibri Companionben
+
+Bekapcsolt dokumentumokkal jelöld be a *Korábbi munka újrahasznosítása* négyzetet. Minden megtalált szakasz a forrásáról (nem a rangjáról) elnevezett csomag lesz, így ugyanaz a szakasz bármilyen sorrendben újrahasznosul. A `--packs` kapcsolóval indított corbul kell hozzá; más motornál a beállítást figyelmen kívül hagyja, és a szokásos csevegés fut. A válasz egyben érkezik.

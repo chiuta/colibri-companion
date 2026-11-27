@@ -19,3 +19,7 @@ Limites: o motor colibri de JustVugg não exporta caches, por isso só funciona 
 ## Servidor
 
 `corbul serve MODEL --packs DIR [--packs-cap 2g]` acrescenta `POST /v1/packs/complete` com `{"packs": [texto, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. A resposta tem `text`, `usage` e um objeto `packs` (textos já guardados, linhas copiadas, recalculadas, novas e poupadas, alteração medida em cada junção). Completação de texto gananciosa, sem modelo de chat.
+
+## No Colibri Companion
+
+Com os documentos ativados, marque *Reaproveitar o cálculo*. Cada passagem encontrada torna-se um pacote etiquetado pela fonte (não pela posição), por isso a mesma passagem é reaproveitada em qualquer ordem. Requer o corbul iniciado com `--packs`; com outro motor a opção é ignorada e corre o chat normal. A resposta chega inteira.

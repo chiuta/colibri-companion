@@ -19,3 +19,7 @@ Limite: motorul colibri al lui JustVugg nu poate exporta cache-uri, deci merge d
 ## Server
 
 `corbul serve MODEL --packs DIR [--packs-cap 2g]` adaugă `POST /v1/packs/complete` cu `{"packs": [text, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. Răspunsul conține `text`, `usage` și un obiect `packs` (care texte erau deja pe raft, rânduri copiate, recalculate, proaspete și economisite, plus schimbarea măsurată la fiecare îmbinare). Completare simplă de text, greedy; fără șablon de chat.
+
+## În Colibri Companion
+
+Cu documentele pornite, bifează *Refolosește calculul*. Fiecare pasaj găsit devine un pachet etichetat după sursă (nu după rang), așa că același pasaj se refolosește în orice ordine. Cere corbul pornit cu `--packs`; cu orice alt motor setarea e ignorată și merge chatul obișnuit. Răspunsul vine întreg, nu cuvânt cu cuvânt.

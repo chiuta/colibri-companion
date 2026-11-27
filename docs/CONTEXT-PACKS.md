@@ -19,3 +19,7 @@ Limits: JustVugg's colibri engine cannot export caches, so this works only with 
 ## Server
 
 `corbul serve MODEL --packs DIR [--packs-cap 2g]` adds `POST /v1/packs/complete` with `{"packs": [text, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. The answer has `text`, `usage` and a `packs` object (which texts were already shelved, rows copied, recomputed, fresh and saved, and the change measured at each join). Plain-text greedy completion; no chat template.
+
+## In Colibri Companion
+
+With documents switched on, tick *Reuse earlier work*. Each retrieved passage becomes a pack labelled by its source (not by its rank), so the same passage is reused whatever the order. It needs corbul started with `--packs`; with any other engine the setting is ignored and the ordinary chat runs. The answer arrives whole, not word by word.

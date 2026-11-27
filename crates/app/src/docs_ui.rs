@@ -212,6 +212,24 @@ impl CompanionApp {
             if ui.small_button(self.t("Gestionează", "Manage")).clicked() {
                 self.open_docs();
             }
+            if self.s.docs_active.is_some() {
+                let tip = self.t(
+                    "Doar cu corbul pornit cu --packs: lucrul făcut pe fiecare pasaj se reține și se refolosește, în orice ordine. Cu alt motor se folosește chatul obișnuit.",
+                    "Only with corbul started with --packs: the work done on each passage is kept and reused, in any order. With another engine the ordinary chat is used.",
+                );
+                let mut on = self.s.context_packs;
+                if ui
+                    .checkbox(
+                        &mut on,
+                        self.t("Refolosește calculul", "Reuse earlier work"),
+                    )
+                    .on_hover_text(tip)
+                    .changed()
+                {
+                    self.s.context_packs = on;
+                    let _ = self.s.save();
+                }
+            }
         }
     }
 

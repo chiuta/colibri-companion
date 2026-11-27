@@ -215,6 +215,9 @@ pub struct Settings {
     pub models_dir: Option<PathBuf>,
     /// Folders the person added to look for models in (GGUF files, model folders).
     pub extra_model_dirs: Vec<PathBuf>,
+    /// With corbul started with `--packs`: answer from documents by reusing the work done on each
+    /// passage the last time it was used, whatever the order (falls back to ordinary chat otherwise).
+    pub context_packs: bool,
     /// Where the OpenAI-compatible server is. Default: colibri's own.
     pub server_url: String,
     pub api_key: String,
@@ -253,6 +256,7 @@ impl Default for Settings {
             colibri_root: None,
             models_dir: None,
             extra_model_dirs: Vec::new(),
+            context_packs: false,
             server_url: "http://127.0.0.1:8000".into(),
             api_key: String::new(),
             style: Style::Balanced,
