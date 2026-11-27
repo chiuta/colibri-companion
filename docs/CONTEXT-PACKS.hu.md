@@ -15,3 +15,7 @@ Korlátok: JustVugg colibri motorja nem tud gyorsítótárat exportálni, ezért
 ## Parancssor
 
 `corbul packs MODEL --session DIR --pack FÁJL… --question SZÖVEG [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` minden fájlt egyszer a polcra tesz, majd a tárolt csomagokkal válaszol, tetszőleges sorrendben. A `--check` teljes prefillt is futtat, és kiírja a pontszámkülönbséget és mindkettő idejét.
+
+## Szerver
+
+A `corbul serve MODEL --packs DIR [--packs-cap 2g]` hozzáadja a `POST /v1/packs/complete` végpontot ezzel: `{"packs": [szöveg, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. A válasz tartalmaz `text`, `usage` és `packs` mezőt (már polcon lévő szövegek, másolt, újraszámolt, friss és megspórolt sorok, illesztésenkénti mért változás). Egyszerű, mohó szövegkiegészítés, chat-sablon nélkül.

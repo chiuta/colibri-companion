@@ -15,3 +15,7 @@ Limite: motorul colibri al lui JustVugg nu poate exporta cache-uri, deci merge d
 ## Linia de comandă
 
 `corbul packs MODEL --session DIR --pack FIȘIER… --question TEXT [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` pune fiecare fișier pe raft o singură dată, apoi răspunde folosind pachetele păstrate, în orice ordine. `--check` rulează și un prefill complet și afișează diferența de scoruri și timpul fiecăruia.
+
+## Server
+
+`corbul serve MODEL --packs DIR [--packs-cap 2g]` adaugă `POST /v1/packs/complete` cu `{"packs": [text, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. Răspunsul conține `text`, `usage` și un obiect `packs` (care texte erau deja pe raft, rânduri copiate, recalculate, proaspete și economisite, plus schimbarea măsurată la fiecare îmbinare). Completare simplă de text, greedy; fără șablon de chat.

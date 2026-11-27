@@ -15,3 +15,7 @@ Grenzen: JustVuggs colibri-Engine kann keine Caches exportieren, daher nur mit c
 ## Kommandozeile
 
 `corbul packs MODEL --session DIR --pack DATEI… --question TEXT [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` legt jede Datei einmal ins Regal und antwortet danach mit den gespeicherten Paketen in beliebiger Reihenfolge. `--check` führt zusätzlich einen vollständigen Prefill aus und zeigt Punktedifferenz und Zeit beider.
+
+## Server
+
+`corbul serve MODEL --packs DIR [--packs-cap 2g]` fügt `POST /v1/packs/complete` hinzu mit `{"packs": [Text, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. Die Antwort enthält `text`, `usage` und ein `packs`-Objekt (bereits abgelegte Texte, kopierte, neu berechnete, frische und eingesparte Zeilen, gemessene Änderung an jeder Naht). Einfache Text-Vervollständigung, greedy, ohne Chat-Vorlage.

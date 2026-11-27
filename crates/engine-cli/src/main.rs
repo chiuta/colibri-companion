@@ -484,6 +484,10 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
         (s.max_tokens, s.temperature, s.top_p, s.top_k);
     cfg.model_id = args.get("model-name").map(str::to_string);
     cfg.log_prompts = args.flag("log-prompts");
+    cfg.packs_dir = args.get("packs").map(std::path::PathBuf::from);
+    if let Some(c) = args.get("packs-cap") {
+        cfg.packs_cap = parse_size(c)?;
+    }
     if let Some(d) = args.num::<u64>("drain-seconds")? {
         cfg.drain = Duration::from_secs(d);
     }

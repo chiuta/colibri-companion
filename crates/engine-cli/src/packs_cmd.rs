@@ -15,9 +15,10 @@
 //! Without `--question` the files are only shelved.
 use crate::args::{Args, parse_size};
 use crate::cmds;
-use companion_engine::ctxpack::{ComposeOptions, Shelf, compose};
-use companion_engine::model::{KvKind, State};
+use companion_engine::ctxpack::{ComposeOptions, ComposeReport, Shelf, compose};
+use companion_engine::model::{KvKind, Model, State};
 use companion_engine::snapshot::SnapshotStore;
+use companion_engine::tokenizer::Tokenizer;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -82,41 +83,78 @@ pub fn cmd(a: &Args) -> Result<(), String> {
         SnapshotStore::open(PathBuf::from(dir), cap)
             .map_err(|e| format!("--session {dir}: {e}"))?,
     );
+    let max_new: usize = a.num("max-new")?.unwrap_or(64);
+    let q = a.get("question");
+    let r = answer(
+        &model,
+        &prep.tok,
+        &prep.stop_ids,
+        &shelf,
+        &texts,
+        q,
+        &opts,
+        max_new,
+        a.flag("check"),
+        &mut |l| eprintln!("{l}"),
+    )?;
+    if q.is_some() {
+        crate::outln!("{}", r.text);
+    }
+    Ok(())
+}
+
+/// What [`answer`] found.
+pub struct Answer {
+    pub text: String,
+    pub report: ComposeReport,
+    /// Per text: was its pack already on the shelf?
+    pub shelved: Vec<bool>,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+}
+
+/// Shelve every text as a pack and, when there is a `question`, compose them in the order given,
+/// then write up to `max_new` tokens greedily. `log` receives human-readable progress lines.
+#[allow(clippy::too_many_arguments)]
+pub fn answer(
+    model: &Model,
+    tok: &Tokenizer,
+    stop_ids: &[usize],
+    shelf: &Shelf,
+    texts: &[String],
+    question: Option<&str>,
+    opts: &ComposeOptions,
+    max_new: usize,
+    check: bool,
+    log: &mut dyn FnMut(String),
+) -> Result<Answer, String> {
     let ctx = model.spec.context as usize;
+    let ids = |t: &str, bos: bool| -> Vec<usize> {
+        tok.encode(t, bos).into_iter().map(|t| t as usize).collect()
+    };
     let mut segs: Vec<Vec<usize>> = Vec::new();
-    let head: Vec<usize> = prep
-        .tok
-        .encode("", true)
-        .into_iter()
-        .map(|t| t as usize)
-        .collect();
+    let head = ids("", true);
     if !head.is_empty() {
         segs.push(head);
     }
-    for t in &texts {
-        let ids: Vec<usize> = prep
-            .tok
-            .encode(t, false)
-            .into_iter()
-            .map(|t| t as usize)
-            .collect();
-        if ids.is_empty() {
-            return Err("packs: a text became no tokens".into());
+    for t in texts {
+        let v = ids(t, false);
+        if v.is_empty() {
+            return Err("a text became no tokens".into());
         }
-        segs.push(ids);
+        segs.push(v);
     }
     if segs.iter().map(Vec::len).sum::<usize>() >= ctx {
         return Err(format!(
-            "packs: the texts do not fit the {ctx}-token context window"
+            "the texts do not fit the {ctx}-token context window"
         ));
     }
-    let mut states: Vec<State> = Vec::new();
+    let (mut states, mut shelved): (Vec<State>, Vec<bool>) = (Vec::new(), Vec::new());
     for (i, s) in segs.iter().enumerate() {
         let t0 = Instant::now();
-        let (st, hit) = shelf.pack(&model, s).map_err(|e| e.to_string())?;
-        eprintln!(
-            "pack {}: {} tokens, {} ({:.2}s)",
-            i,
+        let (st, hit) = shelf.pack(model, s).map_err(|e| e.to_string())?;
+        log(format!(
+            "pack {i}: {} tokens, {} ({:.2}s)",
             s.len(),
             if hit {
                 "from the shelf"
@@ -124,37 +162,45 @@ pub fn cmd(a: &Args) -> Result<(), String> {
                 "computed and shelved"
             },
             t0.elapsed().as_secs_f64()
-        );
+        ));
         states.push(st);
+        shelved.push(hit);
     }
-    let Some(q) = a.get("question") else {
-        return Ok(());
+    let mut out = Answer {
+        text: String::new(),
+        report: ComposeReport::default(),
+        shelved,
+        prompt_tokens: segs.iter().map(Vec::len).sum(),
+        completion_tokens: 0,
     };
-    let tail: Vec<usize> = prep
-        .tok
-        .encode(q, false)
-        .into_iter()
-        .map(|t| t as usize)
-        .collect();
+    let Some(q) = question else {
+        return Ok(out);
+    };
+    let tail = ids(q, false);
     if tail.is_empty() {
-        return Err("packs: the question became no tokens".into());
+        return Err("the question became no tokens".into());
     }
+    out.prompt_tokens += tail.len();
     let refs: Vec<&State> = states.iter().collect();
     let t0 = Instant::now();
-    let (mut st, logits, rep) = compose(&model, &refs, &tail, &opts).map_err(|e| e.to_string())?;
-    let took = t0.elapsed().as_secs_f64();
-    eprintln!(
-        "composed in {took:.2}s: {} rows copied, {} recomputed to repair {} join(s), {} fresh; {} rows did not go through the network",
+    let (mut st, logits, rep) = compose(model, &refs, &tail, opts).map_err(|e| e.to_string())?;
+    log(format!(
+        "composed in {:.2}s: {} rows copied, {} recomputed to repair {} join(s), {} fresh; {} rows did not go through the network",
+        t0.elapsed().as_secs_f64(),
         rep.spliced,
         rep.refreshed,
         rep.joins.len(),
         rep.fresh,
         rep.saved()
-    );
+    ));
     for (i, (n, d)) in rep.joins.iter().enumerate() {
-        eprintln!("  join {}: {n} rows recomputed, last change {d:.4}", i + 1);
+        log(format!(
+            "  join {}: {n} rows recomputed, last change {d:.4}",
+            i + 1
+        ));
     }
-    if a.flag("check") {
+    out.report = rep;
+    if check {
         let all: Vec<usize> = segs.iter().flatten().chain(&tail).copied().collect();
         let mut full = model.new_state_with(KvKind::F32);
         let t1 = Instant::now();
@@ -166,24 +212,24 @@ pub fn cmd(a: &Args) -> Result<(), String> {
             .zip(&logits)
             .map(|(x, y)| (x - y).abs())
             .fold(0f32, f32::max);
-        eprintln!(
+        log(format!(
             "check: full prefill {:.2}s; largest score difference {dt:.4}; same first token: {}",
             t1.elapsed().as_secs_f64(),
             argmax(&fl) == argmax(&logits)
-        );
+        ));
     }
-    let max_new: usize = a.num("max-new")?.unwrap_or(64);
-    let (mut out, mut cur) = (Vec::<u32>::new(), logits);
+    let (mut gen_ids, mut cur) = (Vec::<u32>::new(), logits);
     for _ in 0..max_new {
         let next = argmax(&cur);
-        if prep.stop_ids.contains(&next) || st.pos >= ctx {
+        if stop_ids.contains(&next) || st.pos >= ctx {
             break;
         }
-        out.push(next as u32);
+        gen_ids.push(next as u32);
         cur = model.forward(&mut st, next).map_err(|e| e.to_string())?;
     }
-    crate::outln!("{}", prep.tok.decode(&out));
-    Ok(())
+    out.completion_tokens = gen_ids.len();
+    out.text = tok.decode(&gen_ids);
+    Ok(out)
 }
 
 #[cfg(test)]

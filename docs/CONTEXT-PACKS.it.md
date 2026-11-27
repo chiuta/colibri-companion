@@ -15,3 +15,7 @@ Limiti: il motore colibri di JustVugg non può esportare le cache, quindi funzio
 ## Riga di comando
 
 `corbul packs MODEL --session DIR --pack FILE… --question TESTO [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` mette ogni file sullo scaffale una sola volta, poi risponde con i pacchetti salvati, in qualsiasi ordine. `--check` esegue anche un prefill completo e mostra la differenza di punteggio e il tempo di ciascuno.
+
+## Server
+
+`corbul serve MODEL --packs DIR [--packs-cap 2g]` aggiunge `POST /v1/packs/complete` con `{"packs": [testo, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. La risposta ha `text`, `usage` e un oggetto `packs` (testi già sullo scaffale, righe copiate, ricalcolate, nuove e risparmiate, cambiamento misurato a ogni giunzione). Completamento di testo greedy, senza template di chat.

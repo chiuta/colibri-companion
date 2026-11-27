@@ -15,3 +15,7 @@ Limits: JustVugg's colibri engine cannot export caches, so this works only with 
 ## Command line
 
 `corbul packs MODEL --session DIR --pack FILE… --question TEXT [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` shelves every file once, then answers using the stored packs in any order. `--check` also runs a full prefill and prints the score difference and the time of each.
+
+## Server
+
+`corbul serve MODEL --packs DIR [--packs-cap 2g]` adds `POST /v1/packs/complete` with `{"packs": [text, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. The answer has `text`, `usage` and a `packs` object (which texts were already shelved, rows copied, recomputed, fresh and saved, and the change measured at each join). Plain-text greedy completion; no chat template.

@@ -71,6 +71,10 @@ pub struct ServeConfig {
     pub max_kv_bytes: u64,
     /// Requests of the CPU-heavy kinds (tokenize, template, quote verification, …) running at once.
     pub max_heavy: usize,
+    /// Folder where context packs are kept (`--packs DIR`); `/v1/packs/complete` answers 501 without it.
+    pub packs_dir: Option<std::path::PathBuf>,
+    /// Size cap of that folder.
+    pub packs_cap: u64,
 }
 impl Default for ServeConfig {
     fn default() -> ServeConfig {
@@ -94,6 +98,8 @@ impl Default for ServeConfig {
             allow_admin: false,
             max_kv_bytes: 8 << 30,
             max_heavy: 4,
+            packs_dir: None,
+            packs_cap: 2 << 30,
         }
     }
 }
@@ -110,6 +116,7 @@ pub struct App {
     heavy: AtomicUsize,
     /// A BERT-family encoder (`--encoder`): serves `/v1/embeddings` and `/v1/rerank`.
     pub encoder: Option<Arc<companion_engine::bert::Encoder>>,
+    packs: std::sync::OnceLock<Result<companion_engine::ctxpack::Shelf, String>>,
 }
 impl App {
     /// A server for one model that is already loaded.
@@ -130,6 +137,7 @@ impl App {
             draining: AtomicBool::new(false),
             heavy: AtomicUsize::new(0),
             encoder: None,
+            packs: std::sync::OnceLock::new(),
         }
     }
     /// Serve embeddings and reranking from `e` (its folder name is the model name clients use).
@@ -1519,7 +1527,7 @@ fn handle(stream: TcpStream, app: &App) {
 
 /// A bounded label for the request counter.
 fn label(path: &str) -> String {
-    const KNOWN: [&str; 34] = [
+    const KNOWN: [&str; 35] = [
         "/",
         "/ui",
         "/capabilities",
@@ -1554,6 +1562,7 @@ fn label(path: &str) -> String {
         "/models/unload",
         "/models",
         "/v1/quotes/verify",
+        "/v1/packs/complete",
     ];
     if KNOWN.contains(&path) {
         path.to_string()
@@ -1814,6 +1823,7 @@ fn route(
                 | "/api/embeddings"
                 | "/v1/rerank"
                 | "/rerank"
+                | "/v1/packs/complete"
         ) {
         if let Some(k) = who
             && let Err(wait) = app.limiter.admit(k, 0)
@@ -2122,6 +2132,10 @@ fn route(
             Ok(v) => out.json(200, &v),
             Err(e) => fail(e),
         },
+        ("POST", "/v1/packs/complete") => match packs_complete(app, req, who) {
+            Ok(v) => out.json(200, &v),
+            Err(e) => fail(e),
+        },
         ("POST", "/v1/chat/completions") => completion(app, req, out, who, stream, Kind::OaiChat),
         ("POST", "/v1/completions") => completion(app, req, out, who, stream, Kind::OaiCompletion),
         ("POST", "/v1/messages") => completion(app, req, out, who, stream, Kind::Anthropic),
@@ -2158,6 +2172,7 @@ fn route(
             | "/v1/messages/count_tokens"
             | "/api/chat"
             | "/api/generate"
+            | "/v1/packs/complete"
             | "/v1/quotes/verify",
         ) => {
             out.json_h(
@@ -2168,6 +2183,111 @@ fn route(
         }
         _ => out.json(404, &err_body(style, "not_found_error", "unknown endpoint")),
     }
+}
+
+/// Most texts, and bytes across them, one `/v1/packs/complete` request may carry.
+const PACKS_MAX_TEXTS: usize = 64;
+const PACKS_MAX_BYTES: usize = 4 << 20;
+
+/// `POST /v1/packs/complete`: `{model?, packs: [text…], question, max_tokens?, tolerance?, probe?}`.
+/// Each text is kept as a context pack on the server; the answer reuses the packs in the order given
+/// and repairs only the joins (see `docs/CONTEXT-PACKS.md`). Plain-text completion, greedy.
+fn packs_complete(app: &App, req: &http::Request, who: &Principal) -> Result<Value, ApiError> {
+    let body = body_json(req)?;
+    let Some(dir) = &app.cfg.packs_dir else {
+        return Err(api_err(
+            501,
+            "not_implemented_error",
+            "context packs need a folder: start the server with --packs DIR",
+        ));
+    };
+    let shelf = app
+        .packs
+        .get_or_init(|| {
+            companion_engine::snapshot::SnapshotStore::open(dir, app.cfg.packs_cap)
+                .map(companion_engine::ctxpack::Shelf::new)
+                .map_err(|e| format!("--packs {}: {e}", dir.display()))
+        })
+        .as_ref()
+        .map_err(|e| server_err(e.clone()))?;
+    let texts: Vec<String> = match body.get("packs") {
+        Some(Value::Array(a)) if !a.is_empty() && a.len() <= PACKS_MAX_TEXTS => a
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| bad("every entry of `packs` must be a non-empty string"))
+            })
+            .collect::<Result<_, _>>()?,
+        _ => {
+            return Err(bad(format!(
+                "`packs` (1 to {PACKS_MAX_TEXTS} texts) is required"
+            )));
+        }
+    };
+    if texts.iter().map(String::len).sum::<usize>() > PACKS_MAX_BYTES {
+        return Err(bad("the texts together are larger than 4 MiB"));
+    }
+    let question = body
+        .get("question")
+        .and_then(Value::as_str)
+        .filter(|q| !q.is_empty())
+        .ok_or_else(|| bad("`question` (a non-empty string) is required"))?;
+    let num = |k: &str| body.get(k).and_then(Value::as_f64);
+    let opts = companion_engine::ctxpack::ComposeOptions {
+        probe: num("probe").map_or(8, |v| v.clamp(1.0, 4096.0) as usize),
+        tolerance: num("tolerance").map_or(0.02, |v| v.clamp(0.0, 1e6) as f32),
+        max_refresh: usize::MAX,
+    };
+    let max_new = num("max_tokens").map_or(app.cfg.max_tokens, |v| v.clamp(1.0, 8192.0) as usize);
+    let slot = slot_for(app, who, body.get("model").and_then(Value::as_str))?;
+    let waited = Instant::now();
+    let _gate = loop {
+        match slot.gate.try_lock() {
+            Ok(g) => break g,
+            Err(TryLockError::Poisoned(e)) => break e.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                if waited.elapsed() > app.cfg.queue_wait {
+                    return Err(api_err(
+                        503,
+                        "overloaded_error",
+                        "the model is busy; try again later",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    let l = &slot.loaded;
+    let a = crate::packs_cmd::answer(
+        &l.model,
+        &l.tok,
+        &l.stop_ids,
+        shelf,
+        &texts,
+        Some(question),
+        &opts,
+        max_new,
+        false,
+        &mut |_| {},
+    )
+    .map_err(bad)?;
+    let r = &a.report;
+    Ok(json!({
+        "object": "pack.completion",
+        "model": slot.name,
+        "text": a.text,
+        "usage": {"prompt_tokens": a.prompt_tokens, "completion_tokens": a.completion_tokens},
+        "packs": {
+            "shelved": a.shelved,
+            "rows_copied": r.spliced,
+            "rows_recomputed": r.refreshed,
+            "rows_fresh": r.fresh,
+            "rows_saved": r.saved(),
+            "joins": r.joins.iter().map(|(n, d)| json!({"rows": n, "change": d})).collect::<Vec<_>>(),
+        },
+    }))
 }
 
 /// Most inputs one embeddings request may carry, and the most tokens across all of them.
@@ -2830,6 +2950,41 @@ mod tests {
         );
         h.stop();
         std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn context_packs_endpoint_needs_a_folder_and_reuses_packs() {
+        let (h, d) = start(None, |_| {});
+        let body = r#"{"packs":["The harbour opens at six."],"question":"When"}"#;
+        assert_eq!(post(h.addr, "/v1/packs/complete", body, "").status, 501);
+        assert_eq!(get(h.addr, "/v1/packs/complete", "").status, 405);
+        h.stop();
+        let dir = d.join("packs");
+        let (h, d2) = start(None, |c| c.packs_dir = Some(dir.clone()));
+        let body = r#"{"packs":["The harbour opens at six.","Ferries leave every half hour."],"question":"When","max_tokens":3,"tolerance":0}"#;
+        let a = post(h.addr, "/v1/packs/complete", body, "");
+        assert_eq!(a.status, 200, "{}", a.text());
+        let j = a.json();
+        assert_eq!(j["packs"]["shelved"][0], false);
+        assert_eq!(j["packs"]["rows_saved"], 25);
+        let b = post(h.addr, "/v1/packs/complete", body, "").json();
+        assert_eq!(b["packs"]["shelved"][0], true);
+        assert_eq!(a.json()["text"], b["text"]);
+        for bad in [
+            r#"{"packs":[],"question":"x"}"#,
+            r#"{"packs":["a"],"question":""}"#,
+            r#"{"packs":[3],"question":"x"}"#,
+            r#"{"question":"x"}"#,
+        ] {
+            assert_eq!(
+                post(h.addr, "/v1/packs/complete", bad, "").status,
+                400,
+                "{bad}"
+            );
+        }
+        h.stop();
+        let _ = std::fs::remove_dir_all(d);
+        std::fs::remove_dir_all(d2).unwrap();
     }
 
     #[test]

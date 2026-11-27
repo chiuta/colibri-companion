@@ -15,3 +15,7 @@ Límites: el motor colibri de JustVugg no puede exportar cachés, así que solo 
 ## Línea de comandos
 
 `corbul packs MODEL --session DIR --pack ARCHIVO… --question TEXTO [--tolerance 0.02] [--probe 8] [--max-new 64] [--check]` guarda cada archivo una sola vez y luego responde con los paquetes guardados, en cualquier orden. `--check` también ejecuta un prefill completo y muestra la diferencia de puntuación y el tiempo de cada uno.
+
+## Servidor
+
+`corbul serve MODEL --packs DIR [--packs-cap 2g]` añade `POST /v1/packs/complete` con `{"packs": [texto, …], "question": "…", "max_tokens": 64, "tolerance": 0.02, "probe": 8}`. La respuesta trae `text`, `usage` y un objeto `packs` (textos ya guardados, filas copiadas, recalculadas, nuevas y ahorradas, cambio medido en cada unión). Completado de texto voraz, sin plantilla de chat.
