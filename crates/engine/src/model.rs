@@ -2080,6 +2080,17 @@ impl Model {
                     &mut scores[..nh * n],
                     nt,
                 );
+                if let (Some(r), 0) = (kvx.qrec.as_mut(), lkv.cap) {
+                    if r.layers.len() <= li {
+                        r.layers.resize(li + 1, QLayer::default());
+                    }
+                    let ql = &mut r.layers[li];
+                    (ql.hd, ql.group, ql.scale, ql.cap) = (hd, group, scale, s.attn_softcap);
+                    if ql.q.len() >= r.window {
+                        ql.q.pop_front();
+                    }
+                    ql.q.push_back(q[t * qd..(t + 1) * qd].to_vec());
+                }
                 if let (Some(acc), 0) = (kvx.acc.as_mut(), lkv.cap) {
                     acc_add(
                         lkv,
@@ -2754,6 +2765,24 @@ pub(crate) struct KvExtra {
     /// Per layer: attention probability each slot has received, summed over heads and queries
     /// (`None` = not tracked). Only layers that keep every position are tracked.
     acc: Option<Vec<Vec<f32>>>,
+    /// The last queries each full-attention layer saw (see [`State::record_queries`]).
+    qrec: Option<QRec>,
+}
+
+/// The most recent attention queries of every layer that keeps all positions, for fitting values.
+#[derive(Clone, Default)]
+pub(crate) struct QRec {
+    window: usize,
+    layers: Vec<QLayer>,
+}
+#[derive(Clone, Default)]
+pub(crate) struct QLayer {
+    /// `heads × head_dim` floats per query, oldest first
+    q: std::collections::VecDeque<Vec<f32>>,
+    hd: usize,
+    group: usize,
+    scale: f32,
+    cap: f64,
 }
 impl KvExtra {
     fn identity_prefix(&self, n: usize) -> bool {
@@ -2763,6 +2792,9 @@ impl KvExtra {
         // reachable only for an identity prefix (or an emptied state): positions are plain again
         self.abs.clear();
         self.gap = 0;
+        if let Some(r) = &mut self.qrec {
+            r.layers.iter_mut().for_each(|l| l.q.clear());
+        }
         if let Some(a) = &mut self.acc {
             for v in a.iter_mut() {
                 v.truncate(pos);
@@ -2916,6 +2948,114 @@ impl State {
     /// Off by default; when off the decoder does no extra work. Turning it on starts from zero.
     pub fn track_scores(&mut self, on: bool) {
         self.kvx.acc = on.then(|| vec![vec![]; self.kv.len()]);
+    }
+    /// Start recording the last `window` attention queries of every layer that keeps all positions
+    /// (`0` stops). They are the probes [`State::refit_values`] fits against. Off by default; when
+    /// off the decoder copies nothing. Turning it on starts from nothing, so call it before the
+    /// tokens whose queries should count are fed.
+    pub fn record_queries(&mut self, window: usize) {
+        self.kvx.qrec = (window > 0).then(|| QRec {
+            window,
+            layers: vec![QLayer::default(); self.kv.len()],
+        });
+    }
+    /// How many queries each layer holds (the most any layer holds).
+    pub fn queries_recorded(&self) -> usize {
+        self.kvx
+            .qrec
+            .as_ref()
+            .map_or(0, |r| r.layers.iter().map(|l| l.q.len()).max().unwrap_or(0))
+    }
+    /// Before shrinking the cache to `keep`, move the values of the kept slots so that attention over
+    /// them alone gives, for the recorded queries, what attention over every slot gives
+    /// (see `kvfit.rs`). Keys are not touched. Call it, then [`State::compact`] with the same
+    /// `keep`. Layers with a sliding window, and layers without recorded queries, are left alone.
+    /// `ridge` is how strongly to stay near the old values (`0.001`–`0.1`). Needs
+    /// [`State::record_queries`] to have been on while the tokens were fed.
+    pub fn refit_values(
+        &mut self,
+        keep: &[usize],
+        ridge: f32,
+    ) -> Result<crate::kvfit::FitReport, ModelError> {
+        let bad = |m: &str| ModelError::Shape(format!("cannot refit the cache: {m}"));
+        if self.dev.is_some() {
+            return Err(ModelError::Backend(
+                "a state with an accelerator-side cache cannot be refitted".into(),
+            ));
+        }
+        let (n, m) = (self.pos, keep.len());
+        if m == 0 || m > n || keep.windows(2).any(|w| w[0] >= w[1]) || keep[m - 1] >= n {
+            return Err(bad(
+                "the slots to keep are empty, unsorted or outside the cache",
+            ));
+        }
+        let Some(rec) = self.kvx.qrec.as_ref() else {
+            return Err(bad("call record_queries before feeding tokens"));
+        };
+        let mut rep = crate::kvfit::FitReport::default();
+        let (mut eb, mut ea) = (0f64, 0f64);
+        for (li, l) in self.kv.iter_mut().enumerate() {
+            let Some(ql) = rec.layers.get(li).filter(|q| !q.q.is_empty()) else {
+                continue;
+            };
+            let (kd, kvh, hd) = (l.kd, l.kvh, ql.hd);
+            if l.cap != 0 || hd == 0 || kvh == 0 || kd != kvh * hd || l.k.len_slots(kd, kvh) < n {
+                continue;
+            }
+            let nh = ql.q[0].len() / hd;
+            if nh == 0 || !nh.is_multiple_of(kvh) {
+                continue;
+            }
+            let group = nh / kvh;
+            let (mut kall, mut vall) = (vec![0f32; n * kd], vec![0f32; n * kd]);
+            for i in 0..n {
+                l.k.read(i, kd, hd, &mut kall[i * kd..(i + 1) * kd]);
+                l.v.read(i, kd, hd, &mut vall[i * kd..(i + 1) * kd]);
+            }
+            let mut newv = vec![0f32; m * kd];
+            for (j, &slot) in keep.iter().enumerate() {
+                newv[j * kd..(j + 1) * kd].copy_from_slice(&vall[slot * kd..(slot + 1) * kd]);
+            }
+            let mut fitted = 0;
+            for h in 0..kvh {
+                let gather = |src: &[f32]| -> Vec<f32> {
+                    (0..n)
+                        .flat_map(|i| src[i * kd + h * hd..i * kd + (h + 1) * hd].iter().copied())
+                        .collect()
+                };
+                let (kh, vh) = (gather(&kall), gather(&vall));
+                let mut qs = Vec::with_capacity(ql.q.len() * group * hd);
+                for q in &ql.q {
+                    for g in 0..group {
+                        let head = h * group + g;
+                        qs.extend_from_slice(&q[head * hd..(head + 1) * hd]);
+                    }
+                }
+                if let Some(f) =
+                    crate::kvfit::fit_values(&kh, &vh, hd, &qs, keep, ql.scale, ql.cap, ridge)
+                {
+                    for j in 0..m {
+                        newv[j * kd + h * hd..j * kd + (h + 1) * hd]
+                            .copy_from_slice(&f.values[j * hd..(j + 1) * hd]);
+                    }
+                    eb += f.error_before as f64;
+                    ea += f.error_after as f64;
+                    rep.heads += 1;
+                    fitted += 1;
+                }
+            }
+            if fitted > 0 {
+                for (j, &slot) in keep.iter().enumerate() {
+                    l.v.write(slot, kd, hd, &newv[j * kd..(j + 1) * kd]);
+                }
+                rep.layers += 1;
+            }
+        }
+        if rep.heads > 0 {
+            rep.error_before = (eb / rep.heads as f64) as f32;
+            rep.error_after = (ea / rep.heads as f64) as f32;
+        }
+        Ok(rep)
     }
     pub fn tracks_scores(&self) -> bool {
         self.kvx.acc.is_some()

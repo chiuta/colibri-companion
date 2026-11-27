@@ -9,6 +9,8 @@
 //! * `--tolerance X` (default 0.02) how little the rows of a join may still move before repair stops;
 //!   `0` repairs everything and gives exactly what a full prefill gives.
 //! * `--probe N` (default 8) rows recomputed before the first measurement.
+//! * `--pack-kv f16` keeps the packs in F16 (half the size, F16 rounding on every row), `--pack-compress`
+//!   compresses the pack files without loss.
 //! * `--max-new N` (default 64) tokens to write; `--check` also runs the plain full prefill and prints
 //!   how far the two answers' first-token scores are apart and the time each took.
 //!
@@ -79,10 +81,16 @@ pub fn cmd(a: &Args) -> Result<(), String> {
         opts: a.opts.clone(),
     })?;
     let model = prep.build_model(&cfg)?;
-    let shelf = Shelf::new(
+    let mut shelf = Shelf::new(
         SnapshotStore::open(PathBuf::from(dir), cap)
             .map_err(|e| format!("--session {dir}: {e}"))?,
-    );
+    )
+    .with_compression(a.flag("pack-compress"));
+    shelf = match a.get("pack-kv") {
+        None | Some("f32") => shelf,
+        Some("f16") => shelf.with_kind(KvKind::F16).map_err(|e| e.to_string())?,
+        Some(o) => return Err(format!("packs: --pack-kv {o} is not f32 or f16")),
+    };
     let max_new: usize = a.num("max-new")?.unwrap_or(64);
     let q = a.get("question");
     let r = answer(
@@ -277,6 +285,15 @@ mod tests {
         cmd(&args(true, "0")).unwrap();
         cmd(&args(true, "0.5")).unwrap();
         assert!(std::fs::read_dir(d.join("s")).unwrap().count() >= 2);
+        // F16 and compressed packs over the same folder: remade, then used
+        let mut f16 = args(true, "0");
+        f16.opts.push(("pack-kv".into(), Some("f16".into())));
+        f16.opts.push(("pack-compress".into(), None));
+        cmd(&f16).unwrap();
+        cmd(&f16).unwrap();
+        let mut q8 = args(true, "0");
+        q8.opts.push(("pack-kv".into(), Some("q8".into())));
+        assert!(cmd(&q8).is_err());
         let mut bad = args(true, "0");
         bad.opts.retain(|(k, _)| k != "pack");
         assert!(cmd(&bad).is_err());

@@ -135,12 +135,41 @@ pub fn compose(
 }
 
 /// Packs kept on disk (an LRU-capped [`SnapshotStore`], optionally signed), made on demand.
+///
+/// Packs are F32 by default. [`Shelf::with_kind`] keeps them in F16 instead, half the size on disk
+/// and in memory, at the price of the rounding F16 brings to every row (what a model run with an
+/// F16 cache has anyway); [`Shelf::with_compression`] compresses the files without any loss. A pack
+/// stored in the other precision is not used: it is made again and replaces the old one.
 pub struct Shelf {
     store: SnapshotStore,
+    kind: KvKind,
+    compress: bool,
 }
 impl Shelf {
     pub fn new(store: SnapshotStore) -> Shelf {
-        Shelf { store }
+        Shelf {
+            store,
+            kind: KvKind::F32,
+            compress: false,
+        }
+    }
+    /// Cache precision of the packs: `F32` or `F16` (`Q8` cannot be spliced and is refused).
+    pub fn with_kind(mut self, kind: KvKind) -> Result<Shelf, SnapshotError> {
+        if kind == KvKind::Q8 {
+            return Err(SnapshotError::Unsupported(
+                "packs cannot be kept in Q8: splicing needs F32 or F16".into(),
+            ));
+        }
+        self.kind = kind;
+        Ok(self)
+    }
+    /// Byte-shuffle and compress the pack files (lossless; costs time on save and load).
+    pub fn with_compression(mut self, on: bool) -> Shelf {
+        self.compress = on;
+        self
+    }
+    pub fn kind(&self) -> KvKind {
+        self.kind
     }
     pub fn store(&self) -> &SnapshotStore {
         &self.store
@@ -151,12 +180,20 @@ impl Shelf {
         if tokens.is_empty() {
             return Err(SnapshotError::Unsupported("a pack needs tokens".into()));
         }
-        if let Some(s) = self.store.get(model, tokens)? {
+        if let Some(s) = self.store.get(model, tokens)?
+            && s.kv_kind() == self.kind
+        {
             return Ok((s, true));
         }
-        let mut st = model.new_state_with(KvKind::F32);
+        let mut st = model.new_state_with(self.kind);
         model.prefill_cached(&mut st, tokens)?;
-        self.store.put(model, &st, SnapOptions::default())?;
+        self.store.put(
+            model,
+            &st,
+            SnapOptions {
+                compress: self.compress,
+            },
+        )?;
         Ok((st, false))
     }
 }
@@ -325,6 +362,45 @@ mod tests {
         assert!(!hit1 && hit2);
         assert_eq!(s1.tokens(), s2.tokens());
         assert!(shelf.pack(&m, &[]).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn f16_and_compressed_shelves_work_and_never_mix_precisions() {
+        let m = tiny(2, 2, false);
+        let v = m.spec.vocab as usize;
+        let dir = std::env::temp_dir().join(format!("ctxpack-f16-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let open = || SnapshotStore::open(&dir, 1 << 26).unwrap();
+        assert!(Shelf::new(open()).with_kind(KvKind::Q8).is_err());
+        let (a, b, q) = (toks(5, 9, v), toks(6, 7, v), toks(7, 3, v));
+        let s16 = Shelf::new(open())
+            .with_kind(KvKind::F16)
+            .unwrap()
+            .with_compression(true);
+        let (pa, h1) = s16.pack(&m, &a).unwrap();
+        let (pb, _) = s16.pack(&m, &b).unwrap();
+        assert!(!h1 && pa.kv_kind() == KvKind::F16);
+        assert!(
+            s16.pack(&m, &a).unwrap().1,
+            "second time it is on the shelf"
+        );
+        // composed from F16 packs with everything repaired = a full F16 prefill
+        let o = ComposeOptions {
+            tolerance: 0.0,
+            ..Default::default()
+        };
+        let (_, logits, _) = compose(&m, &[&pa, &pb], &q, &o).unwrap();
+        let mut full = m.new_state_with(KvKind::F16);
+        let all: Vec<usize> = [a.clone(), b.clone(), q.clone()].concat();
+        let want = m.prefill_cached(&mut full, &all).unwrap();
+        assert!(close(&logits, &want, 2e-2));
+        // an F32 shelf over the same folder does not take the F16 file: it makes its own
+        let s32 = Shelf::new(open());
+        let (p32, hit) = s32.pack(&m, &a).unwrap();
+        assert!(!hit && p32.kv_kind() == KvKind::F32);
+        // and back: the F16 shelf finds an F32 file, remakes it in F16
+        let (back, hit) = s16.pack(&m, &a).unwrap();
+        assert!(!hit && back.kv_kind() == KvKind::F16);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

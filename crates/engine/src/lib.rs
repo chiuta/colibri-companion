@@ -35,6 +35,7 @@ pub mod hub;
 pub mod hw;
 pub mod hybrid;
 pub mod imageio;
+pub mod kvfit;
 pub mod kvpolicy;
 pub mod lang;
 pub mod loader;

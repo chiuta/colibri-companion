@@ -75,6 +75,10 @@ pub struct ServeConfig {
     pub packs_dir: Option<std::path::PathBuf>,
     /// Size cap of that folder.
     pub packs_cap: u64,
+    /// Keep packs in F16 (half the size) instead of F32.
+    pub packs_f16: bool,
+    /// Compress pack files (lossless).
+    pub packs_compress: bool,
 }
 impl Default for ServeConfig {
     fn default() -> ServeConfig {
@@ -100,6 +104,8 @@ impl Default for ServeConfig {
             max_heavy: 4,
             packs_dir: None,
             packs_cap: 2 << 30,
+            packs_f16: false,
+            packs_compress: false,
         }
     }
 }
@@ -2205,8 +2211,17 @@ fn packs_complete(app: &App, req: &http::Request, who: &Principal) -> Result<Val
         .packs
         .get_or_init(|| {
             companion_engine::snapshot::SnapshotStore::open(dir, app.cfg.packs_cap)
-                .map(companion_engine::ctxpack::Shelf::new)
                 .map_err(|e| format!("--packs {}: {e}", dir.display()))
+                .and_then(|st| {
+                    let sh = companion_engine::ctxpack::Shelf::new(st)
+                        .with_compression(app.cfg.packs_compress);
+                    if app.cfg.packs_f16 {
+                        sh.with_kind(companion_engine::model::KvKind::F16)
+                            .map_err(|e| e.to_string())
+                    } else {
+                        Ok(sh)
+                    }
+                })
         })
         .as_ref()
         .map_err(|e| server_err(e.clone()))?;

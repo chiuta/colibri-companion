@@ -243,6 +243,30 @@ impl State {
         budget: usize,
         layers: &LayerBudgets,
     ) -> Result<Compaction, ModelError> {
+        self.shrink(policy, budget, layers, None).map(|x| x.0)
+    }
+
+    /// Like [`State::apply_policy`], but the values of the slots that stay are first refitted
+    /// against the queries recorded with [`State::record_queries`] (see `kvfit.rs`), so attention over
+    /// the smaller cache stays closer to what it was. Returns what was fitted too (`None` when
+    /// nothing was evicted). The fit is measured on the recorded queries only.
+    pub fn apply_policy_fitted(
+        &mut self,
+        policy: &dyn Policy,
+        budget: usize,
+        layers: &LayerBudgets,
+        ridge: f32,
+    ) -> Result<(Compaction, Option<crate::kvfit::FitReport>), ModelError> {
+        self.shrink(policy, budget, layers, Some(ridge))
+    }
+
+    fn shrink(
+        &mut self,
+        policy: &dyn Policy,
+        budget: usize,
+        layers: &LayerBudgets,
+        fit: Option<f32>,
+    ) -> Result<(Compaction, Option<crate::kvfit::FitReport>), ModelError> {
         let (len, bytes_before) = (self.pos, self.kv_bytes());
         let report = |st: &State, tail: usize| Compaction {
             before: len,
@@ -259,7 +283,7 @@ impl State {
             ));
         }
         if budget >= len {
-            return Ok(report(self, 0));
+            return Ok((report(self, 0), None));
         }
         if policy.needs_scores() && !self.tracks_scores() {
             return Err(ModelError::Shape(format!(
@@ -290,8 +314,12 @@ impl State {
             k
         };
         keep.extend(head..len);
+        let fitted = match fit {
+            Some(r) => Some(self.refit_values(&keep, r)?),
+            None => None,
+        };
         self.compact(&keep)?;
-        Ok(report(self, tail))
+        Ok((report(self, tail), fitted))
     }
 }
 
@@ -814,5 +842,72 @@ mod tests {
             "a policy may not exceed its budget"
         );
         assert_eq!(st.pos, 6, "a refused policy leaves the cache alone");
+    }
+    #[test]
+    fn refitting_values_is_measured_not_assumed() {
+        let m = tiny(4, 2, false);
+        let toks = prompt(28);
+        let (head, tailq) = toks.split_at(20);
+        let fed_with = |record: bool| {
+            let mut st = m.new_state_with(KvKind::F32);
+            m.forward_batch(&mut st, head).unwrap();
+            st.track_scores(true);
+            if record {
+                st.record_queries(8);
+            }
+            m.forward_batch(&mut st, tailq).unwrap();
+            st
+        };
+        let snap = SnapKv { window: 8, pool: 3 };
+        // needs the queries
+        let mut st = fed_with(false);
+        assert!(
+            st.apply_policy_fitted(&snap, 14, &LayerBudgets::Uniform, 0.01)
+                .is_err()
+        );
+        assert_eq!(st.pos, 28, "a refused fit leaves the cache alone");
+        // a budget that covers the cache changes nothing, fitted or not
+        let want = next(&m, &fed_with(false), 5);
+        let mut st = fed_with(true);
+        let (c, f) = st
+            .apply_policy_fitted(&snap, 99, &LayerBudgets::Uniform, 0.01)
+            .unwrap();
+        assert_eq!((c.evicted, f), (0, None));
+        assert_eq!(next(&m, &st, 5), want);
+        // keeping every slot through refit_values rewrites the values to (nearly) themselves
+        let mut st = fed_with(true);
+        assert!(st.queries_recorded() > 0);
+        let r = st.refit_values(&(0..28).collect::<Vec<_>>(), 0.01).unwrap();
+        assert!(
+            r.heads > 0 && r.error_before < 1e-4 && r.error_after < 1e-4,
+            "{r:?}"
+        );
+        assert!(l2(&next(&m, &st, 5), &want) < 1e-2 * (1.0 + l2(&want, &vec![0.0; want.len()])));
+        // shrinking: the fit never does worse than the plain values on the queries it was fitted to
+        let mut st = fed_with(true);
+        let (c, f) = st
+            .apply_policy_fitted(&snap, 12, &LayerBudgets::Uniform, 0.001)
+            .unwrap();
+        let f = f.unwrap();
+        assert_eq!((c.after, st.pos), (12, 12));
+        assert!(
+            f.layers > 0 && f.error_after <= f.error_before + 1e-5,
+            "{f:?}"
+        );
+        assert!(next(&m, &st, 5).iter().all(|v| v.is_finite()));
+        // how far each is from the full cache on a question that was not probed (printed, not asserted:
+        // a random test model says nothing about quality; `corbul kvfit` measures this on a real one)
+        let full = next(&m, &fed_with(false), 7);
+        let mut plain = fed_with(false);
+        plain
+            .apply_policy(&snap, 12, &LayerBudgets::Uniform)
+            .unwrap();
+        eprintln!(
+            "unprobed token: plain eviction {:.5}, fitted {:.5}, fit error {:.4} -> {:.4}",
+            l2(&next(&m, &plain, 7), &full),
+            l2(&next(&m, &st, 7), &full),
+            f.error_before,
+            f.error_after
+        );
     }
 }

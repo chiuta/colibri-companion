@@ -38,6 +38,7 @@ USAGE
   corbul merge    <config.json> [--out F.safetensors] [--dry-run]         merge models (linear, slerp, task, TIES, DARE, slices)
   corbul steer    train|apply|lens <model> …                              control vectors and a logit lens
   corbul packs    MODEL --session DIR --pack FILE… [--question Q] [--check]   reuse the work done on texts that come back in a new order
+  corbul kvfit    MODEL --text FILE --question Q [--budget 0.25]          measure what shrinking the cache costs, with and without refitting values
   corbul rag      add LIB FILE… | search LIB --query Q | ask LIB MODEL --question Q   local document library, quote-locked answers
   corbul watermark detect <model> --key K --text T | --file F             test a text for the mark made by generate --watermark
   corbul embed    <bert-folder> TEXT… [--file F --pool cls|mean --no-normalize --json]   sentence vectors from a BERT encoder
@@ -149,6 +150,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         "steer" => corbul::steer_cmd::cmd(&args),
         "merge" => corbul::merge_cmd::cmd(&args),
         "packs" => corbul::packs_cmd::cmd(&args),
+        "kvfit" => corbul::kvfit_cmd::cmd(&args),
         "rag" => corbul::rag_cmd::cmd(&args),
         "search" => corbul::search_cmd::cmd(&args),
         "watermark" => corbul::wm::cmd(&args),
@@ -485,6 +487,12 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
     cfg.model_id = args.get("model-name").map(str::to_string);
     cfg.log_prompts = args.flag("log-prompts");
     cfg.packs_dir = args.get("packs").map(std::path::PathBuf::from);
+    cfg.packs_compress = args.flag("packs-compress");
+    cfg.packs_f16 = match args.get("packs-kv") {
+        None | Some("f32") => false,
+        Some("f16") => true,
+        Some(o) => return Err(format!("--packs-kv: {o} is not f32 or f16")),
+    };
     if let Some(c) = args.get("packs-cap") {
         cfg.packs_cap = parse_size(c)?;
     }
