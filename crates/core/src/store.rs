@@ -218,6 +218,10 @@ pub struct Settings {
     /// With corbul started with `--packs`: answer from documents by reusing the work done on each
     /// passage the last time it was used, whatever the order (falls back to ordinary chat otherwise).
     pub context_packs: bool,
+    /// Context packs kept in F16 (half the size, F16 rounding) when corbul is started.
+    pub packs_f16: bool,
+    /// Context pack files compressed (lossless) when corbul is started.
+    pub packs_compress: bool,
     /// Where the OpenAI-compatible server is. Default: colibri's own.
     pub server_url: String,
     pub api_key: String,
@@ -257,6 +261,8 @@ impl Default for Settings {
             models_dir: None,
             extra_model_dirs: Vec::new(),
             context_packs: false,
+            packs_f16: false,
+            packs_compress: false,
             server_url: "http://127.0.0.1:8000".into(),
             api_key: String::new(),
             style: Style::Balanced,

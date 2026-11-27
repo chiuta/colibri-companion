@@ -150,6 +150,8 @@ pub enum Event {
     ModelDeleted(Result<String, String>),
     InstallSpawned(Result<(), String>),
     InstallEnded(Option<i32>),
+    /// `corbul kvfit` finished: (success, what it printed) or why it could not start.
+    KvfitDone(Result<(bool, String), String>),
     ServerAction {
         what: ServerAction,
         result: Result<(), String>,
@@ -370,7 +372,10 @@ pub struct CompanionApp {
     /// A model run by corbul (Companion's own engine) instead of colibri.
     pub corbul: Option<companion_core::corbul::Running>,
     pub corbul_bin: Option<std::path::PathBuf>,
-    corbul_name: String,
+    pub corbul_name: String,
+    /// The model file corbul is running.
+    pub corbul_path: Option<PathBuf>,
+    pub kvfit: crate::kvfit_ui::KvfitUi,
     corbul_after_stop: Option<PathBuf>,
     pub busy: Option<String>,
     pub starting_since: Option<Instant>,
@@ -516,6 +521,8 @@ impl CompanionApp {
             corbul: None,
             corbul_bin: companion_core::corbul::find(),
             corbul_name: String::new(),
+            corbul_path: None,
+            kvfit: Default::default(),
             corbul_after_stop: None,
             busy: None,
             starting_since: None,
@@ -1059,12 +1066,17 @@ impl CompanionApp {
         self.corbul = None;
         let packs = paths::data_dir().join("packs");
         let log = paths::logs_dir().join("corbul.log");
-        match companion_core::corbul::start(&bin, &path, &packs, &log) {
+        let opts = companion_core::corbul::PackOptions {
+            f16: self.s.packs_f16,
+            compress: self.s.packs_compress,
+        };
+        match companion_core::corbul::start(&bin, &path, &packs, &log, opts) {
             Ok(r) => {
                 self.corbul_name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
+                self.corbul_path = Some(path.clone());
                 self.corbul = Some(r);
                 self.health = Health::Down;
                 self.starting_since = Some(Instant::now());
@@ -2849,6 +2861,7 @@ impl CompanionApp {
                 }
                 self.refresh_installed();
             }
+            Event::KvfitDone(r) => self.kvfit_done(r),
             Event::InstallEnded(code) => {
                 self.install_spawning = false;
                 self.awaiting_status = true;

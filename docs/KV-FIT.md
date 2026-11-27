@@ -9,3 +9,5 @@ Options: `--budget 0.25` (fraction of rows kept), `--window 16`, `--ridge 0.01`,
 Limits: values only (keys carry the position and stay; the weight of dropped rows is not modelled), sliding-window layers are left as they are, the fit costs time in proportion to rows × probes per head. Not yet joined to context packs (a shrunk pack cannot be spliced). Nothing measured on a real model yet.
 
 Context packs can also be shelved in half the size: `corbul packs --pack-kv f16` and `corbul serve --packs-kv f16` (F16 rounding on every row), and compressed without loss: `--pack-compress`, `--packs-compress`.
+
+In Colibri Companion: *Documents → Context packs (corbul)* has the F16 and compression options (applied the next time corbul starts) and *Measure cache shrinking…*, which runs this command on the model corbul is running (it loads the model a second time).

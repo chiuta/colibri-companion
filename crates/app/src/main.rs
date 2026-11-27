@@ -13,6 +13,7 @@ mod duel_ui;
 mod flows_ui;
 mod guide_ui;
 mod i18n;
+mod kvfit_ui;
 mod light_ui;
 mod mcp_ui;
 mod memory_ui;

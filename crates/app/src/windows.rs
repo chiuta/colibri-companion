@@ -417,6 +417,7 @@ impl CompanionApp {
         self.flows_window(ctx);
         self.memory_window(ctx);
         self.docs_window(ctx);
+        self.kvfit_window(ctx);
         self.mcp_windows(ctx);
         self.sheet_windows(ctx);
         self.about_window(ctx);
@@ -712,6 +713,7 @@ mod tests {
             14 => a.prompts.open = true,
             15 => a.online.open_catalog = true,
             16 => a.online.open_conn = true,
+            17 => a.kvfit.open = true,
             _ => a.show_settings = true,
         };
         for lang in [Lang::Ro, Lang::De] {
@@ -722,7 +724,7 @@ mod tests {
                 (800.0, 480.0),
                 (390.0, 740.0),
             ] {
-                for i in 0..18 {
+                for i in 0..19 {
                     let mut a = busy_app(lang);
                     open(&mut a, i);
                     let ctx = egui::Context::default();

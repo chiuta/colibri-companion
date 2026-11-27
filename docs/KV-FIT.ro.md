@@ -9,3 +9,5 @@ Opțiuni: `--budget 0.25` (fracțiunea de rânduri păstrate), `--window 16`, `-
 Limite: doar valorile (cheile poartă poziția și rămân; greutatea rândurilor eliminate nu e modelată), straturile cu fereastră glisantă rămân neschimbate, refacerea costă timp proporțional cu rânduri × probe pe cap. Încă nelegată de pachetele de context (un pachet micșorat nu poate fi îmbinat). Nimic măsurat încă pe un model real.
 
 Pachetele de context pot fi păstrate și la jumătate de mărime: `corbul packs --pack-kv f16` și `corbul serve --packs-kv f16` (rotunjire F16 pe fiecare rând), și comprimate fără pierderi: `--pack-compress`, `--packs-compress`.
+
+În Colibri Companion: *Documente → Pachete de context (corbul)* are opțiunile F16 și compresie (se aplică la următoarea pornire a lui corbul) și *Măsoară micșorarea cache-ului…*, care rulează această comandă pe modelul pe care îl rulează corbul (încarcă modelul a doua oară).

@@ -9,3 +9,5 @@ Opciones: `--budget 0.25` (fracción de filas conservadas), `--window 16`, `--ri
 Límites: solo valores (las claves llevan la posición y se quedan; el peso de las filas eliminadas no se modela), las capas de ventana deslizante quedan como están, el ajuste cuesta tiempo proporcional a filas × sondas por cabeza. Aún no unido a los paquetes de contexto (un paquete reducido no se puede empalmar). Nada medido en un modelo real.
 
 Los paquetes de contexto también pueden guardarse a mitad de tamaño: `corbul packs --pack-kv f16` y `corbul serve --packs-kv f16` (redondeo F16 en cada fila), y comprimirse sin pérdida: `--pack-compress`, `--packs-compress`.
+
+En Colibri Companion: *Documentos → Paquetes de contexto (corbul)* tiene las opciones F16 y compresión (se aplican la próxima vez que corbul arranque) y *Medir la reducción de la caché…*, que ejecuta este comando sobre el modelo que corbul ejecuta (carga el modelo una segunda vez).

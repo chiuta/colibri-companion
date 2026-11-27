@@ -263,6 +263,57 @@ impl CompanionApp {
                     ),
                 );
                 ui.add_space(6.0);
+                egui::CollapsingHeader::new(self.t(
+                    "Pachete de context (corbul)",
+                    "Context packs (corbul)",
+                ))
+                .show(ui, |ui| {
+                    muted(
+                        ui,
+                        &p,
+                        self.t(
+                            "Se aplică la următoarea pornire a lui corbul.",
+                            "Applies the next time corbul starts.",
+                        ),
+                    );
+                    let mut f16 = self.s.packs_f16;
+                    if ui
+                        .checkbox(&mut f16, self.t("Pachete la jumătate de mărime (F16)", "Half-size packs (F16)"))
+                        .on_hover_text(self.t(
+                            "Jumătate din disc și memorie; fiecare rând primește rotunjirea F16.",
+                            "Half the disk and memory; every row gets F16 rounding.",
+                        ))
+                        .changed()
+                    {
+                        self.s.packs_f16 = f16;
+                        let _ = self.s.save();
+                    }
+                    let mut zip = self.s.packs_compress;
+                    if ui
+                        .checkbox(&mut zip, self.t("Comprimă pachetele", "Compress packs"))
+                        .on_hover_text(self.t(
+                            "Fără pierderi; costă puțin timp la salvare și la încărcare.",
+                            "Lossless; costs a little time on save and load.",
+                        ))
+                        .changed()
+                    {
+                        self.s.packs_compress = zip;
+                        let _ = self.s.save();
+                    }
+                    let can = self.corbul.is_some() && self.corbul_path.is_some();
+                    ui.add_enabled_ui(can, |ui| {
+                        if secondary_button(ui, self.t("Măsoară micșorarea cache-ului…", "Measure cache shrinking…"))
+                            .on_disabled_hover_text(self.t(
+                                "Pornește mai întâi un model cu corbul.",
+                                "Start a model with corbul first.",
+                            ))
+                            .clicked()
+                        {
+                            self.kvfit.open = true;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.docs.new_name)

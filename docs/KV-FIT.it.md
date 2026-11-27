@@ -9,3 +9,5 @@ Opzioni: `--budget 0.25` (frazione di righe tenute), `--window 16`, `--ridge 0.0
 Limiti: solo i valori (le chiavi portano la posizione e restano; il peso delle righe tolte non è modellato), i livelli a finestra scorrevole restano com'erano, l'aggiustamento costa tempo proporzionale a righe × sonde per testa. Non ancora unito ai pacchetti di contesto (un pacchetto ridotto non si può innestare). Nulla misurato su un modello reale.
 
 I pacchetti di contesto si possono anche tenere a metà dimensione: `corbul packs --pack-kv f16` e `corbul serve --packs-kv f16` (arrotondamento F16 su ogni riga), e comprimere senza perdite: `--pack-compress`, `--packs-compress`.
+
+In Colibri Companion: *Documenti → Pacchetti di contesto (corbul)* ha le opzioni F16 e compressione (applicate al prossimo avvio di corbul) e *Misura la riduzione della cache…*, che esegue questo comando sul modello che corbul sta eseguendo (carica il modello una seconda volta).

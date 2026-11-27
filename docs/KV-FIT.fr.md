@@ -9,3 +9,5 @@ Options : `--budget 0.25` (fraction de lignes conservées), `--window 16`, `--ri
 Limites : valeurs seulement (les clés portent la position et restent ; le poids des lignes retirées n'est pas modélisé), les couches à fenêtre glissante restent telles quelles, l'ajustement coûte du temps proportionnel à lignes × sondes par tête. Pas encore relié aux paquets de contexte (un paquet réduit ne peut pas être raccordé). Rien de mesuré sur un vrai modèle.
 
 Les paquets de contexte peuvent aussi être rangés à moitié taille : `corbul packs --pack-kv f16` et `corbul serve --packs-kv f16` (arrondi F16 sur chaque ligne), et compressés sans perte : `--pack-compress`, `--packs-compress`.
+
+Dans Colibri Companion : *Documents → Paquets de contexte (corbul)* propose les options F16 et compression (appliquées au prochain démarrage de corbul) et *Mesurer la réduction du cache…*, qui lance cette commande sur le modèle que corbul exécute (il charge le modèle une seconde fois).

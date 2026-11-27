@@ -9,3 +9,5 @@ Optionen: `--budget 0.25` (Anteil behaltener Zeilen), `--window 16`, `--ridge 0.
 Grenzen: nur Werte (Schlüssel tragen die Position und bleiben; das Gewicht entfernter Zeilen wird nicht modelliert), Schichten mit Gleitfenster bleiben unverändert, die Anpassung kostet Zeit proportional zu Zeilen × Sonden je Kopf. Noch nicht mit Kontextpaketen verbunden (ein verkleinertes Paket lässt sich nicht einspleißen). Auf einem echten Modell noch nichts gemessen.
 
 Kontextpakete lassen sich auch halb so groß ablegen: `corbul packs --pack-kv f16` und `corbul serve --packs-kv f16` (F16-Rundung in jeder Zeile) und verlustfrei komprimieren: `--pack-compress`, `--packs-compress`.
+
+In Colibri Companion: *Dokumente → Kontextpakete (corbul)* hat die Optionen F16 und Kompression (gelten beim nächsten Start von corbul) und *Cache-Verkleinerung messen…*, das diesen Befehl auf dem von corbul ausgeführten Modell startet (es lädt das Modell ein zweites Mal).

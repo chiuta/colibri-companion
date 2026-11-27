@@ -9,3 +9,5 @@ Beállítások: `--budget 0.25` (megtartott sorok aránya), `--window 16`, `--ri
 Korlátok: csak az értékek (a kulcsok hordozzák a pozíciót és maradnak; az elhagyott sorok súlya nincs modellezve), a csúszóablakos rétegek változatlanok, az illesztés ideje arányos a sorok × próbák számával fejenként. Még nincs összekötve a kontextuscsomagokkal (egy összezsugorított csomag nem illeszthető be). Valódi modellen még semmi sincs mérve.
 
 A kontextuscsomagok fél méretben is tárolhatók: `corbul packs --pack-kv f16` és `corbul serve --packs-kv f16` (F16-kerekítés minden soron), és veszteség nélkül tömöríthetők: `--pack-compress`, `--packs-compress`.
+
+A Colibri Companionban: a *Dokumentumok → Kontextuscsomagok (corbul)* alatt ott van az F16 és a tömörítés beállítása (a corbul következő indításakor lép életbe) és a *A gyorsítótár zsugorításának mérése…*, amely ezt a parancsot a corbul által futtatott modellen indítja el (a modellt másodszor is betölti).

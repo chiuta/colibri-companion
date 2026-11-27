@@ -42,8 +42,22 @@ pub fn free_port() -> io::Result<u16> {
     Ok(TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port())
 }
 
+/// How the shelf of context packs is kept (see `docs/CONTEXT-PACKS.md`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PackOptions {
+    /// Keep packs in F16: half the size, F16 rounding on every row.
+    pub f16: bool,
+    /// Compress the pack files (lossless).
+    pub compress: bool,
+}
+
 /// The arguments of `corbul serve` for one model file. Never listens beyond the loopback.
-pub fn serve_args(model: &Path, port: u16, packs: &Path) -> Vec<std::ffi::OsString> {
+pub fn serve_args(
+    model: &Path,
+    port: u16,
+    packs: &Path,
+    opts: PackOptions,
+) -> Vec<std::ffi::OsString> {
     // A relative name starting with "-" would be read as an option: always hand over a path.
     let model = if model.is_absolute() {
         model.to_path_buf()
@@ -60,7 +74,71 @@ pub fn serve_args(model: &Path, port: u16, packs: &Path) -> Vec<std::ffi::OsStri
     }
     a.push("--packs".into());
     a.push(packs.into());
+    if opts.f16 {
+        a.push("--packs-kv".into());
+        a.push("f16".into());
+    }
+    if opts.compress {
+        a.push("--packs-compress".into());
+    }
     a
+}
+
+/// What `corbul kvfit` is asked, and the arguments that say it. A path that starts with `-` is
+/// given as `./path`, so it cannot be read as an option.
+pub fn kvfit_args(
+    model: &Path,
+    text: &Path,
+    question: &str,
+    budget: f64,
+) -> Vec<std::ffi::OsString> {
+    let safe = |p: &Path| -> std::ffi::OsString {
+        if p.is_absolute() {
+            p.into()
+        } else {
+            Path::new(".").join(p).into()
+        }
+    };
+    vec![
+        "kvfit".into(),
+        safe(model),
+        "--text".into(),
+        safe(text),
+        "--question".into(),
+        question.into(),
+        "--budget".into(),
+        format!("{budget}").into(),
+    ]
+}
+
+/// Run `corbul kvfit` and wait for it. Returns whether it succeeded and what it printed (at most
+/// the last 8 KB of the two streams together, so a runaway program cannot fill the memory).
+pub fn run_kvfit(
+    bin: &Path,
+    model: &Path,
+    text: &Path,
+    question: &str,
+    budget: f64,
+) -> io::Result<(bool, String)> {
+    let mut c = Command::new(bin);
+    c.args(kvfit_args(model, text, question, budget))
+        .stdin(Stdio::null());
+    hide_window(&mut c);
+    let out = c.output()?;
+    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+    if !out.stderr.is_empty() {
+        s.push('\n');
+        s.push_str(&String::from_utf8_lossy(&out.stderr));
+    }
+    let keep = 8 * 1024;
+    if s.len() > keep {
+        let mut cut = s.len() - keep;
+        while !s.is_char_boundary(cut) {
+            cut += 1;
+        }
+        s = s[cut..].to_string();
+    }
+    Ok((out.status.success(), s))
 }
 
 /// A running corbul. Dropping it stops the program.
@@ -94,7 +172,13 @@ impl Drop for Running {
 }
 
 /// Start `corbul serve MODEL` on a free port. Its output goes to `log` (replaced each time).
-pub fn start(bin: &Path, model: &Path, packs: &Path, log: &Path) -> io::Result<Running> {
+pub fn start(
+    bin: &Path,
+    model: &Path,
+    packs: &Path,
+    log: &Path,
+    opts: PackOptions,
+) -> io::Result<Running> {
     if let Some(d) = log.parent() {
         fs::create_dir_all(d)?;
     }
@@ -103,7 +187,7 @@ pub fn start(bin: &Path, model: &Path, packs: &Path, log: &Path) -> io::Result<R
     let out = fs::File::create(log)?;
     let err = out.try_clone()?;
     let mut c = Command::new(bin);
-    c.args(serve_args(model, port, packs))
+    c.args(serve_args(model, port, packs, opts))
         .stdin(Stdio::null())
         .stdout(out)
         .stderr(err);
@@ -138,6 +222,7 @@ mod tests {
             Path::new("/m/my model; rm -rf.gguf"),
             4321,
             Path::new("/p q"),
+            PackOptions::default(),
         );
         let s: Vec<String> = a.iter().map(|x| x.to_string_lossy().into_owned()).collect();
         assert_eq!(s[0], "serve");
@@ -146,11 +231,68 @@ mod tests {
         assert!(s.windows(2).any(|w| w == ["--port", "4321"]));
         assert!(s.windows(2).any(|w| w == ["--packs", "/p q"]));
         assert!(!s.iter().any(|x| x.contains("0.0.0.0")));
-        let r = serve_args(Path::new("--port"), 1, Path::new("/p"));
+        assert!(
+            !s.iter()
+                .any(|x| x.contains("packs-kv") || x.contains("compress"))
+        );
+        let r = serve_args(
+            Path::new("--port"),
+            1,
+            Path::new("/p"),
+            PackOptions::default(),
+        );
         assert_eq!(
             r[1],
             std::ffi::OsString::from(Path::new(".").join("--port"))
         );
+        let o = serve_args(
+            Path::new("/m.gguf"),
+            1,
+            Path::new("/p"),
+            PackOptions {
+                f16: true,
+                compress: true,
+            },
+        );
+        let o: Vec<String> = o.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+        assert!(o.windows(2).any(|w| w == ["--packs-kv", "f16"]));
+        assert!(o.iter().any(|x| x == "--packs-compress"));
+    }
+
+    #[test]
+    fn kvfit_arguments_keep_odd_names_whole_and_the_program_output_is_capped() {
+        let a = kvfit_args(
+            Path::new("-m.gguf"),
+            Path::new("/t x.txt"),
+            "why; rm -rf /?",
+            0.25,
+        );
+        let s: Vec<String> = a.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+        assert_eq!(s[0], "kvfit");
+        assert_eq!(s[1], Path::new(".").join("-m.gguf").to_string_lossy());
+        assert!(s.windows(2).any(|w| w == ["--text", "/t x.txt"]));
+        assert!(s.windows(2).any(|w| w == ["--question", "why; rm -rf /?"]));
+        assert!(s.windows(2).any(|w| w == ["--budget", "0.25"]));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let d = std::env::temp_dir().join(format!("corbul-kvfit-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&d);
+            fs::create_dir_all(&d).unwrap();
+            let fake = d.join("corbul");
+            fs::write(
+                &fake,
+                "#!/bin/sh\nhead -c 100000 /dev/zero | tr '\\0' 'x'\necho done\nexit 0\n",
+            )
+            .unwrap();
+            fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+            let (ok, out) = run_kvfit(&fake, Path::new("/m"), Path::new("/t"), "q", 0.5).unwrap();
+            assert!(ok && out.len() <= 8 * 1024 && out.trim_end().ends_with("done"));
+            fs::write(&fake, "#!/bin/sh\necho bad >&2\nexit 2\n").unwrap();
+            let (ok, out) = run_kvfit(&fake, Path::new("/m"), Path::new("/t"), "q", 0.5).unwrap();
+            assert!(!ok && out.contains("bad"));
+            let _ = fs::remove_dir_all(&d);
+        }
     }
 
     #[test]
@@ -171,6 +313,7 @@ mod tests {
                 Path::new("/x.gguf"),
                 &d.join("packs"),
                 &d.join("l/log.txt"),
+                PackOptions::default(),
             )
             .unwrap();
             let mut code = None;
@@ -194,6 +337,7 @@ mod tests {
                 Path::new("/x.gguf"),
                 &d.join("packs"),
                 &d.join("l/log2.txt"),
+                PackOptions::default(),
             )
             .unwrap();
             drop(r);
