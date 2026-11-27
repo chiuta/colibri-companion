@@ -134,6 +134,44 @@ pub fn compose(
     Ok((st, logits, rep))
 }
 
+/// Like [`compose`], but the packs were written by **another model** (`src`) and are carried over to
+/// `model` through `map` ([`crate::kvmap`]). Every pack, the first included, comes in as a guess and
+/// is repaired with the same adaptive rule: recompute from its start until the measured drift falls
+/// under `opts.tolerance`. With `tolerance: 0.0` everything is recomputed, the answer equals a plain
+/// prefill by `model`, and nothing is saved; how much a real map saves depends on how well the two
+/// models' caches relate, which only `corbul map-check` can tell on real models. `joins` has one entry
+/// per pack. The packs must be exact states of `src`.
+pub fn compose_mapped(
+    map: &crate::kvmap::KvMap,
+    src: &Model,
+    packs: &[&State],
+    model: &Model,
+    tail: &[usize],
+    opts: &ComposeOptions,
+) -> Result<(State, Vec<f32>, ComposeReport), crate::kvmap::KvMapError> {
+    if tail.is_empty() {
+        return Err(ModelError::NoTokens.into());
+    }
+    let mut rep = ComposeReport::default();
+    let mut st = model.new_state_with(KvKind::F32);
+    for p in packs {
+        let (lo, n) = (st.tokens().len(), p.tokens().len());
+        if n == 0 {
+            continue;
+        }
+        map.import(src, p, model, &mut st)?;
+        rep.spliced += n;
+        let (r, d) = repair(model, &mut st, lo, lo + n, opts)?;
+        rep.refreshed += r;
+        rep.joins.push((r, d));
+    }
+    let mut all = st.tokens().to_vec();
+    all.extend_from_slice(tail);
+    let logits = model.prefill_cached(&mut st, &all)?;
+    rep.fresh = all.len() - rep.spliced;
+    Ok((st, logits, rep))
+}
+
 /// How [`shrink_pack`] shortens a pack.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShrinkOptions {

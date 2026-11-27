@@ -49,6 +49,7 @@ pub mod fast;
 pub mod genloop;
 pub mod http;
 pub mod kvfit_cmd;
+pub mod kvmap_cmd;
 pub mod load;
 pub mod lorasrc;
 pub mod merge_cmd;

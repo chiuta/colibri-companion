@@ -6,7 +6,7 @@ Gli ultimi `--window` token del testo vengono registrati come interrogazioni di 
 
 Opzioni: `--budget 0.25` (frazione di righe tenute), `--window 16`, `--ridge 0.01`, `--max-new 32`. Mostra l'errore sulle sonde, la massima differenza dei primi punteggi rispetto alla cache intera, se il primo token coincide e quanti dei primi token della risposta coincidono.
 
-Limiti: solo i valori (le chiavi portano la posizione e restano; il peso delle righe tolte non è modellato), i livelli a finestra scorrevole restano com'erano, l'aggiustamento costa tempo proporzionale a righe × sonde per testa. Non ancora unito ai pacchetti di contesto (un pacchetto ridotto non si può innestare). Nulla misurato su un modello reale.
+Limiti: solo i valori (le chiavi portano la posizione e restano; il peso delle righe tolte non è modellato), i livelli a finestra scorrevole restano com'erano, l'aggiustamento costa tempo proporzionale a righe × sonde per testa. Ora unito ai pacchetti di contesto: vedi SHRINK-MAP.it.md (`--shrink`). Nulla misurato su un modello reale.
 
 I pacchetti di contesto si possono anche tenere a metà dimensione: `corbul packs --pack-kv f16` e `corbul serve --packs-kv f16` (arrotondamento F16 su ogni riga), e comprimere senza perdite: `--pack-compress`, `--packs-compress`.
 

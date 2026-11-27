@@ -323,6 +323,18 @@ pub struct PackReply {
     pub rows_saved: u64,
 }
 
+/// The request body of `/v1/packs/complete`. With `shrink`, corbul may shrink texts that do not fit
+/// the window (`"shrink":"auto"`); without it such texts are refused.
+pub fn pack_body(packs: &[String], question: &str, max_tokens: u32, shrink: bool) -> Value {
+    let mut b = serde_json::json!({
+        "packs": packs, "question": question, "max_tokens": max_tokens,
+    });
+    if shrink {
+        b["shrink"] = Value::from("auto");
+    }
+    b
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PackFail {
     Unsupported,
@@ -401,11 +413,10 @@ impl ChatClient {
         packs: &[String],
         question: &str,
         max_tokens: u32,
+        shrink: bool,
         cancel: &CancelToken,
     ) -> Result<PackReply, PackFail> {
-        let body = serde_json::json!({
-            "packs": packs, "question": question, "max_tokens": max_tokens,
-        });
+        let body = pack_body(packs, question, max_tokens, shrink);
         let resp = http::send(
             &self.base,
             "POST",
@@ -617,13 +628,22 @@ mod tests {
     }
 
     #[test]
+    fn the_shrink_field_is_sent_only_when_asked() {
+        let b = pack_body(&["a".into()], "q", 8, false);
+        assert!(b.get("shrink").is_none());
+        let b = pack_body(&["a".into()], "q", 8, true);
+        assert_eq!(b["shrink"], "auto");
+        assert_eq!(b["max_tokens"], 8);
+    }
+
+    #[test]
     fn pack_complete_reads_the_answer_and_tells_unsupported_apart() {
         let ok = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 142\r\nConnection: close\r\n\r\n{\"text\":\"six\",\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":1},\"packs\":{\"rows_copied\":7,\"rows_recomputed\":2,\"rows_saved\":5}}";
         let body = ok.split("\r\n\r\n").nth(1).unwrap().len();
         let ok = Box::leak(ok.replace("142", &body.to_string()).into_boxed_str());
         let c = ChatClient::new(&one_shot(ok), None);
         let r = c
-            .pack_complete(&["a".into()], "q", 8, &CancelToken::new())
+            .pack_complete(&["a".into()], "q", 8, false, &CancelToken::new())
             .unwrap();
         assert_eq!(
             (r.text.as_str(), r.rows_saved, r.prompt_tokens),
@@ -636,7 +656,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            c.pack_complete(&["a".into()], "q", 8, &CancelToken::new()),
+            c.pack_complete(&["a".into()], "q", 8, false, &CancelToken::new()),
             Err(PackFail::Unsupported)
         );
     }

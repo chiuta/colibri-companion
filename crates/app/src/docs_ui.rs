@@ -300,6 +300,18 @@ impl CompanionApp {
                         self.s.packs_compress = zip;
                         let _ = self.s.save();
                     }
+                    let mut shr = self.s.packs_shrink;
+                    if ui
+                        .checkbox(&mut shr, self.t("Micșorează textele prea lungi", "Shrink texts that are too long"))
+                        .on_hover_text(self.t(
+                            "Dacă documentele nu încap în fereastra modelului, corbul păstrează rândurile cele mai importante în loc să refuze. Pierde informație; poți măsura cât cu butonul de mai jos.",
+                            "When the documents do not fit the model's window, corbul keeps the rows that matter most instead of refusing. It loses information; you can measure how much with the button below.",
+                        ))
+                        .changed()
+                    {
+                        self.s.packs_shrink = shr;
+                        let _ = self.s.save();
+                    }
                     let can = self.corbul.is_some() && self.corbul_path.is_some();
                     ui.add_enabled_ui(can, |ui| {
                         if secondary_button(ui, self.t("Măsoară micșorarea cache-ului…", "Measure cache shrinking…"))

@@ -520,10 +520,19 @@ pub(crate) mod testkit {
         std::fs::write(dir.join("adapter_config.json"), r#"{"peft_type":"LORA","r":2,"lora_alpha":2,"target_modules":["q_proj"],"base_model_name_or_path":"x"}"#).unwrap();
     }
 
+    /// Like [`write_model`] with other random weights (same architecture and vocabulary).
+    pub fn write_model_seeded(dir: &Path, seed: u64) {
+        write_model_full(dir, false, 96, 0, seed)
+    }
+
     fn write_model_opts(dir: &Path, with_template: bool, ctx: usize, experts: usize) {
+        write_model_full(dir, with_template, ctx, experts, 0x9e37_79b9_7f4a_7c15)
+    }
+
+    fn write_model_full(dir: &Path, with_template: bool, ctx: usize, experts: usize, seed: u64) {
         let (h, layers, heads, kv, hd, ff, v) =
             (16usize, 2usize, 4usize, 2usize, 4usize, 24usize, VOCAB);
-        let mut s = 0x9e37_79b9_7f4a_7c15u64;
+        let mut s = seed;
         let mut tensors: Vec<(String, Vec<usize>, Vec<f32>)> = vec![
             (
                 "model.embed_tokens.weight".into(),

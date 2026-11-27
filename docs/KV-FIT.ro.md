@@ -6,7 +6,7 @@ Ultimele `--window` tokenuri ale textului sunt înregistrate ca interogări de p
 
 Opțiuni: `--budget 0.25` (fracțiunea de rânduri păstrate), `--window 16`, `--ridge 0.01`, `--max-new 32`. Afișează eroarea refacerii pe probe, cea mai mare diferență a primelor scoruri față de cache-ul întreg, dacă primul token coincide și câte dintre primele tokenuri ale răspunsului coincid.
 
-Limite: doar valorile (cheile poartă poziția și rămân; greutatea rândurilor eliminate nu e modelată), straturile cu fereastră glisantă rămân neschimbate, refacerea costă timp proporțional cu rânduri × probe pe cap. Încă nelegată de pachetele de context (un pachet micșorat nu poate fi îmbinat). Nimic măsurat încă pe un model real.
+Limite: doar valorile (cheile poartă poziția și rămân; greutatea rândurilor eliminate nu e modelată), straturile cu fereastră glisantă rămân neschimbate, refacerea costă timp proporțional cu rânduri × probe pe cap. Acum legată de pachetele de context: vezi SHRINK-MAP.ro.md (`--shrink`). Nimic măsurat încă pe un model real.
 
 Pachetele de context pot fi păstrate și la jumătate de mărime: `corbul packs --pack-kv f16` și `corbul serve --packs-kv f16` (rotunjire F16 pe fiecare rând), și comprimate fără pierderi: `--pack-compress`, `--packs-compress`.
 

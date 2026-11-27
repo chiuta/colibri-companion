@@ -6,7 +6,7 @@ A szöveg utolsó `--window` tokenje próbalekérdezésként kerül rögzítésr
 
 Beállítások: `--budget 0.25` (megtartott sorok aránya), `--window 16`, `--ridge 0.01`, `--max-new 32`. Kiírja az illesztési hibát a próbákon, az első pontszámok legnagyobb eltérését a teljes gyorsítótárhoz képest, egyezik-e az első token, és a válasz első tokenjei közül hány egyezik.
 
-Korlátok: csak az értékek (a kulcsok hordozzák a pozíciót és maradnak; az elhagyott sorok súlya nincs modellezve), a csúszóablakos rétegek változatlanok, az illesztés ideje arányos a sorok × próbák számával fejenként. Még nincs összekötve a kontextuscsomagokkal (egy összezsugorított csomag nem illeszthető be). Valódi modellen még semmi sincs mérve.
+Korlátok: csak az értékek (a kulcsok hordozzák a pozíciót és maradnak; az elhagyott sorok súlya nincs modellezve), a csúszóablakos rétegek változatlanok, az illesztés ideje arányos a sorok × próbák számával fejenként. Már össze van kötve a kontextuscsomagokkal: lásd SHRINK-MAP.hu.md (`--shrink`). Valódi modellen még semmi sincs mérve.
 
 A kontextuscsomagok fél méretben is tárolhatók: `corbul packs --pack-kv f16` és `corbul serve --packs-kv f16` (F16-kerekítés minden soron), és veszteség nélkül tömöríthetők: `--pack-compress`, `--packs-compress`.
 

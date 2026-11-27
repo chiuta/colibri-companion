@@ -907,6 +907,20 @@ impl LayerKv {
     }
 }
 
+/// Cache rows without their position (see [`Model::neutral_rows`]): per layer, `n` rows of `kd`
+/// values for keys (rotated back to position 0) and for values.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NeutralRows {
+    /// Values per row (`kv_heads × head_dim`).
+    pub kd: usize,
+    /// Number of rows.
+    pub n: usize,
+    /// Keys, one `n × kd` block per layer.
+    pub k: Vec<Vec<f32>>,
+    /// Values, one `n × kd` block per layer.
+    pub v: Vec<Vec<f32>>,
+}
+
 /// Reusable work buffers, so decoding allocates nothing per token.
 #[derive(Default)]
 struct Scratch {
@@ -1272,6 +1286,111 @@ impl Model {
         st.kvx.gap = 0;
         st.last = None;
         st.reused = 0;
+        Ok(())
+    }
+
+    /// The cache rows of `st` without their position: every key rotated back to position 0, values
+    /// as they are. This is the form in which rows of one model are compared with, or mapped to, rows
+    /// of another ([`crate::kvmap`]). `st` must be exact and editable (no eviction, sliding window or
+    /// accelerator cache).
+    pub fn neutral_rows(&self, st: &State) -> Result<NeutralRows, ModelError> {
+        self.editable(st)?;
+        if !st.is_exact() {
+            return Err(ModelError::Shape(
+                "only exact states can be exported".into(),
+            ));
+        }
+        let (hd, n) = (self.spec.head_dim as usize, st.pos);
+        let inv = &self.rope_global.0;
+        let (mut k, mut v) = (Vec::new(), Vec::new());
+        let mut row = Vec::new();
+        for l in &st.kv {
+            let kd = l.kd;
+            if kd % hd != 0 || l.k.len_slots(kd, l.kvh) < n {
+                return Err(ModelError::Shape(
+                    "the cache has an unexpected shape".into(),
+                ));
+            }
+            row.resize(kd, 0.0);
+            let (mut kl, mut vl) = (Vec::with_capacity(n * kd), Vec::with_capacity(n * kd));
+            for slot in 0..n {
+                l.k.read(slot, kd, hd, &mut row);
+                for head in row.chunks_mut(hd) {
+                    rope_shift(head, -(slot as i64), inv);
+                }
+                kl.extend_from_slice(&row);
+                l.v.read(slot, kd, hd, &mut row);
+                vl.extend_from_slice(&row);
+            }
+            k.push(kl);
+            v.push(vl);
+        }
+        Ok(NeutralRows {
+            kd: self.spec.kv_heads as usize * hd,
+            n,
+            k,
+            v,
+        })
+    }
+
+    /// Append rows given in position-free form (see [`Model::neutral_rows`]) for `tokens` to `dst`,
+    /// rotating the keys to their places. The rows come from somewhere else (another model, through a
+    /// [`crate::kvmap::KvMap`]), so `dst` is marked approximate over them until
+    /// [`Model::refresh_slots`] has recomputed them. Nothing is changed on an `Err`.
+    pub fn append_neutral(
+        &self,
+        dst: &mut State,
+        tokens: &[usize],
+        rows: &NeutralRows,
+    ) -> Result<(), ModelError> {
+        self.editable(dst)?;
+        let bad = |m: &str| Err(ModelError::Shape(m.into()));
+        if dst.kv_kind() == KvKind::Q8 {
+            return bad("importing rows needs an F32 or F16 cache");
+        }
+        let (hd, n) = (self.spec.head_dim as usize, tokens.len());
+        let kd = self.spec.kv_heads as usize * hd;
+        if n == 0 || rows.n != n || rows.kd != kd {
+            return bad("the rows do not match the tokens or the cache shape");
+        }
+        if rows.k.len() != dst.kv.len() || rows.v.len() != dst.kv.len() {
+            return bad("the rows have a different number of layers");
+        }
+        if rows.k.iter().chain(&rows.v).any(|l| l.len() != n * kd) {
+            return bad("a layer of rows has the wrong size");
+        }
+        if rows
+            .k
+            .iter()
+            .chain(&rows.v)
+            .flatten()
+            .any(|x| !x.is_finite())
+        {
+            return bad("the rows contain a value that is not finite");
+        }
+        if let Some(&t) = tokens.iter().find(|&&t| t >= self.spec.vocab as usize) {
+            return Err(ModelError::Token(t));
+        }
+        if dst.pos + n > self.spec.context as usize {
+            return Err(ModelError::ContextFull(self.spec.context as usize));
+        }
+        let inv = &self.rope_global.0;
+        let at = dst.pos;
+        let mut row = vec![0f32; kd];
+        for (li, l) in dst.kv.iter_mut().enumerate() {
+            for j in 0..n {
+                row.copy_from_slice(&rows.k[li][j * kd..(j + 1) * kd]);
+                for head in row.chunks_mut(hd) {
+                    rope_shift(head, (at + j) as i64, inv);
+                }
+                l.k.write(at + j, kd, hd, &row);
+                l.v.write(at + j, kd, hd, &rows.v[li][j * kd..(j + 1) * kd]);
+            }
+        }
+        dst.tokens.extend_from_slice(tokens);
+        dst.pos += n;
+        dst.last = None;
+        dst.mark_approx(at, at + n);
         Ok(())
     }
 

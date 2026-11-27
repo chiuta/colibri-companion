@@ -39,6 +39,8 @@ USAGE
   corbul steer    train|apply|lens <model> …                              control vectors and a logit lens
   corbul packs    MODEL --session DIR --pack FILE… [--question Q] [--check]   reuse the work done on texts that come back in a new order
   corbul kvfit    MODEL --text FILE --question Q [--budget 0.25]          measure what shrinking the cache costs, with and without refitting values
+  corbul map-fit  SRC DST --text FILE --out MAP [--rows 1024]            learn a map from the cache rows of one model to another
+  corbul map-check SRC DST --map MAP --text FILE --question Q             measure what the mapped cache does to the answer
   corbul rag      add LIB FILE… | search LIB --query Q | ask LIB MODEL --question Q   local document library, quote-locked answers
   corbul watermark detect <model> --key K --text T | --file F             test a text for the mark made by generate --watermark
   corbul embed    <bert-folder> TEXT… [--file F --pool cls|mean --no-normalize --json]   sentence vectors from a BERT encoder
@@ -151,6 +153,8 @@ fn run(argv: &[String]) -> Result<(), String> {
         "merge" => corbul::merge_cmd::cmd(&args),
         "packs" => corbul::packs_cmd::cmd(&args),
         "kvfit" => corbul::kvfit_cmd::cmd(&args),
+        "map-fit" => corbul::kvmap_cmd::fit_cmd(&args),
+        "map-check" => corbul::kvmap_cmd::check_cmd(&args),
         "rag" => corbul::rag_cmd::cmd(&args),
         "search" => corbul::search_cmd::cmd(&args),
         "watermark" => corbul::wm::cmd(&args),

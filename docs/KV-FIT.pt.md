@@ -6,7 +6,7 @@ Os últimos `--window` tokens do texto são registados como consultas de sonda. 
 
 Opções: `--budget 0.25` (fração de linhas mantidas), `--window 16`, `--ridge 0.01`, `--max-new 32`. Mostra o erro do ajuste nas sondas, a maior diferença das primeiras pontuações face à cache completa, se o primeiro token coincide e quantos dos primeiros tokens da resposta coincidem.
 
-Limites: só valores (as chaves levam a posição e ficam; o peso das linhas removidas não é modelado), as camadas de janela deslizante ficam como estão, o ajuste custa tempo proporcional a linhas × sondas por cabeça. Ainda não ligado aos pacotes de contexto (um pacote reduzido não se pode emendar). Nada medido num modelo real.
+Limites: só valores (as chaves levam a posição e ficam; o peso das linhas removidas não é modelado), as camadas de janela deslizante ficam como estão, o ajuste custa tempo proporcional a linhas × sondas por cabeça. Agora ligado aos pacotes de contexto: veja SHRINK-MAP.pt.md (`--shrink`). Nada medido num modelo real.
 
 Os pacotes de contexto também podem ficar guardados a metade do tamanho: `corbul packs --pack-kv f16` e `corbul serve --packs-kv f16` (arredondamento F16 em cada linha), e comprimidos sem perdas: `--pack-compress`, `--packs-compress`.
 

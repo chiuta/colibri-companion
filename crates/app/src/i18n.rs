@@ -14462,6 +14462,28 @@ static TABLE: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Shrink texts that are too long",
+        [
+            "Réduire les textes trop longs",
+            "Riduci i testi troppo lunghi",
+            "Reducir los textos demasiado largos",
+            "Reduzir os textos demasiado longos",
+            "Zu lange Texte verkleinern",
+            "Túl hosszú szövegek zsugorítása",
+        ],
+    ),
+    (
+        "When the documents do not fit the model's window, corbul keeps the rows that matter most instead of refusing. It loses information; you can measure how much with the button below.",
+        [
+            "Si les documents ne tiennent pas dans la fenêtre du modèle, corbul garde les lignes les plus importantes au lieu de refuser. Cela perd de l'information ; vous pouvez le mesurer avec le bouton ci-dessous.",
+            "Se i documenti non stanno nella finestra del modello, corbul tiene le righe più importanti invece di rifiutare. Si perde informazione; puoi misurarla con il pulsante qui sotto.",
+            "Si los documentos no caben en la ventana del modelo, corbul conserva las filas más importantes en lugar de rechazar. Se pierde información; puedes medirlo con el botón de abajo.",
+            "Se os documentos não couberem na janela do modelo, o corbul mantém as linhas mais importantes em vez de recusar. Perde-se informação; pode medi-la com o botão abaixo.",
+            "Passen die Dokumente nicht in das Fenster des Modells, behält corbul die wichtigsten Zeilen, statt abzulehnen. Dabei geht Information verloren; Sie können es mit der Schaltfläche unten messen.",
+            "Ha a dokumentumok nem férnek a modell ablakába, a corbul a legfontosabb sorokat megtartja az elutasítás helyett. Információ vész el; az alábbi gombbal megmérheted.",
+        ],
+    ),
+    (
         "Compress packs",
         [
             "Compresser les paquets",

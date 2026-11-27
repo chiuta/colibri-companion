@@ -6,7 +6,7 @@ Les `--window` derniers jetons du texte sont enregistrés comme requêtes de son
 
 Options : `--budget 0.25` (fraction de lignes conservées), `--window 16`, `--ridge 0.01`, `--max-new 32`. Elle affiche l'erreur d'ajustement sur les sondes, la plus grande différence des premiers scores avec le cache complet, si le premier jeton concorde et combien des premiers jetons de la réponse concordent.
 
-Limites : valeurs seulement (les clés portent la position et restent ; le poids des lignes retirées n'est pas modélisé), les couches à fenêtre glissante restent telles quelles, l'ajustement coûte du temps proportionnel à lignes × sondes par tête. Pas encore relié aux paquets de contexte (un paquet réduit ne peut pas être raccordé). Rien de mesuré sur un vrai modèle.
+Limites : valeurs seulement (les clés portent la position et restent ; le poids des lignes retirées n'est pas modélisé), les couches à fenêtre glissante restent telles quelles, l'ajustement coûte du temps proportionnel à lignes × sondes par tête. Désormais relié aux paquets de contexte : voir SHRINK-MAP.fr.md (`--shrink`). Rien de mesuré sur un vrai modèle.
 
 Les paquets de contexte peuvent aussi être rangés à moitié taille : `corbul packs --pack-kv f16` et `corbul serve --packs-kv f16` (arrondi F16 sur chaque ligne), et compressés sans perte : `--pack-compress`, `--packs-compress`.
 

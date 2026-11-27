@@ -6,7 +6,7 @@ The last `--window` tokens of the text are recorded as probe queries. The kept r
 
 Options: `--budget 0.25` (fraction of rows kept), `--window 16`, `--ridge 0.01`, `--max-new 32`. It prints the fit error on the probes, the largest difference of the first scores against the full cache, whether the first token agrees and how many of the first tokens of the answer agree.
 
-Limits: values only (keys carry the position and stay; the weight of dropped rows is not modelled), sliding-window layers are left as they are, the fit costs time in proportion to rows × probes per head. Not yet joined to context packs (a shrunk pack cannot be spliced). Nothing measured on a real model yet.
+Limits: values only (keys carry the position and stay; the weight of dropped rows is not modelled), sliding-window layers are left as they are, the fit costs time in proportion to rows × probes per head. Joined to context packs since: see SHRINK-MAP.md (`--shrink`). Nothing measured on a real model yet.
 
 Context packs can also be shelved in half the size: `corbul packs --pack-kv f16` and `corbul serve --packs-kv f16` (F16 rounding on every row), and compressed without loss: `--pack-compress`, `--packs-compress`.
 

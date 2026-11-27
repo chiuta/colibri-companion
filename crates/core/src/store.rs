@@ -222,6 +222,9 @@ pub struct Settings {
     pub packs_f16: bool,
     /// Context pack files compressed (lossless) when corbul is started.
     pub packs_compress: bool,
+    /// With context packs: when the documents do not fit the model's window, let corbul shrink them
+    /// (keep the rows that matter most) instead of failing.
+    pub packs_shrink: bool,
     /// Where the OpenAI-compatible server is. Default: colibri's own.
     pub server_url: String,
     pub api_key: String,
@@ -263,6 +266,7 @@ impl Default for Settings {
             context_packs: false,
             packs_f16: false,
             packs_compress: false,
+            packs_shrink: false,
             server_url: "http://127.0.0.1:8000".into(),
             api_key: String::new(),
             style: Style::Balanced,

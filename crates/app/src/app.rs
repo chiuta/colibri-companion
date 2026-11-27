@@ -2524,11 +2524,12 @@ impl CompanionApp {
         self.begin_meter(turn);
         let (client, tx, ctx) = (self.client(), self.tx.clone(), self.ctx.clone());
         let max_new = self.s.max_tokens.unwrap_or(1024);
+        let shrink = self.s.packs_shrink;
         thread::spawn(move || {
             // corbul with --packs: reuse the work done on each passage. Anything else (another
             // engine, corbul without --packs, a failure) falls through to the ordinary chat.
             if let Some((packs, q)) = pack_job {
-                match client.pack_complete(&packs, &q, max_new, &cancel) {
+                match client.pack_complete(&packs, &q, max_new, shrink, &cancel) {
                     Ok(r) => {
                         let _ = tx.send(Event::ChatDelta {
                             turn,
