@@ -4,7 +4,7 @@ What exists: exact re-rotation splice, adaptive repair, the pack shelf, and evic
 
 ## 1. Compacting a pack (shrinking its rows, in the style of attention matching)
 
-**Done since this plan was written:** recording the probe queries (`State::record_queries`), the value fit (`kvfit.rs`, tested on synthetic data and on a tiny model), `State::apply_policy_fitted` and the measuring command `corbul kvfit` (see `KV-FIT.md`). **Still open:** the per-row positions in `splice_cache` (a shrunk pack cannot be spliced yet), the weight of dropped rows (needs a per-row bias in attention), and the measurements on a real model.
+**Done since this plan was written:** recording the probe queries (`State::record_queries`), the value fit (`kvfit.rs`, tested on synthetic data and on a tiny model), `State::apply_policy_fitted` and the measuring command `corbul kvfit` (see `docs/KV-FIT.md`). **Still open:** the per-row positions in `splice_cache` (a shrunk pack cannot be spliced yet), the weight of dropped rows (needs a per-row bias in attention), and the measurements on a real model.
 
 Goal: keep `m < n` rows of a pack and correct them so attention over the kept rows gives (nearly) what it gave over all `n`.
 
