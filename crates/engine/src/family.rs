@@ -735,6 +735,29 @@ impl LanguageModel for SsmModel {
     }
 }
 
+impl LanguageModel for crate::gemma4::Gemma4Model {
+    type State = crate::gemma4::Gemma4State;
+    fn new_state(&self) -> Self::State {
+        crate::gemma4::Gemma4Model::new_state(self)
+    }
+    fn forward_batch(
+        &self,
+        st: &mut Self::State,
+        tokens: &[usize],
+    ) -> Result<Vec<f32>, ModelError> {
+        crate::gemma4::Gemma4Model::forward_batch(self, st, tokens)
+    }
+    fn vocab_size(&self) -> usize {
+        self.vocab()
+    }
+    fn context(&self) -> usize {
+        self.config().context
+    }
+    fn position(&self, st: &Self::State) -> usize {
+        st.pos
+    }
+}
+
 impl LanguageModel for Model {
     type State = State;
     fn new_state(&self) -> State {
@@ -820,12 +843,14 @@ pub enum AnyModel {
     Dense(Model),
     Ssm(SsmModel),
     Hybrid(crate::hybrid::HybridModel),
+    Gemma4(Box<crate::gemma4::Gemma4Model>),
 }
 #[allow(clippy::large_enum_variant)]
 pub enum AnyState {
     Dense(State),
     Ssm(SsmState),
     Hybrid(crate::hybrid::HybridState),
+    Gemma4(crate::gemma4::Gemma4State),
 }
 
 impl AnyModel {
@@ -845,6 +870,7 @@ impl AnyState {
             AnyState::Dense(s) => s.kv_bytes(),
             AnyState::Ssm(s) => s.bytes(),
             AnyState::Hybrid(s) => s.bytes(),
+            AnyState::Gemma4(s) => s.bytes(),
         }
     }
 }
@@ -855,6 +881,7 @@ impl LanguageModel for AnyModel {
             AnyModel::Dense(m) => AnyState::Dense(m.new_state()),
             AnyModel::Ssm(m) => AnyState::Ssm(m.new_state()),
             AnyModel::Hybrid(m) => AnyState::Hybrid(m.new_state()),
+            AnyModel::Gemma4(m) => AnyState::Gemma4(m.new_state()),
         }
     }
     fn forward_batch(&self, st: &mut AnyState, tokens: &[usize]) -> Result<Vec<f32>, ModelError> {
@@ -862,6 +889,7 @@ impl LanguageModel for AnyModel {
             (AnyModel::Dense(m), AnyState::Dense(s)) => m.forward_batch(s, tokens),
             (AnyModel::Ssm(m), AnyState::Ssm(s)) => m.forward_batch(s, tokens),
             (AnyModel::Hybrid(m), AnyState::Hybrid(s)) => m.forward_batch(s, tokens),
+            (AnyModel::Gemma4(m), AnyState::Gemma4(s)) => m.forward_batch(s, tokens),
             _ => Err(ModelError::Shape(
                 "the state belongs to a different model".into(),
             )),
@@ -872,6 +900,7 @@ impl LanguageModel for AnyModel {
             AnyModel::Dense(m) => LanguageModel::vocab_size(m),
             AnyModel::Ssm(m) => m.vocab,
             AnyModel::Hybrid(m) => m.vocab(),
+            AnyModel::Gemma4(m) => m.vocab(),
         }
     }
     fn context(&self) -> usize {
@@ -879,6 +908,7 @@ impl LanguageModel for AnyModel {
             AnyModel::Dense(m) => LanguageModel::context(m),
             AnyModel::Ssm(m) => m.cfg.context,
             AnyModel::Hybrid(m) => LanguageModel::context(m),
+            AnyModel::Gemma4(m) => m.config().context,
         }
     }
     fn position(&self, st: &AnyState) -> usize {
@@ -886,6 +916,7 @@ impl LanguageModel for AnyModel {
             AnyState::Dense(s) => s.pos,
             AnyState::Ssm(s) => s.pos,
             AnyState::Hybrid(s) => s.pos,
+            AnyState::Gemma4(s) => s.pos,
         }
     }
 }
@@ -998,6 +1029,11 @@ fn load_safetensors(st: SafeTensors, config: Option<String>) -> Result<AnyModel,
                 LoadOptions::default(),
             )?));
         }
+        arch::Support::Native(_) => {
+            return Err(FamilyError::Unsupported(format!(
+                "`{mt}` is only read from GGUF files here; use the .gguf of the model"
+            )));
+        }
         arch::Support::Partial(why) => {
             return Err(FamilyError::Unsupported(format!("`{mt}`: {why}")));
         }
@@ -1040,6 +1076,19 @@ pub fn load_any(path: &Path) -> Result<AnyModel, FamilyError> {
         if classify_family(&arch_name).is_some() {
             let cfg = FamilyConfig::from_gguf(&f.gguf)?;
             return Ok(AnyModel::Ssm(SsmModel::load(cfg, &f, SsmNaming::Gguf)?));
+        }
+        if matches!(arch::classify(&arch_name), arch::Support::Native(_)) {
+            let cfg = crate::gemma4::G4Config::from_gguf(&f.gguf)
+                .map_err(|e| FamilyError::Config(e.to_string()))?;
+            let src: Arc<dyn crate::loader::WeightFile> = Arc::new(f);
+            let opts = LoadOptions {
+                prefer_quantized: true,
+                mmap: true,
+                ..LoadOptions::default()
+            };
+            let m = crate::gemma4::Gemma4Model::load(cfg, &src, opts)
+                .map_err(|e| FamilyError::Load(e.to_string()))?;
+            return Ok(AnyModel::Gemma4(Box::new(m)));
         }
         let spec = arch::from_gguf(&f.gguf)?;
         let permuted = arch_name == "llama";

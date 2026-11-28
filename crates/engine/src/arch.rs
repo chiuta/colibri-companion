@@ -16,6 +16,9 @@ pub enum Support {
     /// Attention layers interleaved with state-space layers (Jamba, Bamba). Runs through
     /// [`crate::hybrid::HybridModel`] (`family::load_any`).
     Hybrid,
+    /// A model with its own implementation behind `family::load_any` (the text says which): it does
+    /// not fit the shared decoder, so it has a dedicated forward pass.
+    Native(&'static str),
     /// Some of the building blocks exist but the whole model cannot be assembled and run yet; the
     /// text says what is there and what is missing.
     Partial(&'static str),
@@ -326,6 +329,7 @@ pub fn classify(name: &str) -> Support {
         "t5" | "mt5" | "bart" | "whisper" | "bert" | "roberta" => {
             Support::Planned("encoder / encoder-decoder models")
         }
+        "gemma4" | "gemma4_text" => Support::Native("Gemma 4 (own model, GGUF)"),
         _ => Support::Planned("unknown architecture"),
     }
 }

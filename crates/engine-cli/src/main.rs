@@ -177,6 +177,7 @@ fn describe(spec: &Spec, weights: Option<u64>, budget_from: Option<&Path>) {
         Support::Hybrid => {
             outln!("support       hybrid attention + state-space — runs through the family loader")
         }
+        Support::Native(what) => outln!("support       {what} — runs through the family loader"),
         Support::Partial(why) => outln!("support       partial — {why}"),
         Support::Planned(why) => outln!("support       planned — {why}"),
     }

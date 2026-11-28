@@ -27,6 +27,7 @@ pub mod confidence;
 pub mod ctxpack;
 pub mod eval;
 pub mod family;
+pub mod gemma4;
 pub mod gguf;
 pub mod gguf_write;
 pub mod governor;

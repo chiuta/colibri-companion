@@ -31,14 +31,20 @@ pub fn wants(path: &Path) -> bool {
             };
             let mt = j.get("model_type").and_then(|v| v.as_str()).unwrap_or("");
             classify_family(mt).is_some()
-                || matches!(arch::classify(mt), Support::Recurrent | Support::Hybrid)
+                || matches!(
+                    arch::classify(mt),
+                    Support::Recurrent | Support::Hybrid | Support::Native(_)
+                )
         }
         Ok(Source::Gguf(f)) => GgufFile::open(&f)
             .ok()
             .and_then(|g| {
                 g.gguf.architecture().map(|a| {
                     classify_family(a).is_some()
-                        || matches!(arch::classify(a), Support::Recurrent | Support::Hybrid)
+                        || matches!(
+                            arch::classify(a),
+                            Support::Recurrent | Support::Hybrid | Support::Native(_)
+                        )
                 })
             })
             .unwrap_or(false),
@@ -403,5 +409,33 @@ mod tests {
             assert!(e.contains(opt), "{opt}: {e}");
         }
         std::fs::remove_dir_all(ssm).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod gemma4_route_tests {
+    use super::wants;
+    use companion_engine::gguf_write::{GgufWriter, MetaValue, TensorDesc};
+    use companion_engine::quant::DType;
+
+    fn file(arch: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("famrun-g4-{}-{arch}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("m.gguf");
+        let meta = vec![("general.architecture".to_string(), MetaValue::str(arch))];
+        let t = vec![TensorDesc::new("x", &[1], DType::F32)];
+        GgufWriter::write_all(std::fs::File::create(&p).unwrap(), &meta, t, |_, _| {
+            Ok(vec![0u8; 4])
+        })
+        .unwrap();
+        p
+    }
+
+    #[test]
+    fn gemma4_files_go_to_the_family_loader_and_other_dense_ones_do_not() {
+        assert!(wants(&file("gemma4")));
+        assert!(wants(&file("mamba")));
+        assert!(!wants(&file("llama")));
+        assert!(!wants(&file("gemma3")));
     }
 }

@@ -151,7 +151,7 @@ fn check_support(spec: &Spec) -> Result<(), String> {
             spec.family
         )),
         Support::Partial(why) => Err(format!("`{}` is only partly supported: {why}", spec.family)),
-        Support::Recurrent | Support::Hybrid => Err(format!(
+        Support::Recurrent | Support::Hybrid | Support::Native(_) => Err(format!(
             "`{}` models do not run through the dense loader; use family::load_any",
             spec.family
         )),
