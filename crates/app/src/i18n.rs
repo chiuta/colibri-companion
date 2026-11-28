@@ -14737,6 +14737,17 @@ static TABLE: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "“{}” ({}) runs directly on Companion's own engine (corbul).",
+        [
+            "« {} » ({}) tourne directement sur le moteur propre de Companion (corbul).",
+            "«{}» ({}) gira direttamente sul motore proprio di Companion (corbul).",
+            "«{}» ({}) se ejecuta directamente en el motor propio de Companion (corbul).",
+            "«{}» ({}) corre diretamente no motor próprio do Companion (corbul).",
+            "„{}“ ({}) läuft direkt auf Companions eigener Engine (corbul).",
+            "„{}” ({}) közvetlenül a Companion saját motorján (corbul) fut.",
+        ],
+    ),
+    (
         "Trying Companion's own engine (corbul).",
         [
             "Essai avec le moteur propre de Companion (corbul).",
