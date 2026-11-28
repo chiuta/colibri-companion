@@ -14989,6 +14989,17 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "A súlyok {}-a elfér a kártyán",
         ],
     ),
+    (
+        "Reading the headers…",
+        [
+            "Lecture des en-têtes…",
+            "Lettura delle intestazioni…",
+            "Leyendo las cabeceras…",
+            "A ler os cabeçalhos…",
+            "Header werden gelesen…",
+            "Fejlécek olvasása…",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {
