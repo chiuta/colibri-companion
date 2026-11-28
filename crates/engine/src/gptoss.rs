@@ -10,7 +10,9 @@
 //!
 //! Written from the published architecture. Checked on small synthetic models; **not** compared
 //! with a real gpt-oss file.
+use crate::accel::{Accel, AttachReport, Item, key_of};
 use crate::arch::RopeScaling;
+use crate::backend::Backend;
 use crate::gguf::Gguf;
 use crate::loader::{LoadOptions, TensorSource, WeightFile, load_weight};
 use crate::model::{ModelError, QWeight, Weight, rope_apply, rope_inv_freq};
@@ -207,6 +209,7 @@ pub struct GptOssModel {
     layers: Vec<Layer>,
     vocab: usize,
     rope: (Vec<f64>, f64),
+    accel: Option<Accel>,
 }
 
 #[derive(Default, Clone)]
@@ -362,6 +365,7 @@ impl GptOssModel {
             layers,
             vocab,
             rope,
+            accel: None,
         })
     }
 
@@ -376,6 +380,42 @@ impl GptOssModel {
             caches: vec![Cache::default(); self.cfg.layers],
             pos: 0,
         }
+    }
+
+    /// `out = W · x` on the device when the matrix lives there and it still works, else on the CPU.
+    fn mv(&self, w: &Weight, cols: usize, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
+        if let Some(a) = &self.accel {
+            let head = self.head.as_ref().unwrap_or(&self.embed);
+            if a.try_matvec(key_of(w), std::ptr::eq(w, head), cols, x, out) {
+                return Ok(());
+            }
+        }
+        w.matvec(cols, x, out)
+    }
+
+    /// Why the accelerator was switched off while running, if it was.
+    pub fn accel_failure(&self) -> Option<String> {
+        self.accel.as_ref().and_then(Accel::failure)
+    }
+
+    /// Put the attention matrices and the output head on `be` (the experts are read per token and
+    /// stay on the CPU). Never fails: without a usable device the CPU keeps running.
+    pub fn attach_backend(&mut self, be: Arc<dyn Backend>) -> AttachReport {
+        self.accel = None;
+        let (h, qd) = (self.cfg.hidden, self.cfg.heads * self.cfg.head_dim);
+        let head = self.head.as_ref().unwrap_or(&self.embed);
+        let mut items = vec![Item::new(head, h, true)];
+        for l in &self.layers {
+            items.extend([
+                Item::new(&l.wq, h, false),
+                Item::new(&l.wk, h, false),
+                Item::new(&l.wv, h, false),
+                Item::new(&l.wo, qd, false),
+            ]);
+        }
+        let (acc, rep) = Accel::build(be, &items);
+        self.accel = acc;
+        rep
     }
 
     fn experts(&self, l: &Layer, x: &[f32]) -> Result<Vec<f32>, ModelError> {
@@ -430,9 +470,9 @@ impl GptOssModel {
             let a = rms(&x, &l.attn_norm, eps);
             let (mut q, mut k, mut v) =
                 (vec![0.0; nh * hd], vec![0.0; nkv * hd], vec![0.0; nkv * hd]);
-            l.wq.matvec(h, &a, &mut q)?;
-            l.wk.matvec(h, &a, &mut k)?;
-            l.wv.matvec(h, &a, &mut v)?;
+            self.mv(&l.wq, h, &a, &mut q)?;
+            self.mv(&l.wk, h, &a, &mut k)?;
+            self.mv(&l.wv, h, &a, &mut v)?;
             for (t, b) in [(&mut q, &l.bq), (&mut k, &l.bk), (&mut v, &l.bv)] {
                 t.iter_mut().zip(b).for_each(|(a, b)| *a += b);
             }
@@ -486,7 +526,7 @@ impl GptOssModel {
                 }
             }
             let mut proj = vec![0.0; h];
-            l.wo.matvec(nh * hd, &att, &mut proj)?;
+            self.mv(&l.wo, nh * hd, &att, &mut proj)?;
             proj.iter_mut().zip(&l.bo).for_each(|(a, b)| *a += b);
             x.iter_mut().zip(&proj).for_each(|(a, b)| *a += b);
             let f = self.experts(l, &rms(&x, &l.ffn_norm, eps))?;
@@ -498,10 +538,12 @@ impl GptOssModel {
         }
         let xn = rms(&x, &self.final_norm, eps);
         let mut logits = vec![0.0; self.vocab];
-        self.head
-            .as_ref()
-            .unwrap_or(&self.embed)
-            .matvec(h, &xn, &mut logits)?;
+        self.mv(
+            self.head.as_ref().unwrap_or(&self.embed),
+            h,
+            &xn,
+            &mut logits,
+        )?;
         Ok(logits)
     }
 
@@ -796,6 +838,26 @@ mod tests {
         assert_eq!(r.iter().map(|p| p.0).collect::<Vec<_>>(), [1, 3]);
         assert!((r.iter().map(|p| p.1).sum::<f32>() - 1.0).abs() < 1e-6);
         assert!(r[0].1 > r[1].1);
+    }
+
+    #[test]
+    fn accelerator_matches_the_cpu_and_falls_back_on_failure() {
+        use crate::accel::testbe::Odd;
+        let mut m = open(Opt::new(), false);
+        let cpu = run(&m, &TOKS);
+        let rep = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        assert!(rep.active && rep.matrices > 4, "{rep:?}");
+        for (x, y) in run(&m, &TOKS).iter().zip(&cpu) {
+            assert!((x - y).abs() < 1e-4);
+        }
+        assert!(m.accel_failure().is_none());
+        m.attach_backend(Odd::new(8, 1.0, None));
+        let r = run(&m, &TOKS);
+        assert!(m.accel_failure().is_some());
+        for (x, y) in r.iter().zip(&cpu) {
+            assert!((x - y).abs() < 1e-4);
+        }
+        assert!(!m.attach_backend(Odd::new(usize::MAX, 1.5, None)).active);
     }
 
     #[test]

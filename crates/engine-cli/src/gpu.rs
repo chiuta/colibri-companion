@@ -102,6 +102,7 @@ pub fn accelerate_family(model: &mut AnyModel) {
         let rep = match model {
             AnyModel::Gemma4(g) => g.attach_backend(d.backend.clone()),
             AnyModel::Legacy(g) => g.attach_backend(d.backend.clone()),
+            AnyModel::GptOss(g) => g.attach_backend(d.backend.clone()),
             _ => return,
         };
         say(
