@@ -93,9 +93,58 @@ pub fn load_tokenizer(path: &Path) -> Result<(Tokenizer, String), String> {
     })
 }
 
+/// Put a model's big matrices on the GPU when the build has one and the user did not say
+/// `ENGINE_BACKEND=cpu`. Never an error: whatever goes wrong, the model keeps running on the CPU.
+#[cfg(feature = "gpu")]
+fn accelerate(model: &mut AnyModel) {
+    use companion_engine::backend::Preference;
+    let AnyModel::Gemma4(g) = model else { return };
+    let pref = Preference::from_env();
+    if pref == Preference::Cpu {
+        return;
+    }
+    let hp = companion_engine::hw::HardwareProfile::detect(None);
+    let opened = companion_engine_gpu::runtime::open(
+        &hp,
+        pref,
+        &companion_engine_gpu::runtime::RuntimeOptions::default(),
+    );
+    if !opened.gpu {
+        if pref == Preference::Gpu {
+            for l in &opened.diagnostics {
+                eprintln!("corbul: {l}");
+            }
+        }
+        return;
+    }
+    let rep = g.attach_backend(opened.backend);
+    if rep.active {
+        eprintln!(
+            "corbul: GPU ({}): {}/{} matrices on the device ({} MiB){}",
+            opened.description,
+            rep.matrices,
+            rep.total,
+            rep.bytes >> 20,
+            if rep.note.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", rep.note)
+            }
+        );
+    } else {
+        eprintln!(
+            "corbul: the GPU is not used ({}); running on the CPU",
+            rep.note
+        );
+    }
+}
+#[cfg(not(feature = "gpu"))]
+fn accelerate(_model: &mut AnyModel) {}
+
 pub fn open(path: &Path) -> Result<Fam, String> {
     let (tok, name) = load_tokenizer(path)?;
-    let model = family::load_any(path).map_err(|e| e.to_string())?;
+    let mut model = family::load_any(path).map_err(|e| e.to_string())?;
+    accelerate(&mut model);
     let vocab = model.vocab_size();
     let mut stop = vec![];
     if let Some(e) = tok.eos {

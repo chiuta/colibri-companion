@@ -22,3 +22,5 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 [features]
 # `doctor` and `capabilities` also print the GPU capability report (the CPU does all the inference either way)
 gpu = ["dep:companion-engine-gpu"]
+# the device runner itself (wgpu: Vulkan / Metal / DX12); Gemma 4 then puts its big matrices on the GPU
+wgpu = ["gpu", "companion-engine-gpu/wgpu"]
