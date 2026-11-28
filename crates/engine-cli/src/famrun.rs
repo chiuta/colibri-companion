@@ -11,6 +11,7 @@
 use crate::args::Args;
 use crate::load::{Source, resolve};
 use crate::runner::GenOut;
+use crate::template::{Builtin, ChatTemplate};
 use companion_engine::arch::{self, Support};
 use companion_engine::family::{self, AnyModel, AnyState, LanguageModel, classify_family};
 use companion_engine::loader::GgufFile;
@@ -75,8 +76,16 @@ pub fn load_tokenizer(path: &Path) -> Result<(Tokenizer, String), String> {
         }
         Source::Gguf(f) => {
             let g = GgufFile::open(&f).map_err(|e| e.to_string())?;
+            let beside = f.with_file_name("tokenizer.json");
+            let tok = match Tokenizer::from_gguf(&g.gguf) {
+                Ok(t) => t,
+                // a GGUF without its own vocabulary can use a tokenizer.json lying next to it
+                Err(e) if beside.is_file() => Tokenizer::from_file(&beside)
+                    .map_err(|e2| format!("tokenizer in the GGUF: {e}; tokenizer.json: {e2}"))?,
+                Err(e) => return Err(format!("tokenizer in the GGUF: {e}")),
+            };
             (
-                Tokenizer::from_gguf(&g.gguf).map_err(|e| format!("tokenizer in the GGUF: {e}"))?,
+                tok,
                 f.file_stem()
                     .map_or("model".into(), |n| n.to_string_lossy().into_owned()),
             )
@@ -92,7 +101,25 @@ pub fn open(path: &Path) -> Result<Fam, String> {
     if let Some(e) = tok.eos {
         stop.push(e as usize);
     }
-    for t in ["<|endoftext|>", "<|im_end|>", "</s>"] {
+    if let Ok(Source::Gguf(p)) = resolve(path)
+        && let Ok(g) = GgufFile::open(&p)
+    {
+        for k in ["tokenizer.ggml.eot_token_id", "tokenizer.ggml.eom_token_id"] {
+            if let Some(i) = g.gguf.meta.get(k).and_then(|v| v.as_u64())
+                && !stop.contains(&(i as usize))
+            {
+                stop.push(i as usize);
+            }
+        }
+    }
+    for t in [
+        "<|endoftext|>",
+        "<|im_end|>",
+        "</s>",
+        "<end_of_turn>",
+        "<turn|>",
+        "<|eot_id|>",
+    ] {
         if let Some(i) = tok.token_to_id(t)
             && !stop.contains(&(i as usize))
         {
@@ -106,6 +133,68 @@ pub fn open(path: &Path) -> Result<Fam, String> {
         stop,
         name,
     })
+}
+
+/// The chat template of a model folder or GGUF, the text of its beginning and end tokens, any
+/// warnings, and the architecture name.
+#[allow(clippy::type_complexity)]
+pub fn template_of(
+    path: &Path,
+    tok: &Tokenizer,
+) -> Result<(ChatTemplate, String, String, Vec<String>, String), String> {
+    let (src, arch, cfg): (Option<String>, String, Option<serde_json::Value>) = match resolve(path)?
+    {
+        Source::Gguf(f) => {
+            let g = GgufFile::open(&f).map_err(|e| e.to_string())?;
+            (
+                g.gguf
+                    .meta
+                    .get("tokenizer.chat_template")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                g.gguf.architecture().unwrap_or("").to_string(),
+                None,
+            )
+        }
+        Source::HfDir(d) => {
+            let read = |n: &str| {
+                std::fs::read_to_string(d.join(n))
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            };
+            let cfg = read("tokenizer_config.json");
+            let mut t = cfg.as_ref().and_then(crate::load::template_from_config);
+            if t.is_none() {
+                t = std::fs::read_to_string(d.join("chat_template.jinja")).ok();
+            }
+            let arch = read("config.json")
+                .and_then(|j| {
+                    j.get("model_type")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            (t, arch, cfg)
+        }
+    };
+    let text = |key: &str, id: Option<u32>| -> String {
+        cfg.as_ref()
+            .and_then(|c| c.get(key))
+            .and_then(|v| match v {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Object(o) => o
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                _ => None,
+            })
+            .or_else(|| id.and_then(|i| tok.id_to_token(i).map(str::to_string)))
+            .unwrap_or_default()
+    };
+    let (bos, eos) = (text("bos_token", tok.bos), text("eos_token", tok.eos));
+    let builtin = Builtin::detect(&arch, &|t| tok.token_to_id(t).is_some());
+    let (template, warn) = ChatTemplate::from_source(src.as_deref(), builtin);
+    Ok((template, bos, eos, warn.into_iter().collect(), arch))
 }
 
 fn sampler_of(args: &Args) -> Result<(Sampler, usize), String> {

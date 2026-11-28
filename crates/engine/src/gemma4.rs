@@ -818,28 +818,46 @@ impl Gemma4Model {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::family::{self, AnyModel, LanguageModel};
+/// A tiny Gemma-4-shaped GGUF writer for tests (here and in the CLI crate): random weights, every
+/// feature switched on by default (mixture-of-experts, per-layer embeddings, shared K/V, keys equal
+/// to values on global layers, proportional RoPE). Not part of the public interface.
+#[doc(hidden)]
+pub mod demo {
     use crate::gguf_write::{GgufWriter, MetaValue as M, TensorDesc};
-    use crate::model::tests::q8_0_encode;
     use crate::quant::DType;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::path::Path;
+
+    fn q8_0_encode(w: &[f32]) -> Vec<u8> {
+        let mut o = vec![];
+        for blk in w.chunks(32) {
+            let d = blk.iter().fold(0f32, |a, v| a.max(v.abs())) / 127.0;
+            let dh = crate::model::f32_to_f16(d);
+            let dd = crate::quant::f16_to_f32(dh);
+            o.extend(dh.to_le_bytes());
+            for v in blk {
+                o.push(if dd > 0.0 {
+                    (v / dd).round().clamp(-127.0, 127.0)
+                } else {
+                    0.0
+                } as i8 as u8);
+            }
+        }
+        o
+    }
 
     #[derive(Clone)]
-    struct Opt {
-        sliding: Vec<bool>,
-        shared: usize,
-        ple: usize,
-        experts: usize,
-        quant: bool,
-        seed: u64,
-        window: u64,
+    pub struct Opt {
+        pub sliding: Vec<bool>,
+        pub shared: usize,
+        pub ple: usize,
+        pub experts: usize,
+        pub quant: bool,
+        pub seed: u64,
+        pub window: u64,
+        pub vocab: usize,
     }
     impl Opt {
-        fn full() -> Opt {
+        pub fn full() -> Opt {
             Opt {
                 sliding: vec![true, true, false, true, true, false],
                 shared: 2,
@@ -848,25 +866,15 @@ mod tests {
                 quant: false,
                 seed: 7,
                 window: 4,
+                vocab: 40,
             }
         }
     }
-    const H: usize = 32;
-    const V: usize = 40;
-    const FF: usize = 32;
-    const HD_S: usize = 8;
-    const HD_F: usize = 16;
+    pub const H: usize = 32;
+    pub const FF: usize = 32;
+    pub const HD_S: usize = 8;
+    pub const HD_F: usize = 16;
 
-    fn dir() -> PathBuf {
-        static N: AtomicU32 = AtomicU32::new(0);
-        let d = std::env::temp_dir().join(format!(
-            "g4-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
     struct Rng(u64);
     impl Rng {
         fn f(&mut self) -> f32 {
@@ -887,7 +895,8 @@ mod tests {
     }
 
     /// Write a small Gemma-4-shaped GGUF. `exp_dtype` selects how the fused expert tensors are stored.
-    fn write(path: &Path, o: &Opt, as_f32: bool) {
+    pub fn write(path: &Path, o: &Opt, as_f32: bool) {
+        let v = o.vocab;
         let layers = o.sliding.len();
         let first_shared = layers - o.shared;
         let mut r = Rng(o.seed | 1);
@@ -901,13 +910,13 @@ mod tests {
                 f32b(&data),
             ));
         };
-        f("token_embd.weight".into(), &[V, H], r.mat(V * H));
+        f("token_embd.weight".into(), &[v, H], r.mat(v * H));
         f("output_norm.weight".into(), &[H], r.norm(H));
         if o.ple > 0 {
             f(
                 "per_layer_token_embd.weight".into(),
-                &[V, layers * o.ple],
-                r.mat(V * layers * o.ple),
+                &[v, layers * o.ple],
+                r.mat(v * layers * o.ple),
             );
             f(
                 "per_layer_model_proj.weight".into(),
@@ -1039,6 +1048,29 @@ mod tests {
         let file = std::fs::File::create(path).unwrap();
         GgufWriter::write_all(file, &meta, descs, |i, _| Ok(t[i].3.clone())).unwrap();
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::demo::{FF, H, HD_F, Opt, write};
+    use super::*;
+    use crate::family::{self, AnyModel, LanguageModel};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    const V: usize = 40;
+
+    fn dir() -> PathBuf {
+        static N: AtomicU32 = AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "g4-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
     fn open(o: &Opt, as_f32: bool) -> (AnyModel, PathBuf) {
         let d = dir();
         let p = d.join("tiny-gemma4.gguf");

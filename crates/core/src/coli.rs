@@ -1147,6 +1147,44 @@ pub fn imported_dir(first: &Path, after: std::time::SystemTime) -> Option<PathBu
         .map(|(_, p)| p)
 }
 
+/// Architectures colibri does not run but corbul (Companion's own engine) does, so a GGUF of one
+/// of them goes straight to corbul without a failed import first. `llama`, `mistral`, the Qwen,
+/// DeepSeek and GLM families are left out on purpose: colibri may run some of those, and it is
+/// tried first for them.
+pub const CORBUL_FIRST: &[&str] = &[
+    "gemma",
+    "gemma2",
+    "gemma3",
+    "gemma3_text",
+    "gemma4",
+    "phi",
+    "phi3",
+    "olmo",
+    "olmo2",
+    "granite",
+    "cohere",
+    "cohere2",
+    "internlm2",
+    "stablelm",
+    "starcoder2",
+    "exaone",
+    "baichuan",
+    "minicpm",
+    "smollm3",
+    "mamba",
+    "mamba2",
+    "falcon_mamba",
+    "rwkv6",
+    "rwkv7",
+    "jamba",
+    "bamba",
+];
+
+/// Does `arch` (a `general.architecture`, any case) belong to the families that skip colibri?
+pub fn corbul_first(arch: &str) -> bool {
+    CORBUL_FIRST.contains(&arch.to_ascii_lowercase().as_str())
+}
+
 /// The `general.architecture` a GGUF file declares (`gemma4`, `qwen3moe`, …), read from its header
 /// only. `None` for anything that is not a well-formed GGUF header.
 pub fn gguf_arch(path: &Path) -> Option<String> {
@@ -1550,6 +1588,25 @@ mod plan_tests {
 
 #[cfg(test)]
 mod hardening_tests {
+    #[test]
+    fn gemma_and_the_recurrent_families_skip_colibri_but_its_own_families_do_not() {
+        use super::corbul_first;
+        for a in ["gemma4", "Gemma3", "mamba2", "rwkv7", "phi3"] {
+            assert!(corbul_first(a), "{a}");
+        }
+        for a in [
+            "qwen3moe",
+            "deepseek2",
+            "glm4moe",
+            "llama",
+            "mistral3",
+            "",
+            "unknown",
+        ] {
+            assert!(!corbul_first(a), "{a}");
+        }
+    }
+
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {

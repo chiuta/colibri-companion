@@ -997,6 +997,27 @@ impl CompanionApp {
                 return;
             }
         }
+        // a family colibri does not run (Gemma…) but corbul does: no import that is bound to fail
+        if path.is_file()
+            && self.corbul_bin.is_some()
+            && let Some(arch) = companion_core::coli::gguf_arch(&path)
+            && companion_core::coli::corbul_first(&arch)
+        {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let m = self
+                .t(
+                    "«{}» ({}) rulează direct cu motorul propriu (corbul).",
+                    "“{}” ({}) runs directly on Companion's own engine (corbul).",
+                )
+                .replacen("{}", &name, 1)
+                .replacen("{}", &arch, 1);
+            self.toast(m);
+            self.run_with_corbul(path);
+            return;
+        }
         if (self.server_ready()
             || matches!(self.health, Health::Loading(_))
             || self.starting_since.is_some())

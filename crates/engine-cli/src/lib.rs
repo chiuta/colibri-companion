@@ -45,6 +45,7 @@ pub mod cmds;
 pub mod constraint;
 pub mod enc_cmd;
 pub mod famrun;
+pub mod famserve;
 pub mod fast;
 pub mod genloop;
 pub mod http;

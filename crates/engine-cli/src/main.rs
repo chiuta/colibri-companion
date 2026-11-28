@@ -440,6 +440,11 @@ fn open_model(args: &Args) -> Result<load::Loaded, String> {
 // ------------------------------------------------------------------------------ serve
 
 fn serve_cmd(args: &Args) -> Result<(), String> {
+    if let Some(p) = args.pos.first()
+        && corbul::famrun::wants(Path::new(p))
+    {
+        return corbul::famserve::serve(args);
+    }
     let load_cfg: LoadCfg = cmds::load_cfg(args)?;
     let reg_cfg = RegCfg {
         load: load_cfg,
