@@ -4,6 +4,7 @@ Companion starts **corbul**, its own engine, for every GGUF that colibri cannot 
 
 ## What corbul runs
 - **Gemma 4** (E2B, E4B, 26B-A4B mixture-of-experts, 31B), from a `.gguf`: mixed sliding and global attention, per-layer head sizes, keys used as values on global layers, proportional RoPE, shared K/V in the last layers, per-layer embeddings, the dense MLP next to the routed experts, final logit soft-capping.
+- **GPT-2, GPT-J, GPT-NeoX/Pythia, Falcon, BLOOM, MPT**, from a `.gguf`: LayerNorm, fused or separate QKV, learned / rotary / ALiBi positions, parallel residual. Tested on small synthetic models only. OPT has no GGUF conversion.
 - **Gemma 1–3, Phi, OLMo, Granite, Cohere, InternLM2, StableLM, StarCoder2, EXAONE, Baichuan, MiniCPM, SmolLM3**, Llama and Mistral, Qwen and the other mixture-of-experts families the engine already had.
 - **Mamba, Mamba-2, RWKV-6/7, Jamba, Bamba** (recurrent and hybrid).
 
@@ -16,4 +17,4 @@ Tool calls, structured output, several answers per request, embeddings, context 
 All of it is tested on **small synthetic models** (their own invariants: caching equals recomputing, sliding windows, shared K/V, routing, quantised experts, the HTTP replies). **Nothing was compared with a real Gemma 4 file.** If the answers of a real file look wrong, run `corbul serve FILE.gguf` yourself and send its output; the first thing to check is the sliding/global pattern and the RoPE tables.
 
 ## Still not supported
-Falcon, GPT-2/J/NeoX, OPT, BLOOM, MPT, gpt-oss, GraniteMoE, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, the full DeepSeek model, MiniMax, Zamba, encoder-decoder models. For them corbul says so by name and does not guess.
+OPT, gpt-oss, GraniteMoE, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, the full DeepSeek model, MiniMax, Zamba, encoder-decoder models. For them corbul says so by name and does not guess.

@@ -844,6 +844,7 @@ pub enum AnyModel {
     Ssm(SsmModel),
     Hybrid(crate::hybrid::HybridModel),
     Gemma4(Box<crate::gemma4::Gemma4Model>),
+    Legacy(Box<crate::legacy::LegacyModel>),
 }
 #[allow(clippy::large_enum_variant)]
 pub enum AnyState {
@@ -851,6 +852,7 @@ pub enum AnyState {
     Ssm(SsmState),
     Hybrid(crate::hybrid::HybridState),
     Gemma4(crate::gemma4::Gemma4State),
+    Legacy(crate::legacy::LegacyState),
 }
 
 impl AnyModel {
@@ -871,6 +873,7 @@ impl AnyState {
             AnyState::Ssm(s) => s.bytes(),
             AnyState::Hybrid(s) => s.bytes(),
             AnyState::Gemma4(s) => s.bytes(),
+            AnyState::Legacy(s) => s.bytes(),
         }
     }
 }
@@ -882,6 +885,7 @@ impl LanguageModel for AnyModel {
             AnyModel::Ssm(m) => AnyState::Ssm(m.new_state()),
             AnyModel::Hybrid(m) => AnyState::Hybrid(m.new_state()),
             AnyModel::Gemma4(m) => AnyState::Gemma4(m.new_state()),
+            AnyModel::Legacy(m) => AnyState::Legacy(m.new_state()),
         }
     }
     fn forward_batch(&self, st: &mut AnyState, tokens: &[usize]) -> Result<Vec<f32>, ModelError> {
@@ -890,6 +894,7 @@ impl LanguageModel for AnyModel {
             (AnyModel::Ssm(m), AnyState::Ssm(s)) => m.forward_batch(s, tokens),
             (AnyModel::Hybrid(m), AnyState::Hybrid(s)) => m.forward_batch(s, tokens),
             (AnyModel::Gemma4(m), AnyState::Gemma4(s)) => m.forward_batch(s, tokens),
+            (AnyModel::Legacy(m), AnyState::Legacy(s)) => m.forward_batch(s, tokens),
             _ => Err(ModelError::Shape(
                 "the state belongs to a different model".into(),
             )),
@@ -901,6 +906,7 @@ impl LanguageModel for AnyModel {
             AnyModel::Ssm(m) => m.vocab,
             AnyModel::Hybrid(m) => m.vocab(),
             AnyModel::Gemma4(m) => m.vocab(),
+            AnyModel::Legacy(m) => m.vocab(),
         }
     }
     fn context(&self) -> usize {
@@ -909,6 +915,7 @@ impl LanguageModel for AnyModel {
             AnyModel::Ssm(m) => m.cfg.context,
             AnyModel::Hybrid(m) => LanguageModel::context(m),
             AnyModel::Gemma4(m) => m.config().context,
+            AnyModel::Legacy(m) => m.config().context,
         }
     }
     fn position(&self, st: &AnyState) -> usize {
@@ -917,6 +924,7 @@ impl LanguageModel for AnyModel {
             AnyState::Ssm(s) => s.pos,
             AnyState::Hybrid(s) => s.pos,
             AnyState::Gemma4(s) => s.pos,
+            AnyState::Legacy(s) => s.pos,
         }
     }
 }
@@ -1076,6 +1084,19 @@ pub fn load_any(path: &Path) -> Result<AnyModel, FamilyError> {
         if classify_family(&arch_name).is_some() {
             let cfg = FamilyConfig::from_gguf(&f.gguf)?;
             return Ok(AnyModel::Ssm(SsmModel::load(cfg, &f, SsmNaming::Gguf)?));
+        }
+        if crate::legacy::handles(&arch_name) {
+            let cfg = crate::legacy::LegacyConfig::from_gguf(&f.gguf)
+                .map_err(|e| FamilyError::Config(e.to_string()))?;
+            let src: Arc<dyn crate::loader::WeightFile> = Arc::new(f);
+            let opts = LoadOptions {
+                prefer_quantized: true,
+                mmap: true,
+                ..LoadOptions::default()
+            };
+            let m = crate::legacy::LegacyModel::load(cfg, &src, opts)
+                .map_err(|e| FamilyError::Load(e.to_string()))?;
+            return Ok(AnyModel::Legacy(Box::new(m)));
         }
         if matches!(arch::classify(&arch_name), arch::Support::Native(_)) {
             let cfg = crate::gemma4::G4Config::from_gguf(&f.gguf)

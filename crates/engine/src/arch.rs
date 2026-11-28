@@ -292,12 +292,10 @@ pub fn classify(name: &str) -> Support {
         | "gemma3_text" | "phi" | "phi3" | "olmo" | "olmo2" | "granite" | "cohere" | "cohere2"
         | "command-r" | "internlm2" | "yi" | "smollm3" | "stablelm" | "starcoder2" | "exaone"
         | "glm" | "glm4" | "baichuan" | "minicpm" => Support::Standard,
-        "falcon" | "gpt_neox" | "gptneox" => {
-            Support::Planned("fused interleaved QKV tensor layout")
+        "falcon" | "gpt_neox" | "gptneox" | "gpt2" | "gptj" | "bloom" | "mpt" => {
+            Support::Native("GPT-2 / GPT-J / GPT-NeoX / Falcon / BLOOM / MPT (own model, GGUF)")
         }
-        "gpt2" | "gptj" | "opt" | "bloom" | "mpt" => {
-            Support::Planned("learned or ALiBi position scheme")
-        }
+        "opt" => Support::Planned("OPT has no GGUF conversion"),
         "mixtral" | "qwen2_moe" | "qwen2moe" | "qwen3_moe" | "qwen3moe" => Support::Moe,
         "olmoe" => Support::Planned("OLMoE normalises whole q/k projections, not heads"),
         "gpt_oss" | "gpt-oss" | "gptoss" => {
@@ -1116,7 +1114,7 @@ mod tests {
             ),
             (NormKind::Layer, false, true, Act::Gelu, 4)
         );
-        assert!(matches!(n.support, Support::Planned(_)));
+        assert!(matches!(n.support, Support::Native(_)));
         let sc = from_hf_config(r#"{"model_type":"starcoder2","hidden_size":64,"num_hidden_layers":2,"num_attention_heads":4,"use_bias":true,"norm_epsilon":1e-5,"hidden_act":"gelu_pytorch_tanh"}"#).unwrap();
         assert_eq!(
             (

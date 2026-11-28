@@ -40,6 +40,7 @@ pub mod kvfit;
 pub mod kvmap;
 pub mod kvpolicy;
 pub mod lang;
+pub mod legacy;
 pub mod loader;
 pub mod lora;
 pub mod merge;
