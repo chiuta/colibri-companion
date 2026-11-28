@@ -306,15 +306,17 @@ pub fn classify(name: &str) -> Support {
         | "glm" | "glm4" | "baichuan" | "minicpm" | "granitemoe" | "glm4moe" | "glm4_moe" => {
             Support::Standard
         }
-        "falcon" | "gpt_neox" | "gptneox" | "gpt2" | "gptj" | "bloom" | "mpt" => {
-            Support::Native("GPT-2 / GPT-J / GPT-NeoX / Falcon / BLOOM / MPT (own model, GGUF)")
-        }
+        "falcon" | "gpt_neox" | "gptneox" | "gpt2" | "gptj" | "bloom" | "mpt" | "dbrx"
+        | "phimoe" => Support::Native(
+            "GPT-2 / GPT-J / GPT-NeoX / Falcon / BLOOM / MPT / DBRX / Phi-3.5-MoE (own model, GGUF)",
+        ),
         "opt" => Support::Planned("OPT has no GGUF conversion"),
         "mixtral" | "qwen2_moe" | "qwen2moe" | "qwen3_moe" | "qwen3moe" => Support::Moe,
         "olmoe" => Support::Planned("OLMoE normalises whole q/k projections, not heads"),
         "gpt_oss" | "gpt-oss" | "gptoss" => Support::Native("gpt-oss (own model, GGUF)"),
-        "phimoe" | "dbrx" | "arctic" | "jamba_moe" | "llama4" | "hunyuan_moe" | "ernie4_5_moe"
-        | "grok" => Support::Planned("this mixture-of-experts layout"),
+        "arctic" | "jamba_moe" | "llama4" | "hunyuan_moe" | "ernie4_5_moe" | "grok" => {
+            Support::Planned("this mixture-of-experts layout")
+        }
         // multi-head latent attention exists as a module (mla.rs), the DeepSeek model around it does not
         "deepseek_v2" | "deepseek_v3" | "deepseek2" | "kimi_k2" => Support::Partial(
             "multi-head latent attention is implemented (mla.rs, absorbed and naive), but the full DeepSeek model — MLA layers, dense first layers, shared and routed experts — is not assembled or loadable yet",

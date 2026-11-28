@@ -5,6 +5,7 @@ Companion avvia **corbul**, il motore proprio, per ogni GGUF che colibri non pu�
 ## Cosa esegue corbul
 - **Gemma 4** (E2B, E4B, 26B-A4B con esperti, 31B), da un `.gguf`: attenzione mista scorrevole e globale, dimensioni della testa per strato, chiavi usate come valori sugli strati globali, RoPE proporzionale, K/V condiviso negli ultimi strati, embedding per strato, l'MLP denso accanto agli esperti instradati, limite dei logit finali.
 - **GPT-2, GPT-J, GPT-NeoX/Pythia, Falcon, BLOOM, MPT**, da un `.gguf`: LayerNorm, QKV fuso o separato, posizioni apprese / rotative / ALiBi, residuo parallelo. Provati solo su piccoli modelli sintetici. OPT non ha conversione GGUF.
+- **DBRX, Phi-3.5-MoE**, da un `.gguf` (modello proprio, esperti letti per token). Phi-3.5-MoE usa solo i fattori rope corti, quindi i contesti oltre 4096 non sono ancora scalati. Solo test sintetici.
 - **gpt-oss (20B, 120B)**, da un `.gguf` (esperti MXFP4 inclusi): attention sink, finestra scorrevole, YaRN, attivazione dell'esperto limitata. Provato solo su piccoli modelli sintetici. **GraniteMoE, GLM-4.5/4.6 MoE**: anch'essi da `.gguf`.
 - **Gemma 1–3, Phi, OLMo, Granite, Cohere, InternLM2, StableLM, StarCoder2, EXAONE, Baichuan, MiniCPM, SmolLM3**, Llama e Mistral, Qwen e le altre famiglie con esperti che il motore aveva già.
 - **Mamba, Mamba-2, RWKV-6/7, Jamba, Bamba** (ricorrenti e ibridi).
@@ -18,4 +19,4 @@ Chiamate a strumenti, output strutturato, più risposte per richiesta, embedding
 Tutto è provato su **piccoli modelli sintetici** (invarianti proprie: cache uguale al ricalcolo, finestre scorrevoli, K/V condiviso, instradamento, esperti quantizzati, le risposte HTTP). **Nulla è stato confrontato con un vero file Gemma 4.** Se le risposte di un file reale sembrano sbagliate, esegui tu stesso `corbul serve FILE.gguf` e invia l'output; si controllano prima lo schema scorrevole/globale e le tabelle RoPE.
 
 ## Ancora non supportati
-OPT, PhiMoE, DBRX, Llama 4, Hunyuan, Ernie-MoE, Grok, il modello DeepSeek completo, MiniMax, Zamba, modelli encoder-decoder. corbul li nomina e non indovina.
+OPT, Llama 4, Hunyuan, Ernie-MoE, Grok, il modello DeepSeek completo, MiniMax, Zamba, modelli encoder-decoder. corbul li nomina e non indovina.

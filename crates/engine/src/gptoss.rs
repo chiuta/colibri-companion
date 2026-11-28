@@ -134,6 +134,30 @@ struct Bank {
     ff: usize,
     mmap: bool,
 }
+/// `rows × cols` values of tensor `name` starting at element `start`, kept quantised when the file
+/// stores them so (one expert out of a stacked tensor).
+pub(crate) fn slice_weight(
+    src: &Arc<dyn WeightFile>,
+    name: &str,
+    start: usize,
+    rows: usize,
+    cols: usize,
+    mmap: bool,
+) -> Result<Weight, String> {
+    if let Some(r) = src
+        .read_range_raw(name, start, rows, cols, mmap)
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(Weight::Quant(
+            QWeight::new(r.dtype, r.rows, r.cols, r.bytes).map_err(|e| e.to_string())?,
+        ));
+    }
+    Ok(Weight::Dense(
+        src.read_range(name, start, rows * cols)
+            .map_err(|e| e.to_string())?,
+    ))
+}
+
 impl Bank {
     fn weight(
         &self,
@@ -142,20 +166,7 @@ impl Bank {
         rows: usize,
         cols: usize,
     ) -> Result<Weight, GptOssError> {
-        if let Some(r) = self
-            .src
-            .read_range_raw(name, start, rows, cols, self.mmap)
-            .map_err(load_err)?
-        {
-            return Ok(Weight::Quant(
-                QWeight::new(r.dtype, r.rows, r.cols, r.bytes).map_err(load_err)?,
-            ));
-        }
-        Ok(Weight::Dense(
-            self.src
-                .read_range(name, start, rows * cols)
-                .map_err(load_err)?,
-        ))
+        slice_weight(&self.src, name, start, rows, cols, self.mmap).map_err(GptOssError::Load)
     }
     fn bias(&self, name: &str, e: usize, n: usize) -> Result<Vec<f32>, GptOssError> {
         self.src.read_range(name, e * n, n).map_err(load_err)

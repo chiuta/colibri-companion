@@ -5,6 +5,7 @@ Companion pornește **corbul**, motorul propriu, pentru orice GGUF pe care colib
 ## Ce rulează corbul
 - **Gemma 4** (E2B, E4B, 26B-A4B cu experți, 31B), dintr-un `.gguf`: atenție mixtă glisantă și globală, dimensiuni de cap pe strat, chei folosite ca valori pe straturile globale, RoPE proporțional, K/V partajat în ultimele straturi, embeddinguri pe strat, MLP-ul dens lângă experții rutați, limitarea logiturilor finale.
 - **GPT-2, GPT-J, GPT-NeoX/Pythia, Falcon, BLOOM, MPT**, dintr-un `.gguf`: LayerNorm, QKV fuzionat sau separat, poziții învățate / rotative / ALiBi, rezidual paralel. Testate doar pe modele sintetice mici. OPT nu are conversie GGUF.
+- **DBRX, Phi-3.5-MoE**, dintr-un `.gguf` (model propriu, experți citiți per token). Phi-3.5-MoE folosește doar factorii rope scurți, deci contextele peste 4096 nu sunt încă scalate. Doar teste sintetice.
 - **gpt-oss (20B, 120B)**, dintr-un `.gguf` (inclusiv experți MXFP4): sink-uri de atenție, fereastră glisantă, YaRN, activare de expert limitată. Testat doar pe modele sintetice mici. **GraniteMoE, GLM-4.5/4.6 MoE**: tot din `.gguf`.
 - **Gemma 1–3, Phi, OLMo, Granite, Cohere, InternLM2, StableLM, StarCoder2, EXAONE, Baichuan, MiniCPM, SmolLM3**, Llama și Mistral, Qwen și celelalte familii cu experți pe care motorul le avea deja.
 - **Mamba, Mamba-2, RWKV-6/7, Jamba, Bamba** (recurente și hibride).
@@ -18,4 +19,4 @@ Apeluri de unelte, ieșire structurată, mai multe răspunsuri per cerere, embed
 Totul e testat pe **modele sintetice mici** (invariante proprii: cache egal cu recalculare, ferestre glisante, K/V partajat, rutare, experți cuantizați, răspunsurile HTTP). **Nimic nu a fost comparat cu un fișier Gemma 4 real.** Dacă răspunsurile unui fișier real par greșite, rulează singur `corbul serve FIȘIER.gguf` și trimite ieșirea; primul lucru de verificat sunt tiparul glisant/global și tabelele RoPE.
 
 ## Încă nesuportate
-OPT, PhiMoE, DBRX, Llama 4, Hunyuan, Ernie-MoE, Grok, modelul DeepSeek complet, MiniMax, Zamba, modelele encoder-decoder. Pentru ele corbul spune pe nume că nu merg și nu ghicește.
+OPT, Llama 4, Hunyuan, Ernie-MoE, Grok, modelul DeepSeek complet, MiniMax, Zamba, modelele encoder-decoder. Pentru ele corbul spune pe nume că nu merg și nu ghicește.

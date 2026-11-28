@@ -38,7 +38,7 @@ fn load_err(e: impl std::fmt::Display) -> LegacyError {
 pub fn handles(arch: &str) -> bool {
     matches!(
         arch,
-        "gpt2" | "gptj" | "gptneox" | "gpt_neox" | "falcon" | "bloom" | "mpt"
+        "gpt2" | "gptj" | "gptneox" | "gpt_neox" | "falcon" | "bloom" | "mpt" | "dbrx" | "phimoe"
     )
 }
 
@@ -50,6 +50,10 @@ pub enum Fam {
     Falcon,
     Bloom,
     Mpt,
+    /// Databricks DBRX: fused clipped qkv, LayerNorm without bias, 16 experts.
+    Dbrx,
+    /// Phi-3.5-MoE: separate biased q/k/v, LayerNorm with bias, 16 experts.
+    PhiMoe,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -92,6 +96,9 @@ pub struct LegacyConfig {
     pub rot: usize,
     pub theta: f64,
     pub clamp: f32,
+    /// Experts per layer and how many are used per token; both 0 for a dense model.
+    pub experts: usize,
+    pub used: usize,
 }
 
 impl LegacyConfig {
@@ -104,6 +111,8 @@ impl LegacyConfig {
             "falcon" => Fam::Falcon,
             "bloom" => Fam::Bloom,
             "mpt" => Fam::Mpt,
+            "dbrx" => Fam::Dbrx,
+            "phimoe" => Fam::PhiMoe,
             o => return Err(LegacyError::Config(format!("`{o}` is not a legacy family"))),
         };
         let need = |k: &str| {
@@ -134,6 +143,7 @@ impl LegacyConfig {
             .get_u64("rope.dimension_count")
             .map_or(head_dim, |v| (v as usize).min(head_dim));
         let max_bias = g.get_f64("attention.max_alibi_bias").unwrap_or(8.0) as f32;
+        let moe = matches!(family, Fam::Dbrx | Fam::PhiMoe);
         let (pos, act, qkv, parallel) = match family {
             Fam::Gpt2 => (Pos::Learned, Act::GeluTanh, Qkv::Contiguous, false),
             Fam::GptJ => (Pos::RopePairs, Act::GeluTanh, Qkv::Separate, true),
@@ -146,6 +156,8 @@ impl LegacyConfig {
             Fam::Falcon => (Pos::RopeHalf, Act::Gelu, Qkv::Grouped, true),
             Fam::Bloom => (Pos::Alibi(8.0), Act::GeluTanh, Qkv::Grouped, false),
             Fam::Mpt => (Pos::Alibi(max_bias), Act::Gelu, Qkv::Contiguous, false),
+            Fam::Dbrx => (Pos::RopeHalf, Act::Silu, Qkv::Contiguous, false),
+            Fam::PhiMoe => (Pos::RopeHalf, Act::Silu, Qkv::Separate, false),
         };
         let c = LegacyConfig {
             family,
@@ -164,7 +176,23 @@ impl LegacyConfig {
             rot: rope_dim & !1,
             theta: g.get_f64("rope.freq_base").unwrap_or(10_000.0),
             clamp: g.get_f64("attention.clamp_kqv").unwrap_or(0.0) as f32,
+            experts: if moe {
+                need("expert_count")? as usize
+            } else {
+                0
+            },
+            used: if moe {
+                need("expert_used_count")? as usize
+            } else {
+                0
+            },
         };
+        if c.used > c.experts || c.experts > 4096 {
+            return Err(LegacyError::Config(format!(
+                "{} experts used out of {}",
+                c.used, c.experts
+            )));
+        }
         if matches!(c.pos, Pos::RopeHalf | Pos::RopePairs) && c.rot == 0 {
             return Err(LegacyError::Config("rope.dimension_count is zero".into()));
         }
@@ -184,6 +212,23 @@ enum Proj {
     Split(Weight, Weight, Weight),
 }
 
+enum Ffn {
+    Dense {
+        up: Weight,
+        bup: Option<Vec<f32>>,
+        down: Weight,
+        bdown: Option<Vec<f32>>,
+    },
+    /// Router `[experts, hidden]` and the stacked expert tensors, read one expert at a time.
+    Moe {
+        router: Vec<f32>,
+        src: Arc<dyn WeightFile>,
+        names: [String; 3],
+        ff: usize,
+        mmap: bool,
+    },
+}
+
 struct Layer {
     n1: Norm,
     n2: Option<Norm>,
@@ -191,10 +236,7 @@ struct Layer {
     qkv_b: Option<Vec<f32>>,
     wo: Weight,
     bo: Option<Vec<f32>>,
-    up: Weight,
-    bup: Option<Vec<f32>>,
-    down: Weight,
-    bdown: Option<Vec<f32>>,
+    ffn: Ffn,
 }
 
 pub struct LegacyModel {
@@ -206,6 +248,8 @@ pub struct LegacyModel {
     out_norm: Norm,
     head: Option<Weight>,
     head_bias: Option<Vec<f32>>,
+    /// Per-frequency divisors of the rotary angles (Phi-3.5-MoE's short factors).
+    rope_factors: Option<Vec<f32>>,
     vocab: usize,
     accel: Option<Accel>,
 }
@@ -333,6 +377,17 @@ impl LegacyModel {
             None
         };
         let head_bias = opt_vec(s, "output.bias", vocab)?;
+        let rope_factors = if cfg.family == Fam::PhiMoe && s.has("rope_factors_short.weight") {
+            let f = s.read("rope_factors_short.weight").map_err(load_err)?;
+            if f.len() != cfg.rot / 2 || f.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+                return Err(LegacyError::Load(
+                    "rope_factors_short.weight does not fit the rotary size".into(),
+                ));
+            }
+            Some(f)
+        } else {
+            None
+        };
         let mut layers = Vec::with_capacity(cfg.layers);
         for i in 0..cfg.layers {
             let n = |p: &str| format!("blk.{i}.{p}");
@@ -340,7 +395,9 @@ impl LegacyModel {
                 .ok_or_else(|| LegacyError::Load(format!("blk.{i}.attn_norm.weight is missing")))?;
             // Falcon-40B style files carry a second norm for the MLP branch; a normal parallel
             // block (GPT-J, Falcon-7B) feeds both branches from `attn_norm`.
-            let n2 = norm(s, &n("ffn_norm"), h)?.or(norm(s, &n("attn_norm_2"), h)?);
+            let n2 = norm(s, &n("ffn_norm"), h)?
+                .or(norm(s, &n("attn_norm_2"), h)?)
+                .or(norm(s, &n("attn_output_norm"), h)?);
             let qkv_dim = qd + 2 * kd;
             let (qkv, qkv_b) = if s.has(&n("attn_qkv.weight")) {
                 let (w, rows) = mat(s, &n("attn_qkv.weight"), h, o)?;
@@ -374,13 +431,46 @@ impl LegacyModel {
                 (Proj::Split(q.0, k.0, v.0), b)
             };
             let (wo, orows) = mat(s, &n("attn_output.weight"), qd, o)?;
-            let (up, ff) = mat(s, &n("ffn_up.weight"), h, o)?;
-            let (down, drows) = mat(s, &n("ffn_down.weight"), ff, o)?;
-            if orows != h || drows != h {
+            if orows != h {
                 return Err(LegacyError::Load(format!(
-                    "blk.{i}: output matrices have {orows}/{drows} rows, expected {h}"
+                    "blk.{i}: attention output has {orows} rows, expected {h}"
                 )));
             }
+            let ffn = if cfg.experts > 0 {
+                let router = s.read(&n("ffn_gate_inp.weight")).map_err(load_err)?;
+                if router.len() != cfg.experts * h {
+                    return Err(LegacyError::Load(format!(
+                        "blk.{i}.ffn_gate_inp.weight has {} values, expected {}",
+                        router.len(),
+                        cfg.experts * h
+                    )));
+                }
+                Ffn::Moe {
+                    router,
+                    src: src.clone(),
+                    names: [
+                        n("ffn_gate_exps.weight"),
+                        n("ffn_up_exps.weight"),
+                        n("ffn_down_exps.weight"),
+                    ],
+                    ff: cfg.ffn,
+                    mmap: o.mmap,
+                }
+            } else {
+                let (up, ff) = mat(s, &n("ffn_up.weight"), h, o)?;
+                let (down, drows) = mat(s, &n("ffn_down.weight"), ff, o)?;
+                if drows != h {
+                    return Err(LegacyError::Load(format!(
+                        "blk.{i}: ffn_down has {drows} rows, expected {h}"
+                    )));
+                }
+                Ffn::Dense {
+                    up,
+                    bup: opt_vec(s, &n("ffn_up.bias"), ff)?,
+                    down,
+                    bdown: opt_vec(s, &n("ffn_down.bias"), h)?,
+                }
+            };
             if !cfg.parallel && n2.is_none() {
                 return Err(LegacyError::Load(format!(
                     "blk.{i}.ffn_norm.weight is missing"
@@ -393,10 +483,7 @@ impl LegacyModel {
                 qkv_b,
                 wo,
                 bo: opt_vec(s, &n("attn_output.bias"), h)?,
-                up,
-                bup: opt_vec(s, &n("ffn_up.bias"), ff)?,
-                down,
-                bdown: opt_vec(s, &n("ffn_down.bias"), h)?,
+                ffn,
             });
         }
         Ok(LegacyModel {
@@ -408,6 +495,7 @@ impl LegacyModel {
             out_norm,
             head,
             head_bias,
+            rope_factors,
             vocab,
             accel: None,
         })
@@ -446,8 +534,11 @@ impl LegacyModel {
                 }
             }
             items.push(Item::new(&l.wo, qd, false));
-            items.push(Item::new(&l.up, h, false));
-            items.push(Item::new(&l.down, l.up.len() / h, false));
+            // expert matrices are read per token and stay on the CPU
+            if let Ffn::Dense { up, down, .. } = &l.ffn {
+                items.push(Item::new(up, h, false));
+                items.push(Item::new(down, up.len() / h, false));
+            }
         }
         let (acc, rep) = Accel::build(be, &items);
         self.accel = acc;
@@ -473,7 +564,10 @@ impl LegacyModel {
         for h in 0..heads {
             let v = &mut x[h * hd..(h + 1) * hd];
             for i in 0..rot / 2 {
-                let f = c.theta.powf(-2.0 * i as f64 / rot as f64);
+                let mut f = c.theta.powf(-2.0 * i as f64 / rot as f64);
+                if let Some(d) = &self.rope_factors {
+                    f /= d[i] as f64;
+                }
                 let (s, co) = (pos as f64 * f).sin_cos();
                 let (s, co) = (s as f32, co as f32);
                 let (a, b) = if c.pos == Pos::RopeHalf {
@@ -538,15 +632,65 @@ impl LegacyModel {
     }
 
     fn mlp(&self, l: &Layer, x: &[f32]) -> Result<Vec<f32>, ModelError> {
-        let ff = l.up.len() / self.cfg.hidden;
-        let mut u = vec![0.0; ff];
-        self.mv(&l.up, self.cfg.hidden, x, &mut u)?;
-        add_bias(&mut u, &l.bup);
-        u.iter_mut().for_each(|v| *v = activate(self.cfg.act, *v));
-        let mut o = vec![0.0; self.cfg.hidden];
-        self.mv(&l.down, ff, &u, &mut o)?;
-        add_bias(&mut o, &l.bdown);
-        Ok(o)
+        let h = self.cfg.hidden;
+        match &l.ffn {
+            Ffn::Dense {
+                up,
+                bup,
+                down,
+                bdown,
+            } => {
+                let ff = up.len() / h;
+                let mut u = vec![0.0; ff];
+                self.mv(up, h, x, &mut u)?;
+                add_bias(&mut u, bup);
+                u.iter_mut().for_each(|v| *v = activate(self.cfg.act, *v));
+                let mut o = vec![0.0; h];
+                self.mv(down, ff, &u, &mut o)?;
+                add_bias(&mut o, bdown);
+                Ok(o)
+            }
+            Ffn::Moe {
+                router,
+                src,
+                names,
+                ff,
+                mmap,
+            } => {
+                let logits: Vec<f32> = router
+                    .chunks_exact(h)
+                    .map(|row| row.iter().zip(x).map(|(a, b)| a * b).sum())
+                    .collect();
+                if logits.iter().any(|v| !v.is_finite()) {
+                    return Err(ModelError::Shape("the router produced a non-number".into()));
+                }
+                let ff = *ff;
+                let mut out = vec![0.0f32; h];
+                for (e, w) in crate::gptoss::route(&logits, self.cfg.used) {
+                    let get = |k: usize, rows: usize, cols: usize| {
+                        crate::gptoss::slice_weight(
+                            src,
+                            &names[k],
+                            e * rows * cols,
+                            rows,
+                            cols,
+                            *mmap,
+                        )
+                        .map_err(ModelError::Experts)
+                    };
+                    let (gate, up, down) = (get(0, ff, h)?, get(1, ff, h)?, get(2, h, ff)?);
+                    let (mut g, mut u, mut d) = (vec![0.0; ff], vec![0.0; ff], vec![0.0; h]);
+                    gate.matvec(h, x, &mut g)?;
+                    up.matvec(h, x, &mut u)?;
+                    g.iter_mut()
+                        .zip(&u)
+                        .for_each(|(g, u)| *g = activate(Act::Silu, *g) * u);
+                    down.matvec(ff, &g, &mut d)?;
+                    out.iter_mut().zip(&d).for_each(|(o, d)| *o += w * d);
+                }
+                Ok(out)
+            }
+        }
     }
 
     fn step(&self, st: &mut LegacyState, token: usize, want: bool) -> Result<Vec<f32>, ModelError> {
@@ -800,12 +944,10 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let p = d.join("m.gguf");
         write(arch, kv, qkv, parallel, &p);
-        let m = match family::load_any(&p).unwrap() {
+        match family::load_any(&p).unwrap() {
             AnyModel::Legacy(m) => *m,
             _ => panic!("not a legacy model"),
-        };
-        let _ = std::fs::remove_dir_all(&d);
-        m
+        }
     }
     fn run(m: &LegacyModel, toks: &[usize]) -> Vec<f32> {
         m.forward_batch(&mut m.new_state(), toks).unwrap()
@@ -888,6 +1030,142 @@ mod tests {
         assert!(s12.iter().all(|v| *v > 0.0 && *v < 1.0));
         let m = open("bloom", NH, Qkv::Grouped, false);
         assert_ne!(run(&m, &[3, 4, 5]), run(&m, &[3, 4, 6]));
+    }
+
+    const E: usize = 4;
+
+    /// A small DBRX (`phi == false`: fused clipped qkv, bias-free norms) or Phi-3.5-MoE
+    /// (`phi == true`: separate biased q/k/v, biased norms, rope factors).
+    fn write_moe(phi: bool, used: u32, clamp: f32, factors: f32, path: &std::path::Path) {
+        let mut r = Rng(0x2545f4914f6cdd1d);
+        let mut t: Vec<(String, Vec<u64>, Vec<f32>)> = vec![];
+        let mut f = |n: &str, s: &[usize], d: Vec<f32>| {
+            assert_eq!(s.iter().product::<usize>(), d.len(), "{n}");
+            t.push((n.into(), s.iter().map(|x| *x as u64).collect(), d));
+        };
+        let ones = |n: usize| vec![1.0f32; n];
+        let (arch, qd) = (if phi { "phimoe" } else { "dbrx" }, NH * HD);
+        f("token_embd.weight", &[V, H], r.mat(V * H));
+        f("output_norm.weight", &[H], ones(H));
+        f("output.weight", &[V, H], r.mat(V * H));
+        if phi {
+            f("output_norm.bias", &[H], r.mat(H));
+            f("output.bias", &[V], r.mat(V));
+            f(
+                "rope_factors_short.weight",
+                &[HD / 2],
+                vec![factors; HD / 2],
+            );
+        }
+        for i in 0..L {
+            let n = |p: &str| format!("blk.{i}.{p}");
+            f(&n("attn_norm.weight"), &[H], ones(H));
+            if phi {
+                f(&n("attn_norm.bias"), &[H], r.mat(H));
+                f(&n("ffn_norm.weight"), &[H], ones(H));
+                f(&n("ffn_norm.bias"), &[H], r.mat(H));
+                for (nm, rows) in [("q", qd), ("k", qd), ("v", qd)] {
+                    f(
+                        &n(&format!("attn_{nm}.weight")),
+                        &[rows, H],
+                        r.mat(rows * H),
+                    );
+                    f(&n(&format!("attn_{nm}.bias")), &[rows], r.mat(rows));
+                }
+                f(&n("attn_output.bias"), &[H], r.mat(H));
+            } else {
+                f(&n("attn_output_norm.weight"), &[H], ones(H));
+                f(&n("attn_qkv.weight"), &[3 * qd, H], r.mat(3 * qd * H));
+            }
+            f(&n("attn_output.weight"), &[H, qd], r.mat(H * qd));
+            f(&n("ffn_gate_inp.weight"), &[E, H], r.mat(E * H));
+            f(&n("ffn_gate_exps.weight"), &[E, FF, H], r.mat(E * FF * H));
+            f(&n("ffn_up_exps.weight"), &[E, FF, H], r.mat(E * FF * H));
+            f(&n("ffn_down_exps.weight"), &[E, H, FF], r.mat(E * H * FF));
+        }
+        let mut meta: Vec<(String, M)> = vec![
+            ("general.architecture".into(), M::str(arch)),
+            (format!("{arch}.block_count"), M::U32(L as u32)),
+            (format!("{arch}.context_length"), M::U32(32)),
+            (format!("{arch}.embedding_length"), M::U32(H as u32)),
+            (format!("{arch}.feed_forward_length"), M::U32(FF as u32)),
+            (format!("{arch}.attention.head_count"), M::U32(NH as u32)),
+            (format!("{arch}.attention.head_count_kv"), M::U32(NH as u32)),
+            (format!("{arch}.attention.layer_norm_epsilon"), M::F32(1e-5)),
+            (format!("{arch}.rope.dimension_count"), M::U32(HD as u32)),
+            (format!("{arch}.expert_count"), M::U32(E as u32)),
+            (format!("{arch}.expert_used_count"), M::U32(used)),
+        ];
+        if clamp > 0.0 {
+            meta.push((format!("{arch}.attention.clamp_kqv"), M::F32(clamp)));
+        }
+        let descs: Vec<TensorDesc> = t
+            .iter()
+            .map(|(n, s, _)| TensorDesc::new(n.clone(), s, DType::F32))
+            .collect();
+        let file = std::fs::File::create(path).unwrap();
+        GgufWriter::write_all(file, &meta, descs, |i, _| {
+            Ok(t[i].2.iter().flat_map(|x| x.to_le_bytes()).collect())
+        })
+        .unwrap();
+    }
+    fn open_moe(phi: bool, used: u32, clamp: f32, factors: f32) -> LegacyModel {
+        static N: AtomicU32 = AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "legacymoe-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("m.gguf");
+        write_moe(phi, used, clamp, factors, &p);
+        match family::load_any(&p).unwrap() {
+            AnyModel::Legacy(m) => *m,
+            _ => panic!("not a legacy model"),
+        }
+    }
+    fn spread(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b).fold(0f32, |m, (x, y)| m.max((x - y).abs()))
+    }
+
+    #[test]
+    fn dbrx_and_phimoe_run_and_batch_equals_steps() {
+        for phi in [false, true] {
+            let m = open_moe(phi, 2, 0.0, 1.0);
+            assert!(m.config().experts == E && m.config().used == 2);
+            let a = run(&m, &TOKS);
+            assert!(a.iter().all(|v| v.is_finite()) && a.iter().any(|v| v.abs() > 1e-4));
+            assert_eq!(a, run(&m, &TOKS));
+            let mut st = m.new_state();
+            let mut last = vec![];
+            for t in TOKS {
+                last = m.forward_batch(&mut st, &[t]).unwrap();
+            }
+            assert_eq!(a, last, "phi={phi}");
+        }
+    }
+
+    #[test]
+    fn experts_clip_and_rope_factors_each_change_the_result() {
+        let base = run(&open_moe(false, 2, 0.0, 1.0), &TOKS);
+        assert!(spread(&base, &run(&open_moe(false, 1, 0.0, 1.0), &TOKS)) > 1e-5);
+        assert!(spread(&base, &run(&open_moe(false, 2, 0.05, 1.0), &TOKS)) > 1e-6);
+        let p = run(&open_moe(true, 2, 0.0, 1.0), &TOKS);
+        assert!(spread(&p, &run(&open_moe(true, 2, 0.0, 4.0), &TOKS)) > 1e-6);
+    }
+
+    #[test]
+    fn moe_accelerator_matches_and_too_many_experts_is_refused() {
+        use crate::accel::testbe::Odd;
+        let mut m = open_moe(false, 2, 0.0, 1.0);
+        let cpu = run(&m, &TOKS);
+        assert!(m.attach_backend(Odd::new(usize::MAX, 1.0, None)).active);
+        assert!(spread(&run(&m, &TOKS), &cpu) < 1e-4);
+        let d = std::env::temp_dir().join(format!("legacymoe-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("m.gguf");
+        write_moe(false, 9, 0.0, 1.0, &p);
+        assert!(family::load_any(&p).is_err());
     }
 
     #[test]
