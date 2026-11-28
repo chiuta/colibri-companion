@@ -119,6 +119,8 @@ pub fn open(path: &Path) -> Result<Fam, String> {
         "</s>",
         "<end_of_turn>",
         "<turn|>",
+        "<|return|>",
+        "<|call|>",
         "<|eot_id|>",
     ] {
         if let Some(i) = tok.token_to_id(t)

@@ -5,6 +5,7 @@ O Companion inicia o **corbul**, o motor próprio, para todo GGUF que o colibri 
 ## O que o corbul executa
 - **Gemma 4** (E2B, E4B, 26B-A4B com especialistas, 31B), a partir de um `.gguf`: atenção mista deslizante e global, tamanhos de cabeça por camada, chaves usadas como valores nas camadas globais, RoPE proporcional, K/V partilhado nas últimas camadas, embeddings por camada, o MLP denso ao lado dos especialistas encaminhados, limite dos logits finais.
 - **GPT-2, GPT-J, GPT-NeoX/Pythia, Falcon, BLOOM, MPT**, a partir de um `.gguf`: LayerNorm, QKV fundido ou separado, posições aprendidas / rotativas / ALiBi, residual paralelo. Testados apenas em pequenos modelos sintéticos. O OPT não tem conversão GGUF.
+- **gpt-oss (20B, 120B)**, a partir de um `.gguf` (incluindo especialistas MXFP4): sinks de atenção, janela deslizante, YaRN, ativação de especialista limitada. Testado apenas em pequenos modelos sintéticos. **GraniteMoE, GLM-4.5/4.6 MoE**: também a partir de `.gguf`.
 - **Gemma 1–3, Phi, OLMo, Granite, Cohere, InternLM2, StableLM, StarCoder2, EXAONE, Baichuan, MiniCPM, SmolLM3**, Llama e Mistral, Qwen e as outras famílias com especialistas que o motor já tinha.
 - **Mamba, Mamba-2, RWKV-6/7, Jamba, Bamba** (recorrentes e híbridos).
 
@@ -17,4 +18,4 @@ Chamadas de ferramentas, saída estruturada, várias respostas por pedido, embed
 Tudo está testado em **pequenos modelos sintéticos** (invariantes próprias: cache igual ao recálculo, janelas deslizantes, K/V partilhado, encaminhamento, especialistas quantizados, as respostas HTTP). **Nada foi comparado com um ficheiro Gemma 4 real.** Se as respostas de um ficheiro real parecerem erradas, executa tu mesmo `corbul serve FICHEIRO.gguf` e envia a saída; verifica-se primeiro o padrão deslizante/global e as tabelas RoPE.
 
 ## Ainda não suportados
-OPT, gpt-oss, PhiMoE, DBRX, Llama 4, Hunyuan, Ernie-MoE, Grok, o modelo DeepSeek completo, MiniMax, Zamba, modelos codificador-decodificador. O corbul nomeia-os e não adivinha.
+OPT, PhiMoE, DBRX, Llama 4, Hunyuan, Ernie-MoE, Grok, o modelo DeepSeek completo, MiniMax, Zamba, modelos codificador-decodificador. O corbul nomeia-os e não adivinha.

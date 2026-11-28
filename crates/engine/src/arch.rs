@@ -312,9 +312,7 @@ pub fn classify(name: &str) -> Support {
         "opt" => Support::Planned("OPT has no GGUF conversion"),
         "mixtral" | "qwen2_moe" | "qwen2moe" | "qwen3_moe" | "qwen3moe" => Support::Moe,
         "olmoe" => Support::Planned("OLMoE normalises whole q/k projections, not heads"),
-        "gpt_oss" | "gpt-oss" | "gptoss" => {
-            Support::Planned("MXFP4 experts with clamped SwiGLU and expert biases")
-        }
+        "gpt_oss" | "gpt-oss" | "gptoss" => Support::Native("gpt-oss (own model, GGUF)"),
         "phimoe" | "dbrx" | "arctic" | "jamba_moe" | "llama4" | "hunyuan_moe" | "ernie4_5_moe"
         | "grok" => Support::Planned("this mixture-of-experts layout"),
         // multi-head latent attention exists as a module (mla.rs), the DeepSeek model around it does not

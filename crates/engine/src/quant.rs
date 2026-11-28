@@ -21,6 +21,8 @@ pub enum DType {
     IQ4NL,
     /// 4-bit non-linear with 6-bit sub-block scales, super-blocks of 256.
     IQ4XS,
+    /// Microscaling 4-bit float (e2m1 values, power-of-two scale per 32), as in gpt-oss files.
+    MXFP4,
     /// A type this build does not know; carries the raw id.
     Other(u32),
 }
@@ -43,6 +45,7 @@ impl DType {
             15 => DType::Q8K,
             20 => DType::IQ4NL,
             23 => DType::IQ4XS,
+            39 => DType::MXFP4,
             30 => DType::BF16,
             n => DType::Other(n),
         }
@@ -65,6 +68,7 @@ impl DType {
             DType::Q8K => (256, 292),
             DType::IQ4NL => (32, 18),
             DType::IQ4XS => (256, 136),
+            DType::MXFP4 => (32, 17),
             DType::Other(_) => return None,
         })
     }
@@ -96,6 +100,7 @@ impl DType {
                 | DType::Q8K
                 | DType::IQ4NL
                 | DType::IQ4XS
+                | DType::MXFP4
         )
     }
 }
@@ -145,6 +150,45 @@ pub fn f16_to_f32(h: u16) -> f32 {
 pub const KVALUES_IQ4NL: [i8; 16] = [
     -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113,
 ];
+
+/// The 16 values of an MXFP4 code (e2m1 doubled: 0, ±1, ±2, ±3, ±4, ±6, ±8, ±12), low codes positive.
+/// Test-grade MXFP4 encoder: power-of-two scale from the block maximum, nearest code per value.
+pub fn enc_mxfp4(x: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(x.len() / 32 * 17);
+    for blk in x.chunks(32) {
+        let amax = blk.iter().fold(0f32, |m, v| m.max(v.abs()));
+        let e = if amax > 0.0 {
+            ((amax.log2().floor() as i32) + 125).clamp(0, 254) as u8
+        } else {
+            0
+        };
+        let d = mxfp4_scale(e);
+        let code = |v: f32| -> u8 {
+            let t = if d > 0.0 { v / d } else { 0.0 };
+            (0..16u8)
+                .min_by(|a, b| {
+                    let (x, y) = (
+                        (f32::from(KVALUES_MXFP4[*a as usize]) - t).abs(),
+                        (f32::from(KVALUES_MXFP4[*b as usize]) - t).abs(),
+                    );
+                    x.total_cmp(&y)
+                })
+                .unwrap_or(0)
+        };
+        out.push(e);
+        for j in 0..16 {
+            out.push(code(blk[j]) | (code(blk[j + 16]) << 4));
+        }
+    }
+    out
+}
+
+pub const KVALUES_MXFP4: [i8; 16] = [0, 1, 2, 3, 4, 6, 8, 12, 0, -1, -2, -3, -4, -6, -8, -12];
+
+/// Scale of an MXFP4 block from its exponent byte: `2^(e - 128)` (the stored values are doubled).
+pub fn mxfp4_scale(e: u8) -> f32 {
+    2f64.powi(i32::from(e) - 128) as f32
+}
 
 /// Signed 6-bit scale (`-32..=31`) of sub-block `ib` of an IQ4_XS super-block `b`
 /// (`sh` is its little-endian `scales_h`).
@@ -244,6 +288,17 @@ pub fn dequantize(t: DType, src: &[u8], n: usize, out: &mut Vec<f32>) -> Result<
                 }
                 for j in 0..16 {
                     out.push(d * KVALUES_IQ4NL[(b[2 + j] >> 4) as usize] as f32);
+                }
+            }
+        }
+        DType::MXFP4 => {
+            for b in src[..need].chunks_exact(17) {
+                let d = mxfp4_scale(b[0]);
+                for j in 0..16 {
+                    out.push(d * KVALUES_MXFP4[(b[1 + j] & 0xf) as usize] as f32);
+                }
+                for j in 0..16 {
+                    out.push(d * KVALUES_MXFP4[(b[1 + j] >> 4) as usize] as f32);
                 }
             }
         }
@@ -1017,6 +1072,7 @@ pub(crate) mod testenc {
                 .iter()
                 .flat_map(|v| ((v.to_bits() >> 16) as u16).to_le_bytes())
                 .collect(),
+            DType::MXFP4 => enc_mxfp4(x),
             DType::IQ4NL | DType::IQ4XS => {
                 let mut o = vec![0u8; t.bytes_for(x.len() as u64).unwrap() as usize];
                 crate::quantize::quantize_row_into(t, x, None, &mut o).unwrap();

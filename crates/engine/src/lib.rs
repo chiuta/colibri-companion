@@ -32,6 +32,7 @@ pub mod gemma4;
 pub mod gguf;
 pub mod gguf_write;
 pub mod governor;
+pub mod gptoss;
 pub mod grammar;
 pub mod hub;
 pub mod hw;

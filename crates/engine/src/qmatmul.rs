@@ -149,6 +149,13 @@ impl Unp {
                     self.q[j + 16] = crate::quant::KVALUES_IQ4NL[(b[2 + j] >> 4) as usize];
                 }
             }
+            DType::MXFP4 => {
+                self.simple(crate::quant::mxfp4_scale(b[0]));
+                for j in 0..16 {
+                    self.q[j] = crate::quant::KVALUES_MXFP4[(b[1 + j] & 0xf) as usize];
+                    self.q[j + 16] = crate::quant::KVALUES_MXFP4[(b[1 + j] >> 4) as usize];
+                }
+            }
             DType::IQ4XS => {
                 self.gs = 32;
                 self.d = rd16(b, 0);
@@ -521,7 +528,7 @@ mod tests {
     use super::*;
     use crate::quant::testenc::{encode, signal};
 
-    const ALL: [DType; 16] = [
+    const ALL: [DType; 17] = [
         DType::F32,
         DType::F16,
         DType::BF16,
@@ -538,6 +545,7 @@ mod tests {
         DType::Q6K,
         DType::IQ4NL,
         DType::IQ4XS,
+        DType::MXFP4,
     ];
 
     fn matrix(t: DType, rows: usize, cols: usize) -> Vec<u8> {

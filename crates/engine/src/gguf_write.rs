@@ -382,6 +382,7 @@ pub fn dtype_id(t: DType) -> Result<u32, WriteError> {
         DType::Q8K => 15,
         DType::IQ4NL => 20,
         DType::IQ4XS => 23,
+        DType::MXFP4 => 39,
         DType::BF16 => 30,
         DType::Other(n) => return invalid(format!("cannot write unknown tensor type {n}")),
     })
@@ -416,6 +417,7 @@ mod tests {
             DType::Q8K,
             DType::IQ4NL,
             DType::IQ4XS,
+            DType::MXFP4,
         ] {
             assert_eq!(DType::from_id(dtype_id(t).unwrap()), t);
         }
