@@ -196,6 +196,7 @@ pub struct Tokenizer {
     b2c: [char; 256],
     rev: HashMap<char, u8>,
     ignore_merges: bool,
+    split_nl: bool,
     add_prefix: bool,
     prog: Vec<Stage>,
     norms: Vec<Norm>,
@@ -283,6 +284,7 @@ struct Parts {
     eos: Option<u32>,
     add_prefix: bool,
     ignore_merges: bool,
+    split_nl: bool,
     prog: Vec<Stage>,
     norms: Vec<Norm>,
     warns: Vec<String>,
@@ -333,6 +335,7 @@ fn assemble(p: Parts) -> Tokenizer {
         b2c,
         rev,
         ignore_merges: p.ignore_merges,
+        split_nl: p.split_nl,
         add_prefix: p.add_prefix,
         prog: p.prog,
         norms: p.norms,
@@ -1756,6 +1759,7 @@ impl Tokenizer {
             eos,
             add_prefix,
             ignore_merges,
+            split_nl: false,
             prog,
             norms,
             warns,
@@ -1771,7 +1775,7 @@ impl Tokenizer {
             .ok_or_else(|| TokError::Invalid("no tokenizer.ggml.model".into()))?;
         let kind = match model {
             "gpt2" => Kind::ByteLevel,
-            "llama" => Kind::SentencePiece,
+            "llama" | "gemma4" => Kind::SentencePiece,
             o => return Err(TokError::Unsupported(format!("GGUF tokenizer model {o}"))),
         };
         let tokens: Vec<String> = match meta("tokenizer.ggml.tokens") {
@@ -1844,7 +1848,7 @@ impl Tokenizer {
         };
         let add_prefix = match meta("tokenizer.ggml.add_space_prefix") {
             Some(GValue::Bool(b)) => *b,
-            _ => true,
+            _ => model != "gemma4",
         };
         let (unk, bos, eos) = (
             id_of("tokenizer.ggml.unknown_token_id"),
@@ -1863,6 +1867,7 @@ impl Tokenizer {
             eos,
             add_prefix: add_prefix && kind == Kind::SentencePiece,
             ignore_merges: kind == Kind::ByteLevel,
+            split_nl: model == "gemma4",
             prog,
             norms,
             warns,
@@ -2073,6 +2078,26 @@ impl Tokenizer {
     }
 
     fn encode_sp_one(&self, text: &str, prefix: bool, out: &mut Vec<u32>) {
+        if self.split_nl && text.contains('\n') {
+            let mut first = true;
+            let mut rest = text;
+            while !rest.is_empty() {
+                let nl = rest.starts_with('\n');
+                let n = rest.find(|c: char| (c == '\n') != nl).unwrap_or(rest.len());
+                let (run, tail) = rest.split_at(n);
+                match self.vocab.get(run) {
+                    Some(&id) if nl => out.push(id),
+                    _ => self.encode_sp_plain(run, prefix && first, out),
+                }
+                first = false;
+                rest = tail;
+            }
+            return;
+        }
+        self.encode_sp_plain(text, prefix, out);
+    }
+
+    fn encode_sp_plain(&self, text: &str, prefix: bool, out: &mut Vec<u32>) {
         let mut ids = vec![];
         let mut buf = [0u8; 4];
         let mut symbols = text.chars().map(|c| if c == ' ' { SPACE } else { c });
@@ -2790,6 +2815,49 @@ mod tests {
             assert_eq!(t.decode(&t.encode(s, false)), s, "{s:?}");
         }
         assert!(t.is_special(1) && !t.is_special(3));
+    }
+
+    #[test]
+    fn gguf_gemma4_tokenizer() {
+        let toks = [
+            "<pad>", "<eos>", "<bos>", "<unk>", "<turn|>", "▁", "h", "i", "hi", "▁hi", "\n",
+            "\n\n", "<0xE9>",
+        ];
+        let mut types = vec![1u64; toks.len()];
+        for i in 0..5 {
+            types[i] = 3;
+        }
+        types[3] = 2;
+        types[12] = 6;
+        let mut g = Gguf::default();
+        g.meta.insert("tokenizer.ggml.model".into(), gstr("gemma4"));
+        g.meta.insert(
+            "tokenizer.ggml.tokens".into(),
+            GValue::Array(toks.iter().map(|t| gstr(t)).collect()),
+        );
+        g.meta.insert(
+            "tokenizer.ggml.token_type".into(),
+            GValue::Array(types.iter().map(|t| GValue::U64(*t)).collect()),
+        );
+        g.meta.insert(
+            "tokenizer.ggml.merges".into(),
+            GValue::Array(vec![gstr("h i"), gstr("\u{2581} hi")]),
+        );
+        g.meta
+            .insert("tokenizer.ggml.bos_token_id".into(), GValue::U64(2));
+        g.meta
+            .insert("tokenizer.ggml.eos_token_id".into(), GValue::U64(1));
+        let t = Tokenizer::from_gguf(&g).unwrap();
+        // no dummy space prefix; a space becomes ▁
+        assert_eq!(t.encode("hi", false), [8]);
+        assert_eq!(t.encode("hi hi", false), [8, 9]);
+        // newline runs are tokens on their own
+        assert_eq!(t.encode("hi\n\nhi", false), [8, 11, 8]);
+        assert_eq!(t.encode("hi\n", true), [2, 8, 10]);
+        assert_eq!(t.encode("hi<turn|>", false), [8, 4]);
+        for s in ["hi", "hi hi", "hi\n\nhi", "hi\n\n\nhi"] {
+            assert_eq!(t.decode(&t.encode(s, false)), s, "{s:?}");
+        }
     }
 
     #[test]
