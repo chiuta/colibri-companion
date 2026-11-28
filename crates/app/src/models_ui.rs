@@ -67,7 +67,7 @@ impl CompanionApp {
                 );
                 ui.add_enabled_ui(!busy && !self.existing_path.trim().is_empty(), |ui| {
                     if ui.button(self.t("Utilizează acest model", "Use this model")).clicked() {
-                        let path = self.existing_path.trim().trim_matches('"').into();
+                        let path = companion_core::coli::clean_path_text(&self.existing_path).into();
                         self.use_existing_model(path);
                     }
                 });

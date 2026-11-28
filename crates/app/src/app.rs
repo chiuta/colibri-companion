@@ -939,7 +939,44 @@ impl CompanionApp {
             return;
         }
         // everything that can be wrong is checked first: a bad path must not stop the model
-        // that is running now
+        // that is running now. A pasted path may carry quotes or invisible marks, name a file
+        // without its extension, or be the folder that holds the model file.
+        use companion_core::coli::{Resolved, resolve_model_path};
+        let path = match resolve_model_path(&path.to_string_lossy()) {
+            Resolved::Gguf(p) | Resolved::Folder(p) => p,
+            Resolved::NotFound => {
+                let m = self
+                    .t(
+                        "Nu există nimic la calea «{}». Verifică numele (cu .gguf la sfârșit) sau trage fișierul în fereastră.",
+                        "Nothing exists at “{}”. Check the name (with .gguf at the end) or drag the file onto the window.",
+                    )
+                    .replacen("{}", &path.display().to_string(), 1);
+                self.toast(m);
+                return;
+            }
+            Resolved::Empty => {
+                self.toast(self.t(
+                    "În folderul acela nu e niciun fișier .gguf și nici un model colibri (config.json). Alege fișierul .gguf direct.",
+                    "That folder holds no .gguf file and no colibri model (config.json). Pick the .gguf file itself.",
+                ));
+                return;
+            }
+            Resolved::Several(v) => {
+                let names: Vec<String> = v
+                    .iter()
+                    .take(6)
+                    .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .collect();
+                let m = self
+                    .t(
+                        "Folderul conține mai multe modele; alege unul: {}",
+                        "The folder holds several models; pick one: {}",
+                    )
+                    .replacen("{}", &names.join(", "), 1);
+                self.toast(m);
+                return;
+            }
+        };
         if path.is_file() {
             if !is_first_gguf(&path) {
                 self.toast(self.t(
@@ -959,12 +996,6 @@ impl CompanionApp {
                 self.toast(m);
                 return;
             }
-        } else if !path.join("config.json").is_file() {
-            self.toast(self.t(
-                "Folderul nu pare un model colibri (lipsește config.json).",
-                "That folder doesn't look like a colibri model (config.json is missing).",
-            ));
-            return;
         }
         if (self.server_ready()
             || matches!(self.health, Health::Loading(_))

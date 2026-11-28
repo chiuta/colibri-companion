@@ -989,6 +989,114 @@ pub fn is_first_gguf(path: &Path) -> bool {
     }
 }
 
+/// Remove what a pasted path often carries: quotes, spaces and the invisible direction marks
+/// (U+200E, U+202A…U+202E, U+FEFF) Windows adds when a path is copied from a file's properties.
+pub fn clean_path_text(s: &str) -> String {
+    let t: String = s
+        .chars()
+        .filter(|c| {
+            !matches!(
+                *c,
+                '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{feff}'
+            )
+        })
+        .collect();
+    t.trim()
+        .trim_matches(|c| c == '"' || c == '\'' || c == '\u{201c}' || c == '\u{201d}')
+        .trim()
+        .to_string()
+}
+
+/// What a path given by the person turns out to be.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Resolved {
+    /// A `.gguf` file (the first part of a split one) to import.
+    Gguf(PathBuf),
+    /// A ready colibri model folder (has `config.json`).
+    Folder(PathBuf),
+    /// Nothing at that path.
+    NotFound,
+    /// A folder with neither `config.json` nor any usable `.gguf`.
+    Empty,
+    /// A folder with several `.gguf` files; the person must pick one.
+    Several(Vec<PathBuf>),
+}
+
+/// The `.gguf` files directly in `dir` that can start an import: whole files and first parts of
+/// split ones, not the vision projectors (`mmproj…`), sorted by name.
+fn gguf_candidates(dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && is_first_gguf(p))
+                .filter(|p| {
+                    !p.file_name()
+                        .map(|n| {
+                            n.to_string_lossy()
+                                .to_ascii_lowercase()
+                                .starts_with("mmproj")
+                        })
+                        .unwrap_or(false)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+/// Work out what to do with a path the person typed, pasted or dropped: a file is used as it is
+/// (a name typed without `.gguf` is tried with it), a folder with `config.json` is a ready model,
+/// and a folder holding a model file (one level down too, as downloads often nest) leads to that
+/// file. Never touches anything.
+pub fn resolve_model_path(raw: &str) -> Resolved {
+    let path = PathBuf::from(clean_path_text(raw));
+    if path.as_os_str().is_empty() {
+        return Resolved::NotFound;
+    }
+    if path.is_file() {
+        return Resolved::Gguf(path);
+    }
+    if !path.is_dir() {
+        let mut with = path.clone().into_os_string();
+        with.push(".gguf");
+        let with = PathBuf::from(with);
+        return if with.is_file() {
+            Resolved::Gguf(with)
+        } else {
+            Resolved::NotFound
+        };
+    }
+    if path.join("config.json").is_file() {
+        return Resolved::Folder(path);
+    }
+    let mut found = gguf_candidates(&path);
+    if found.is_empty() {
+        // one level down: HF downloads put the files in a subfolder
+        let mut subs: Vec<PathBuf> = std::fs::read_dir(&path)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir())
+                    .collect()
+            })
+            .unwrap_or_default();
+        subs.sort();
+        for sub in subs {
+            if sub.join("config.json").is_file() && found.is_empty() {
+                return Resolved::Folder(sub);
+            }
+            found.extend(gguf_candidates(&sub));
+        }
+    }
+    match found.len() {
+        0 => Resolved::Empty,
+        1 => Resolved::Gguf(found.remove(0)),
+        _ => Resolved::Several(found),
+    }
+}
+
 /// Every part listed by a split GGUF's first file name that is missing beside it.
 pub fn missing_gguf_parts(first: &Path) -> Vec<String> {
     let name = first
@@ -1443,6 +1551,66 @@ mod plan_tests {
 #[cfg(test)]
 mod hardening_tests {
     use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("coli-resolve-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn pasted_paths_lose_quotes_and_invisible_marks() {
+        assert_eq!(
+            clean_path_text("\u{202a}\"D:\\m\\a.gguf\" "),
+            "D:\\m\\a.gguf"
+        );
+        assert_eq!(clean_path_text("  \u{201c}x\u{201d}\u{200e}"), "x");
+        assert_eq!(clean_path_text("   "), "");
+    }
+
+    #[test]
+    fn a_path_is_resolved_to_the_model_it_leads_to() {
+        let d = tmp("a");
+        let f = d.join("gemma-Q8.gguf");
+        std::fs::write(&f, b"x").unwrap();
+        let s = |p: &Path| p.display().to_string();
+        assert_eq!(resolve_model_path(&s(&f)), Resolved::Gguf(f.clone()));
+        // a name typed without the extension, with marks and quotes around it
+        let typed = format!("\u{202a}\"{}\"", s(&d.join("gemma-Q8")));
+        assert_eq!(resolve_model_path(&typed), Resolved::Gguf(f.clone()));
+        // a folder holding one model file leads to it
+        assert_eq!(resolve_model_path(&s(&d)), Resolved::Gguf(f.clone()));
+        assert_eq!(resolve_model_path(&s(&d.join("nope"))), Resolved::NotFound);
+        assert_eq!(resolve_model_path(""), Resolved::NotFound);
+        // projectors and later parts of a split file are not candidates
+        std::fs::write(d.join("mmproj-gemma.gguf"), b"x").unwrap();
+        std::fs::write(d.join("big-00002-of-00002.gguf"), b"x").unwrap();
+        assert_eq!(resolve_model_path(&s(&d)), Resolved::Gguf(f.clone()));
+        // two real candidates: the person must choose
+        let g = d.join("other.gguf");
+        std::fs::write(&g, b"x").unwrap();
+        assert_eq!(
+            resolve_model_path(&s(&d)),
+            Resolved::Several(vec![f.clone(), g])
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn folders_nested_or_ready_are_recognised_and_empty_ones_refused() {
+        let d = tmp("b");
+        let s = |p: &Path| p.display().to_string();
+        assert_eq!(resolve_model_path(&s(&d)), Resolved::Empty);
+        let sub = d.join("repo");
+        std::fs::create_dir_all(&sub).unwrap();
+        let f = sub.join("m-00001-of-00002.gguf");
+        std::fs::write(&f, b"x").unwrap();
+        assert_eq!(resolve_model_path(&s(&d)), Resolved::Gguf(f));
+        std::fs::write(d.join("config.json"), b"{}").unwrap();
+        assert_eq!(resolve_model_path(&s(&d)), Resolved::Folder(d.clone()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn the_plan_is_found_among_log_lines_before_and_after() {

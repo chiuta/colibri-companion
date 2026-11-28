@@ -14462,6 +14462,39 @@ static TABLE: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Nothing exists at “{}”. Check the name (with .gguf at the end) or drag the file onto the window.",
+        [
+            "Rien n'existe à « {} ». Vérifiez le nom (avec .gguf à la fin) ou faites glisser le fichier sur la fenêtre.",
+            "Non esiste nulla in «{}». Controlla il nome (con .gguf alla fine) o trascina il file nella finestra.",
+            "No hay nada en «{}». Comprueba el nombre (con .gguf al final) o arrastra el archivo a la ventana.",
+            "Não existe nada em «{}». Verifique o nome (com .gguf no fim) ou arraste o ficheiro para a janela.",
+            "Unter „{}“ gibt es nichts. Prüfen Sie den Namen (mit .gguf am Ende) oder ziehen Sie die Datei ins Fenster.",
+            "Nincs semmi itt: „{}”. Ellenőrizd a nevet (.gguf végződéssel), vagy húzd a fájlt az ablakra.",
+        ],
+    ),
+    (
+        "That folder holds no .gguf file and no colibri model (config.json). Pick the .gguf file itself.",
+        [
+            "Ce dossier ne contient ni fichier .gguf ni modèle colibri (config.json). Choisissez le fichier .gguf lui-même.",
+            "Quella cartella non contiene né file .gguf né modelli colibri (config.json). Scegli direttamente il file .gguf.",
+            "Esa carpeta no contiene ningún archivo .gguf ni modelo colibri (config.json). Elige el propio archivo .gguf.",
+            "Essa pasta não contém nenhum ficheiro .gguf nem modelo colibri (config.json). Escolha o próprio ficheiro .gguf.",
+            "Dieser Ordner enthält weder eine .gguf-Datei noch ein colibri-Modell (config.json). Wählen Sie die .gguf-Datei selbst.",
+            "Ebben a mappában nincs .gguf fájl, sem colibri modell (config.json). Válaszd magát a .gguf fájlt.",
+        ],
+    ),
+    (
+        "The folder holds several models; pick one: {}",
+        [
+            "Le dossier contient plusieurs modèles ; choisissez-en un : {}",
+            "La cartella contiene più modelli; sceglierne uno: {}",
+            "La carpeta contiene varios modelos; elige uno: {}",
+            "A pasta contém vários modelos; escolha um: {}",
+            "Der Ordner enthält mehrere Modelle; wählen Sie eines: {}",
+            "A mappa több modellt tartalmaz; válassz egyet: {}",
+        ],
+    ),
+    (
         "Shrink texts that are too long",
         [
             "Réduire les textes trop longs",
