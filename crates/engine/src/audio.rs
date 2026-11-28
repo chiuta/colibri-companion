@@ -1431,6 +1431,12 @@ struct Linear {
 impl Linear {
     fn apply(&self, x: &[f32], n: usize) -> Vec<f32> {
         let mut out = vec![0.0f32; n * self.out];
+        if n > 0
+            && crate::slicegpu::active()
+            && crate::slicegpu::try_rows(&self.w, self.inn, x, n, self.b.as_deref(), &mut out)
+        {
+            return out;
+        }
         par_rows(&mut out, self.out, n * self.out * self.inn, |r0, ch| {
             for (i, row) in ch.chunks_mut(self.out).enumerate() {
                 let xr = &x[(r0 + i) * self.inn..(r0 + i + 1) * self.inn];
@@ -1512,6 +1518,8 @@ impl Conv {
 }
 
 pub struct Whisper {
+    /// Declared first so it is dropped before the weights it points at.
+    reg: crate::slicegpu::Registration,
     cfg: WhisperConfig,
     conv1: Conv,
     conv2: Conv,
@@ -1652,6 +1660,7 @@ impl Whisper {
             None
         };
         Ok(Whisper {
+            reg: Default::default(),
             cfg,
             conv1,
             conv2,
@@ -1664,6 +1673,31 @@ impl Whisper {
             dec_ln,
             proj_out,
         })
+    }
+
+    /// Put the big matrices (attention, feed-forward, cross-attention and the output head) on `be`.
+    /// Products then run there in batches and fall back to the CPU for good if the device errs.
+    /// Never fails: the report says what happened.
+    pub fn attach_backend(
+        &mut self,
+        be: Arc<dyn crate::backend::Backend>,
+    ) -> crate::accel::AttachReport {
+        self.reg = Default::default();
+        let d = self.cfg.d_model;
+        let mut ls: Vec<&Linear> = vec![];
+        for l in &self.enc_layers {
+            ls.extend([&l.attn.q, &l.attn.k, &l.attn.v, &l.attn.o, &l.fc1, &l.fc2]);
+        }
+        for l in &self.dec_layers {
+            ls.extend([&l.attn.q, &l.attn.k, &l.attn.v, &l.attn.o]);
+            ls.extend([&l.cross.q, &l.cross.k, &l.cross.v, &l.cross.o]);
+            ls.extend([&l.fc1, &l.fc2]);
+        }
+        let mut mats: Vec<(&[f32], usize)> = ls.iter().map(|l| (l.w.as_slice(), l.inn)).collect();
+        mats.push((self.proj_out.as_deref().unwrap_or(&self.tok_emb), d));
+        let (reg, rep) = crate::slicegpu::register(be, &mats);
+        self.reg = reg;
+        rep
     }
 
     /// Opens a directory with `config.json` and safetensors weights (single file or sharded).
@@ -1822,6 +1856,11 @@ impl Whisper {
         let last = layer_norm(&x[(n - 1) * d..], d, &self.dec_ln.g, &self.dec_ln.b);
         let emb = self.proj_out.as_deref().unwrap_or(&self.tok_emb);
         let mut logits = vec![0.0f32; c.vocab];
+        if crate::slicegpu::active()
+            && crate::slicegpu::try_rows(emb, d, &last, 1, None, &mut logits)
+        {
+            return Ok(logits);
+        }
         par_rows(&mut logits, 1, c.vocab * d, |r0, ch| {
             for (i, y) in ch.iter_mut().enumerate() {
                 *y = simd::dot_f32(&last, &emb[(r0 + i) * d..(r0 + i + 1) * d]);
@@ -2354,6 +2393,8 @@ impl Whisper {
 /// Maps encoder frames to LLM embedding rows: stack `stack` neighbouring frames, then a linear
 /// layer, optionally GELU and a second linear layer.
 pub struct AudioProjector {
+    /// Declared first so it is dropped before the weights it points at.
+    reg: crate::slicegpu::Registration,
     stack: usize,
     l1: Linear,
     l2: Option<Linear>,
@@ -2422,7 +2463,27 @@ impl AudioProjector {
                 "projector weights contain NaN or infinity".into(),
             ));
         }
-        Ok(AudioProjector { stack, l1, l2 })
+        Ok(AudioProjector {
+            reg: Default::default(),
+            stack,
+            l1,
+            l2,
+        })
+    }
+
+    /// Put the projector's matrices on `be` (see [`Whisper::attach_backend`]).
+    pub fn attach_backend(
+        &mut self,
+        be: Arc<dyn crate::backend::Backend>,
+    ) -> crate::accel::AttachReport {
+        self.reg = Default::default();
+        let mats: Vec<(&[f32], usize)> = std::iter::once(&self.l1)
+            .chain(&self.l2)
+            .map(|l| (l.w.as_slice(), l.inn))
+            .collect();
+        let (reg, rep) = crate::slicegpu::register(be, &mats);
+        self.reg = reg;
+        rep
     }
 
     /// Reads `{prefix}linear_1.{weight,bias}` and optionally `{prefix}linear_2.*` (names are a
@@ -3696,6 +3757,53 @@ mod tests {
                 .all(|(x, y)| (x - y).abs() < 1e-4),
             "the caches stay equivalent"
         );
+    }
+
+    #[test]
+    fn the_accelerator_gives_the_same_encoding_and_logits_and_the_cpu_takes_over_when_it_fails() {
+        use crate::slicegpu::testbe::flaky;
+        let _g = crate::slicegpu::test_lock();
+        let near = |a: &[f32], b: &[f32]| {
+            assert_eq!(a.len(), b.len());
+            for (x, y) in a.iter().zip(b) {
+                assert!((x - y).abs() < 3e-3 * (1.0 + y.abs()), "{x} vs {y}");
+            }
+        };
+        let run = |w: &Whisper| {
+            let enc = w.encode(&tiny_mel(700.0)).unwrap();
+            let mut c = w.start(&enc).unwrap();
+            let l1 = w.step(&mut c, &[1, 2]).unwrap();
+            let l2 = w.step(&mut c, &[5]).unwrap();
+            (enc, l1, l2)
+        };
+        let mut w = tiny_model(3);
+        let cpu = run(&w);
+        let rep = w.attach_backend(flaky(usize::MAX, usize::MAX));
+        assert!(rep.active && rep.matrices >= 20, "{rep:?}");
+        let on = run(&w);
+        near(&on.0, &cpu.0);
+        near(&on.1, &cpu.1);
+        near(&on.2, &cpu.2);
+        // the device dies after a few products: the CPU finishes the job with the same answer
+        w.attach_backend(flaky(2, 5));
+        let again = run(&w);
+        near(&again.0, &cpu.0);
+        near(&again.1, &cpu.1);
+        near(&again.2, &cpu.2);
+        assert!(crate::slicegpu::failure().is_some());
+        drop(w);
+        assert_eq!(run(&tiny_model(3)), cpu, "back to the CPU, bit for bit");
+        // the projector too
+        let mut r = Xs(9);
+        let w1: Vec<f32> = (0..24 * 32).map(|_| r.unit() * 0.2).collect();
+        let w2: Vec<f32> = (0..20 * 24).map(|_| r.unit() * 0.2).collect();
+        let mut p = AudioProjector::new(2, 16, w1, Some(vec![0.1; 24]), Some((w2, None))).unwrap();
+        let enc: Vec<f32> = (0..8 * 16).map(|i| (i as f32 * 0.3).sin()).collect();
+        let want = p.project(&enc, 16).unwrap();
+        assert!(p.attach_backend(flaky(usize::MAX, usize::MAX)).active);
+        let got = p.project(&enc, 16).unwrap();
+        near(&got.data, &want.data);
+        drop(p);
     }
 
     #[test]

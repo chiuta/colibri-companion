@@ -289,6 +289,14 @@ struct Moe {
     down_scale: Option<Vec<f32>>,
     experts: Experts,
     used: usize,
+    /// experts kept between tokens while a device holds them (capacity 0 = read per token)
+    cache: LruCache<GExpert>,
+}
+
+/// One routed expert and its device copies (gate, up, down).
+struct GExpert {
+    w: [Weight; 3],
+    dev: [Option<Resident>; 3],
 }
 
 struct Ple {
@@ -477,6 +485,7 @@ impl Gemma4Model {
                         mmap: o.mmap,
                     },
                     used: cfg.used,
+                    cache: LruCache::default(),
                 })
             } else {
                 None
@@ -572,7 +581,7 @@ impl Gemma4State {
 // ------------------------------------------------------------------------------ accelerator
 
 pub use crate::accel::AttachReport;
-use crate::accel::{Accel, Item, key_of};
+use crate::accel::{Accel, Item, LruCache, Resident, key_of, mv_res, weight_bytes};
 
 impl Gemma4Model {
     /// `out = W · x`: on the device when the matrix was uploaded and the device still works,
@@ -597,6 +606,9 @@ impl Gemma4Model {
     /// and the report says why.
     pub fn attach_backend(&mut self, be: Arc<dyn Backend>) -> AttachReport {
         self.accel = None;
+        for m in self.layers.iter().filter_map(|l| l.moe.as_ref()) {
+            m.cache.reset(0);
+        }
         let h = self.cfg.hidden;
         let mut items: Vec<Item> = vec![];
         let head = self.head.as_ref().unwrap_or(&self.embed);
@@ -610,9 +622,45 @@ impl Gemma4Model {
                 items.push(Item::new(w, h, false));
             }
         }
-        let (acc, rep) = Accel::build(be, &items);
+        let (acc, mut rep) = Accel::build(be, &items);
         self.accel = acc;
+        let first = self.layers.iter().find_map(|l| l.moe.as_ref());
+        if let (Some(a), Some(m0)) = (&self.accel, first)
+            && let Ok((g, u, d)) = m0.experts.get(0)
+        {
+            let ff = self.cfg.ff_exp;
+            let bytes = [(&g, h), (&u, h), (&d, ff)]
+                .iter()
+                .map(|(w, c)| weight_bytes(w, *c))
+                .sum::<Option<u64>>()
+                .unwrap_or(0);
+            let n = self.layers.iter().filter(|l| l.moe.is_some()).count();
+            let cap = a.expert_cap(bytes, n, self.cfg.experts, self.cfg.used);
+            for m in self.layers.iter().filter_map(|l| l.moe.as_ref()) {
+                m.cache.reset(cap);
+            }
+            if cap > 0 {
+                let t = format!("up to {cap} routed experts per layer are kept on the device");
+                rep.note = if rep.note.is_empty() {
+                    t
+                } else {
+                    format!("{}; {t}", rep.note)
+                };
+            }
+        }
         rep
+    }
+
+    /// Experts held by the caches now and the device bytes they use (for tests and reports).
+    pub fn resident_experts(&self) -> (usize, u64) {
+        (
+            self.layers
+                .iter()
+                .filter_map(|l| l.moe.as_ref())
+                .map(|m| m.cache.len())
+                .sum(),
+            self.accel.as_ref().map_or(0, Accel::resident_bytes),
+        )
     }
 }
 
@@ -698,17 +746,32 @@ impl Gemma4Model {
         let ff = self.cfg.ff_exp;
         let mut out = vec![0.0f32; h];
         for (ex, w) in picks {
-            let (gw, uw, dw) = m
-                .experts
-                .get(ex)
+            let ac = self.accel.as_ref();
+            let xp = m
+                .cache
+                .get_or_load(ex, || {
+                    let (g, u, d) = m.experts.get(ex)?;
+                    let mut xp = GExpert {
+                        w: [g, u, d],
+                        dev: [None, None, None],
+                    };
+                    if let Some(a) = ac.filter(|_| m.cache.cap() > 0) {
+                        xp.dev = [
+                            a.upload(&xp.w[0], h),
+                            a.upload(&xp.w[1], h),
+                            a.upload(&xp.w[2], ff),
+                        ];
+                    }
+                    Ok::<_, G4Error>(xp)
+                })
                 .map_err(|e| ModelError::Experts(e.to_string()))?;
             let (mut g, mut u, mut d) = (vec![0.0; ff], vec![0.0; ff], vec![0.0; h]);
-            gw.matvec(h, x2, &mut g)?;
-            uw.matvec(h, x2, &mut u)?;
+            mv_res(ac, &xp.w[0], xp.dev[0].as_ref(), h, x2, &mut g)?;
+            mv_res(ac, &xp.w[1], xp.dev[1].as_ref(), h, x2, &mut u)?;
             for (a, b) in g.iter_mut().zip(&u) {
                 *a = activate(Act::GeluTanh, *a) * b;
             }
-            dw.matvec(ff, &g, &mut d)?;
+            mv_res(ac, &xp.w[2], xp.dev[2].as_ref(), ff, &g, &mut d)?;
             out.iter_mut().zip(&d).for_each(|(o, d)| *o += w * d);
         }
         Ok(out)
@@ -1459,6 +1522,64 @@ mod tests {
         close(&run(&m, &toks), &cpu, 1e-4);
         assert!(m.accel_failure().unwrap().contains("device lost"));
         close(&run(&m, &toks), &cpu, 1e-4);
+    }
+
+    fn moe_opt() -> Opt {
+        Opt::full()
+    }
+
+    #[test]
+    fn moe_experts_run_on_the_device_and_match_the_cpu() {
+        let toks: Vec<usize> = (0..9).map(|i| (i * 5 + 2) % V).collect();
+        for q in [false, true] {
+            let mut m = owned(&Opt {
+                quant: q,
+                ..moe_opt()
+            });
+            let cpu = run(&m, &toks);
+            let be = Odd::new(usize::MAX, 1.0, None);
+            let rep = m.attach_backend(be.clone());
+            assert!(rep.active && rep.note.contains("routed experts"), "{rep:?}");
+            close(&run(&m, &toks), &cpu, 1e-4);
+            let (n, bytes) = m.resident_experts();
+            assert!(n > 0 && bytes > 0, "{n} {bytes}");
+            close(&run(&m, &toks), &cpu, 1e-4);
+            assert_eq!(m.resident_experts(), (n, bytes));
+            assert!(m.accel_failure().is_none());
+            m.attach_backend(Odd::new(usize::MAX, 1.5, None));
+            assert_eq!(m.resident_experts(), (0, 0));
+            assert_eq!(run(&m, &toks), cpu);
+        }
+    }
+
+    #[test]
+    fn moe_experts_fall_back_when_the_device_dies_midway() {
+        let toks: Vec<usize> = (0..9).map(|i| (i * 3 + 1) % V).collect();
+        let mut m = owned(&moe_opt());
+        let cpu = run(&m, &toks);
+        for ok in [3, 20, 60, 120] {
+            m.attach_backend(Odd::new(ok, 1.0, None));
+            close(&run(&m, &toks), &cpu, 1e-4);
+            assert!(m.accel_failure().unwrap().contains("device lost"), "{ok}");
+            close(&run(&m, &toks), &cpu, 1e-4);
+        }
+    }
+
+    #[test]
+    fn moe_small_device_memory_keeps_fewer_experts() {
+        let toks = [4usize, 5, 6, 7, 8, 9, 10];
+        let mut m = owned(&moe_opt());
+        let cpu = run(&m, &toks);
+        let all = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        close(&run(&m, &toks), &cpu, 1e-4);
+        let b_all = m.resident_experts().1;
+        assert!(b_all > 0);
+        m.attach_backend(Odd::new(usize::MAX, 1.0, Some(all.bytes + b_all / 2)));
+        close(&run(&m, &toks), &cpu, 1e-4);
+        assert!(m.resident_experts().1 <= b_all / 2);
+        m.attach_backend(Odd::new(usize::MAX, 1.0, Some(all.bytes)));
+        close(&run(&m, &toks), &cpu, 1e-4);
+        assert_eq!(m.resident_experts().1, 0);
     }
 
     #[test]

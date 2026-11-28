@@ -369,9 +369,23 @@ pub struct HybridModel {
     cfg: HybridConfig,
     /// The attention layers (with their MLPs), the embedding table, the final norm and the head.
     attn: Model,
+    /// `true` when a failed upload consumed the attention weights (see `attach_backend`).
+    attn_lost: bool,
     /// One entry per SSM layer, in layer order.
     ssm: Vec<SsmLayer>,
     hidden: usize,
+}
+
+/// Device-side KV positions given to the attention layers of a hybrid (there are few of them).
+const ATTN_KV_CAP: usize = 16384;
+
+/// Matrix `w` of row length `cols`, as the backend takes it.
+fn weight_ref(w: &Weight, cols: usize) -> crate::backend::WeightRef<'_> {
+    use crate::backend::WeightRef;
+    match w {
+        Weight::Dense(v) => WeightRef::dense(v.len() / cols.max(1), cols, v),
+        Weight::Quant(q) => WeightRef::quant(q.dtype, q.rows, q.cols, q.bytes.as_slice()),
+    }
 }
 
 enum SsmLayerState {
@@ -426,8 +440,13 @@ fn load_err(e: impl std::fmt::Display) -> FamilyError {
 }
 
 impl HybridModel {
-    /// Put the state-space layers' matrices (and their dense MLPs) on `be`; never fails. The
-    /// attention half is a dense [`Model`] and is offloaded through it.
+    /// Put the state-space layers' matrices (and their dense MLPs) and the attention layers on
+    /// `be`; never fails — the report says what happened and whatever the device does not take
+    /// stays on the CPU. The attention half is a dense [`Model`] and is offloaded through it, so
+    /// its layers keep their KV cache on the device (up to 16384 positions; a state made before
+    /// the call cannot be continued after it, and a state with a device cache cannot be forked).
+    /// If the device fails *while* the attention layers run, that call returns an error (the
+    /// device-side cache cannot be rebuilt on the host); the state-space products fall back alone.
     pub fn attach_backend(
         &mut self,
         be: Arc<dyn crate::backend::Backend>,
@@ -449,9 +468,112 @@ impl HybridModel {
                 mats.push((v, v.len() / h.max(1)));
             }
         }
-        let (reg, rep) = crate::slicegpu::register(be, &mats);
+        let (reg, mut rep) = crate::slicegpu::register(be.clone(), &mats);
         self.reg = reg;
+        self.attach_attention(be, &mut rep);
         rep
+    }
+
+    fn attach_attention(
+        &mut self,
+        be: Arc<dyn crate::backend::Backend>,
+        rep: &mut crate::accel::AttachReport,
+    ) {
+        use crate::model::{AccelOptions, Weights};
+        let n = self.attn.w.layers.len();
+        if n == 0 || self.attn_lost {
+            return;
+        }
+        let h = self.hidden;
+        let say = |rep: &mut crate::accel::AttachReport, t: String| {
+            if !rep.note.is_empty() {
+                rep.note.push_str("; ");
+            }
+            rep.note.push_str(&t);
+        };
+        // A failed upload would consume the weights, so a small upload is tried first.
+        let probe = || -> Result<(), String> {
+            let l = &self.attn.w.layers[0];
+            be.alloc(h).map_err(|e| e.to_string())?;
+            be.upload(weight_ref(&l.wq, h)).map_err(|e| e.to_string())?;
+            Ok(())
+        };
+        if let Err(e) = probe() {
+            say(rep, format!("attention layers stay on the CPU ({e})"));
+            return;
+        }
+        // an empty stand-in for the model while the real one is handed to the device
+        let mut spec = self.attn.spec.clone();
+        spec.layers = 0;
+        spec.vocab = 0;
+        let empty = Weights {
+            final_norm: vec![0.0; h],
+            ..Default::default()
+        };
+        let Ok(stand_in) = Model::new(spec, empty) else {
+            say(rep, "attention layers stay on the CPU".into());
+            return;
+        };
+        let old = std::mem::replace(&mut self.attn, stand_in);
+        let per_layer: Vec<u64> = old
+            .w
+            .layers
+            .iter()
+            .map(|l| {
+                [&l.wq, &l.wk, &l.wv, &l.wo, &l.w_gate, &l.w_up, &l.w_down]
+                    .iter()
+                    .map(|w| w.stored_bytes() as u64)
+                    .sum()
+            })
+            .collect();
+        let opts = AccelOptions {
+            kv_capacity: (self.cfg.spec.context as usize).clamp(1, ATTN_KV_CAP),
+            ..AccelOptions::default()
+        };
+        match old.with_backend_opts(be, opts) {
+            Err(e) => {
+                self.attn_lost = true;
+                say(
+                    rep,
+                    format!(
+                        "the device refused the attention layers ({e}) and they were lost; reload the model"
+                    ),
+                );
+            }
+            Ok(mut m) => {
+                let on: Vec<bool> = m.offloaded();
+                let k = on.iter().filter(|b| **b).count();
+                rep.total += n * 7;
+                if k == 0 {
+                    // no layer went: a model without a device cache has no position limit
+                    let w = std::mem::take(&mut m.w);
+                    let threads = m.threads();
+                    match Model::new(m.spec.clone(), w) {
+                        Ok(mut plain) => {
+                            plain.set_threads(threads);
+                            self.attn = plain;
+                        }
+                        Err(_) => {
+                            self.attn_lost = true;
+                        }
+                    }
+                    say(rep, "the device took no attention layer".into());
+                } else {
+                    rep.matrices += k * 7;
+                    rep.bytes += on
+                        .iter()
+                        .zip(&per_layer)
+                        .filter(|(o, _)| **o)
+                        .map(|(_, b)| *b)
+                        .sum::<u64>();
+                    rep.active = true;
+                    self.attn = m;
+                    if k < n {
+                        say(rep, format!("{k}/{n} attention layers on the device"));
+                    }
+                }
+            }
+        }
     }
 
     pub fn config(&self) -> &HybridConfig {
@@ -596,6 +718,7 @@ impl HybridModel {
             reg: Default::default(),
             cfg,
             attn,
+            attn_lost: false,
             ssm,
             hidden: h,
         })
@@ -630,6 +753,12 @@ impl HybridModel {
     ) -> Result<Vec<f32>, ModelError> {
         if tokens.is_empty() {
             return Err(ModelError::NoTokens);
+        }
+        if self.attn_lost {
+            return Err(ModelError::Backend(
+                "the attention layers were lost when the device refused them; reload the model"
+                    .into(),
+            ));
         }
         let vocab = self.vocab();
         if let Some(&t) = tokens.iter().find(|&&t| t >= vocab) {
@@ -712,14 +841,34 @@ impl HybridModel {
             rmsnorm(xr, &l.ff_norm, eps, nr);
         }
         let (mut g, mut u, mut yt) = (vec![0.0f32; b * ff], vec![0.0f32; b * ff], Vec::new());
-        l.gate.matmat_nt(h, &normed, b, &mut g, &mut yt, nt)?;
-        l.up.matmat_nt(h, &normed, b, &mut u, &mut yt, nt)?;
+        mm(&l.gate, h, &normed, b, &mut g, &mut yt, nt)?;
+        mm(&l.up, h, &normed, b, &mut u, &mut yt, nt)?;
         silu_mul(&mut g, &u);
         let mut d = vec![0.0f32; b * h];
-        l.down.matmat_nt(ff, &g, b, &mut d, &mut yt, nt)?;
+        mm(&l.down, ff, &g, b, &mut d, &mut yt, nt)?;
         x.iter_mut().zip(&d).for_each(|(a, o)| *a += o);
         Ok(())
     }
+}
+
+/// `out = W · x` for `b` rows: on the device when the matrix is registered and the device works,
+/// otherwise exactly [`Weight::matmat_nt`].
+fn mm(
+    w: &Weight,
+    cols: usize,
+    x: &[f32],
+    b: usize,
+    out: &mut [f32],
+    yt: &mut Vec<f32>,
+    nt: usize,
+) -> Result<(), ModelError> {
+    if let Weight::Dense(v) = w
+        && crate::slicegpu::active()
+        && crate::slicegpu::try_rows(v, cols, x, b, None, out)
+    {
+        return Ok(());
+    }
+    w.matmat_nt(cols, x, b, out, yt, nt)
 }
 
 impl LanguageModel for HybridModel {
@@ -918,6 +1067,66 @@ mod tests {
             assert!(close(&on, &cpu, 1e-3));
             assert!(crate::slicegpu::failure().is_some());
         }
+    }
+
+    #[test]
+    fn the_attention_layers_go_to_the_device_and_the_cpu_keeps_what_the_device_refuses() {
+        use crate::accel::testbe::Odd;
+        let _g = crate::slicegpu::test_lock();
+        // full rotary dimension: the attention layers are of the kind a device can take
+        let json = BAMBA.replace(
+            "\"partial_rotary_factor\":0.5",
+            "\"partial_rotary_factor\":1.0",
+        );
+        let mut m = model(&json, 3);
+        let cpu = m.forward_batch(&mut m.new_state(), &TOKS).unwrap();
+        let cpu_steps: Vec<Vec<f32>> = {
+            let mut st = m.new_state();
+            TOKS.iter()
+                .map(|&t| m.forward(&mut st, t).unwrap())
+                .collect()
+        };
+        let rep = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        assert!(rep.active, "{rep:?}");
+        let on = m.attention_model().offloaded();
+        assert_eq!(on, [true, true], "{rep:?}");
+        assert!(rep.total >= 14 && rep.matrices >= 14, "{rep:?}");
+        let got = m.forward_batch(&mut m.new_state(), &TOKS).unwrap();
+        assert!(close(&got, &cpu, 2e-3));
+        let mut st = m.new_state();
+        for (&t, want) in TOKS.iter().zip(&cpu_steps) {
+            assert!(close(&m.forward(&mut st, t).unwrap(), want, 2e-3));
+        }
+        assert_eq!(st.pos, TOKS.len());
+        // a device with no memory takes no attention layer: plain CPU numerics again
+        let rep = m.attach_backend(Odd::new(usize::MAX, 1.0, Some(0)));
+        assert!(m.attention_model().offloaded().is_empty(), "{rep:?}");
+        assert!(
+            rep.note.contains("no attention layer") || !rep.note.is_empty(),
+            "{rep:?}"
+        );
+        let back = m.forward_batch(&mut m.new_state(), &TOKS).unwrap();
+        assert!(close(&back, &cpu, 2e-3));
+        // the state-space products still fell back or worked; nothing was lost
+        let rep = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        assert!(rep.active);
+        assert_eq!(m.attention_model().offloaded(), [true, true]);
+        // a device that dies while the attention layers run gives an error, never wrong numbers
+        let rep = m.attach_backend(Odd::new(40, 1.0, None));
+        assert!(rep.active);
+        let mut dead = false;
+        for _ in 0..4 {
+            match m.forward_batch(&mut m.new_state(), &TOKS) {
+                Ok(l) => assert!(close(&l, &cpu, 2e-3)),
+                Err(ModelError::Backend(_)) => dead = true,
+                Err(e) => panic!("{e}"),
+            }
+        }
+        assert!(dead || crate::slicegpu::failure().is_some());
+        // reattaching to a working device recovers
+        m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        let again = m.forward_batch(&mut m.new_state(), &TOKS).unwrap();
+        assert!(close(&again, &cpu, 2e-3));
     }
 
     #[test]

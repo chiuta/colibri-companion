@@ -186,6 +186,8 @@ pub enum Pool {
 
 #[derive(Debug, Clone)]
 pub struct Bert {
+    /// Declared first so it is dropped before the weights it points at.
+    reg: crate::slicegpu::Registration,
     pub cfg: BertConfig,
     word: Vec<f32>,
     pos: Vec<f32>,
@@ -348,6 +350,7 @@ impl Bert {
             None
         };
         Ok(Bert {
+            reg: Default::default(),
             word: get("embeddings.word_embeddings.weight", cfg.vocab * h)?,
             pos: get("embeddings.position_embeddings.weight", cfg.max_pos * h)?,
             typ: get(
@@ -360,6 +363,29 @@ impl Bert {
             classifier,
             cfg,
         })
+    }
+
+    /// Put the big matrices (attention, feed-forward, pooler, classifier) on `be`; every product
+    /// that goes through [`ops::matvec`] then runs there, and falls back to the CPU for good if
+    /// the device errs. Never fails: the report says what happened. Copies made by `clone` start
+    /// on the CPU.
+    pub fn attach_backend(
+        &mut self,
+        be: std::sync::Arc<dyn crate::backend::Backend>,
+    ) -> crate::accel::AttachReport {
+        self.reg = Default::default();
+        let mut mats: Vec<(&[f32], usize)> = vec![];
+        for l in &self.layers {
+            for m in [&l.q, &l.k, &l.v, &l.o, &l.up, &l.down] {
+                mats.push((&m.w, m.cols));
+            }
+        }
+        for m in self.pooler.iter().chain(&self.classifier) {
+            mats.push((&m.w, m.cols));
+        }
+        let (reg, rep) = crate::slicegpu::register(be, &mats);
+        self.reg = reg;
+        rep
     }
 
     pub fn has_classifier(&self) -> bool {
@@ -530,6 +556,14 @@ pub struct Encoder {
 }
 
 impl Encoder {
+    /// See [`Bert::attach_backend`].
+    pub fn attach_backend(
+        &mut self,
+        be: std::sync::Arc<dyn crate::backend::Backend>,
+    ) -> crate::accel::AttachReport {
+        self.bert.attach_backend(be)
+    }
+
     /// A Hugging Face folder: `config.json`, `tokenizer.json`, safetensors, optionally `1_Pooling/config.json`.
     pub fn open(dir: &Path) -> Result<Encoder, BertError> {
         let bert = Bert::open(dir)?;
@@ -903,6 +937,39 @@ pub(crate) mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_accelerator_gives_the_same_vectors_and_the_cpu_takes_over_when_it_fails() {
+        use crate::accel::testbe::Odd;
+        let _g = crate::slicegpu::test_lock();
+        let c = tiny_cfg();
+        let mut m = Bert::from_source(c.clone(), &tiny_tensors(&c, 5, true, "")).unwrap();
+        let ids = [3u32, 11, 4, 4, 19, 0];
+        let ty = [0u32, 0, 0, 1, 1, 1];
+        let cpu = m.forward(&ids, Some(&ty)).unwrap();
+        let cpu_score = m.classify(&ids, &ty).unwrap();
+        let rep = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        assert!(rep.active && rep.matrices >= 12, "{rep:?}");
+        let on = m.forward(&ids, Some(&ty)).unwrap();
+        for (a, b) in on.iter().zip(&cpu) {
+            assert!((a - b).abs() < 1e-3, "{a} vs {b}");
+        }
+        let on_score = m.classify(&ids, &ty).unwrap();
+        assert!((on_score[0] - cpu_score[0]).abs() < 1e-3);
+        // a copy is on the CPU and bit-identical to the original CPU run
+        assert_eq!(m.clone().forward(&ids, Some(&ty)).unwrap(), cpu);
+        // the device dies after a few products: same answer, the failure is recorded
+        m.attach_backend(Odd::new(4, 1.0, None));
+        let again = m.forward(&ids, Some(&ty)).unwrap();
+        for (a, b) in again.iter().zip(&cpu) {
+            assert!((a - b).abs() < 1e-3);
+        }
+        assert!(crate::slicegpu::failure().is_some());
+        drop(m);
+        // the registry is empty again: a fresh model runs on the CPU exactly as before
+        let fresh = Bert::from_source(c.clone(), &tiny_tensors(&c, 5, true, "")).unwrap();
+        assert_eq!(fresh.forward(&ids, Some(&ty)).unwrap(), cpu);
     }
 
     #[test]

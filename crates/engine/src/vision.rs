@@ -438,6 +438,12 @@ impl Lin {
     pub fn apply(&self, x: &[f32], n: usize) -> Vec<f32> {
         debug_assert_eq!(x.len(), n * self.cols);
         let (rows, cols) = (self.rows, self.cols);
+        if n > 0 && crate::slicegpu::active() {
+            let mut out = vec![0f32; n * rows];
+            if crate::slicegpu::try_rows(&self.w, cols, x, n, self.b.as_deref(), &mut out) {
+                return out;
+            }
+        }
         let mut yt = vec![0f32; n * rows];
         if n > 0 {
             let min = (65536 / cols.max(1)).max(1);
@@ -499,6 +505,8 @@ pub struct Projector {
 /// The encoder plus projector.
 #[derive(Clone, Debug)]
 pub struct VisionModel {
+    /// Declared first so it is dropped before the weights it points at.
+    reg: crate::slicegpu::Registration,
     spec: VisionSpec,
     w: VisionWeights,
     proj: Projector,
@@ -632,11 +640,34 @@ impl VisionModel {
             }
         };
         Ok(VisionModel {
+            reg: Default::default(),
             spec,
             w,
             proj,
             out_dim,
         })
+    }
+
+    /// Put the big matrices (patch embedding, attention, feed-forward, projector) on `be`.
+    /// Products then run there in batches and fall back to the CPU for good if the device errs.
+    /// Never fails: the report says what happened. Copies made by `clone` start on the CPU.
+    pub fn attach_backend(
+        &mut self,
+        be: std::sync::Arc<dyn crate::backend::Backend>,
+    ) -> crate::accel::AttachReport {
+        self.reg = Default::default();
+        let mut mats: Vec<(&[f32], usize)> = vec![(&self.w.patch.w, self.w.patch.cols)];
+        for l in &self.w.layers {
+            for m in [&l.q, &l.k, &l.v, &l.o, &l.fc1, &l.fc2] {
+                mats.push((&m.w, m.cols));
+            }
+        }
+        for m in self.proj.l1.iter().chain(&self.proj.l2) {
+            mats.push((&m.w, m.cols));
+        }
+        let (reg, rep) = crate::slicegpu::register(be, &mats);
+        self.reg = reg;
+        rep
     }
 
     pub fn spec(&self) -> &VisionSpec {
@@ -1857,6 +1888,35 @@ mod tests {
         let img = picture(16, 16, 4);
         let out = m.encode_chw(&img, 16, 16).unwrap();
         close(&out, &reference(&m, &img, 16, 16), 5e-4);
+    }
+
+    #[test]
+    fn the_accelerator_gives_the_same_embeddings_and_the_cpu_takes_over_when_it_fails() {
+        use crate::slicegpu::testbe::flaky;
+        let _g = crate::slicegpu::test_lock();
+        let s = VisionSpec::siglip(16, 4, 16, 2, 2, 20);
+        let mut m = VisionModel::random(s, 8, 33).unwrap();
+        let img = picture(16, 16, 6);
+        let cpu = m.encode_chw(&img, 16, 16).unwrap();
+        let rep = m.attach_backend(flaky(usize::MAX, usize::MAX));
+        assert!(rep.active && rep.matrices >= 13, "{rep:?}");
+        let on = m.encode_chw(&img, 16, 16).unwrap();
+        assert_eq!(on.len(), cpu.len());
+        for (a, b) in on.iter().zip(&cpu) {
+            assert!((a - b).abs() < 2e-3 * (1.0 + b.abs()), "{a} vs {b}");
+        }
+        // a copy runs on the CPU, bit for bit as before
+        assert_eq!(m.clone().encode_chw(&img, 16, 16).unwrap(), cpu);
+        // the device dies after a few batched products: same answer from the CPU
+        m.attach_backend(flaky(usize::MAX, 3));
+        let again = m.encode_chw(&img, 16, 16).unwrap();
+        for (a, b) in again.iter().zip(&cpu) {
+            assert!((a - b).abs() < 2e-3 * (1.0 + b.abs()));
+        }
+        assert!(crate::slicegpu::failure().is_some());
+        drop(m);
+        let fresh = VisionModel::random(VisionSpec::siglip(16, 4, 16, 2, 2, 20), 8, 33).unwrap();
+        assert_eq!(fresh.encode_chw(&img, 16, 16).unwrap(), cpu);
     }
 
     #[test]

@@ -120,6 +120,57 @@ pub fn accelerate_family(model: &mut AnyModel) {
     let _ = model;
 }
 
+/// Run `attach` with the shared device (if there is one) and say in one line what came of it.
+#[cfg(feature = "gpu")]
+fn attach_with(
+    attach: impl FnOnce(
+        std::sync::Arc<dyn companion_engine::backend::Backend>,
+    ) -> companion_engine::accel::AttachReport,
+) {
+    let Some(d) = dev::device() else { return };
+    let rep = attach(d.backend.clone());
+    say(
+        &d.description,
+        &rep.note,
+        rep.active,
+        rep.matrices,
+        rep.total,
+        rep.bytes,
+    );
+}
+
+/// BERT / embedding / reranker models: the attention, feed-forward, pooler and classifier matrices.
+pub fn accelerate_encoder(enc: &mut companion_engine::bert::Encoder) {
+    #[cfg(feature = "gpu")]
+    attach_with(|be| enc.attach_backend(be));
+    #[cfg(not(feature = "gpu"))]
+    let _ = enc;
+}
+
+/// Vision encoders (patch embedding, attention, feed-forward, projector).
+pub fn accelerate_vision(model: &mut companion_engine::vision::VisionModel) {
+    #[cfg(feature = "gpu")]
+    attach_with(|be| model.attach_backend(be));
+    #[cfg(not(feature = "gpu"))]
+    let _ = model;
+}
+
+/// Whisper-style speech models (encoder, decoder, cross-attention, output head).
+pub fn accelerate_whisper(model: &mut companion_engine::audio::Whisper) {
+    #[cfg(feature = "gpu")]
+    attach_with(|be| model.attach_backend(be));
+    #[cfg(not(feature = "gpu"))]
+    let _ = model;
+}
+
+/// The linear layers that map audio-encoder frames to language-model embeddings.
+pub fn accelerate_audio_projector(proj: &mut companion_engine::audio::AudioProjector) {
+    #[cfg(feature = "gpu")]
+    attach_with(|be| proj.attach_backend(be));
+    #[cfg(not(feature = "gpu"))]
+    let _ = proj;
+}
+
 #[cfg(feature = "gpu")]
 fn say(desc: &str, note: &str, active: bool, n: usize, total: usize, bytes: u64) {
     if active {

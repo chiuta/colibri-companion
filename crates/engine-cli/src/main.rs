@@ -521,8 +521,9 @@ fn serve_cmd(args: &Args) -> Result<(), String> {
     }
     let encoder = match args.get("encoder") {
         Some(p) => {
-            let e = companion_engine::bert::Encoder::open(Path::new(p))
+            let mut e = companion_engine::bert::Encoder::open(Path::new(p))
                 .map_err(|e| format!("--encoder: {e}"))?;
+            corbul::gpu::accelerate_encoder(&mut e);
             eprintln!(
                 "encoder {} ({} layers, hidden {}, pooling {}, cross-encoder head {})",
                 e.name,

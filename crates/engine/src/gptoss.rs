@@ -10,7 +10,7 @@
 //!
 //! Written from the published architecture. Checked on small synthetic models; **not** compared
 //! with a real gpt-oss file.
-use crate::accel::{Accel, AttachReport, Item, key_of};
+use crate::accel::{Accel, AttachReport, Item, LruCache, Resident, key_of, mv_res, weight_bytes};
 use crate::arch::RopeScaling;
 use crate::backend::Backend;
 use crate::gguf::Gguf;
@@ -182,6 +182,7 @@ impl Bank {
             gate_b: self.bias(&b(&self.gate), e, ff)?,
             up_b: self.bias(&b(&self.up), e, ff)?,
             down_b: self.bias(&b(&self.down), e, h)?,
+            dev: [None, None, None],
         })
     }
 }
@@ -192,6 +193,8 @@ struct Expert {
     gate_b: Vec<f32>,
     up_b: Vec<f32>,
     down_b: Vec<f32>,
+    /// device copies of gate, up, down (dropped, and freed on the device, with the expert)
+    dev: [Option<Resident>; 3],
 }
 
 struct Layer {
@@ -210,6 +213,8 @@ struct Layer {
     router: Vec<f32>,
     router_b: Vec<f32>,
     bank: Bank,
+    /// experts kept between tokens while a device holds them (capacity 0 = read per token)
+    cache: LruCache<Expert>,
 }
 
 pub struct GptOssModel {
@@ -354,6 +359,7 @@ impl GptOssModel {
                     ff: cfg.ff,
                     mmap: o.mmap,
                 },
+                cache: LruCache::default(),
             });
         }
         let ms = 1.0 + 0.1 * cfg.yarn_factor.ln();
@@ -409,10 +415,15 @@ impl GptOssModel {
         self.accel.as_ref().and_then(Accel::failure)
     }
 
-    /// Put the attention matrices and the output head on `be` (the experts are read per token and
-    /// stay on the CPU). Never fails: without a usable device the CPU keeps running.
+    /// Put the attention matrices and the output head on `be`, and let the routed experts follow
+    /// into the memory that is left (a bounded per-layer cache of experts, uploaded when first
+    /// used and released when evicted). Never fails: without a usable device, or for what does not
+    /// fit, the CPU keeps running.
     pub fn attach_backend(&mut self, be: Arc<dyn Backend>) -> AttachReport {
         self.accel = None;
+        for l in &self.layers {
+            l.cache.reset(0);
+        }
         let (h, qd) = (self.cfg.hidden, self.cfg.heads * self.cfg.head_dim);
         let head = self.head.as_ref().unwrap_or(&self.embed);
         let mut items = vec![Item::new(head, h, true)];
@@ -424,9 +435,39 @@ impl GptOssModel {
                 Item::new(&l.wo, qd, false),
             ]);
         }
-        let (acc, rep) = Accel::build(be, &items);
+        let (acc, mut rep) = Accel::build(be, &items);
         self.accel = acc;
+        if let (Some(a), Some(l0)) = (&self.accel, self.layers.first())
+            && let Ok(ex) = l0.bank.get(0)
+        {
+            let (h, ff) = (self.cfg.hidden, self.cfg.ff);
+            let bytes = [(&ex.gate, h), (&ex.up, h), (&ex.down, ff)]
+                .iter()
+                .map(|(w, c)| weight_bytes(w, *c))
+                .sum::<Option<u64>>()
+                .unwrap_or(0);
+            let cap = a.expert_cap(bytes, self.layers.len(), self.cfg.experts, self.cfg.used);
+            for l in &self.layers {
+                l.cache.reset(cap);
+            }
+            if cap > 0 {
+                let n = format!("up to {cap} routed experts per layer are kept on the device");
+                rep.note = if rep.note.is_empty() {
+                    n
+                } else {
+                    format!("{}; {n}", rep.note)
+                };
+            }
+        }
         rep
+    }
+
+    /// Experts held by the caches now and the device bytes they use (for tests and reports).
+    pub fn resident_experts(&self) -> (usize, u64) {
+        (
+            self.layers.iter().map(|l| l.cache.len()).sum(),
+            self.accel.as_ref().map_or(0, Accel::resident_bytes),
+        )
     }
 
     fn experts(&self, l: &Layer, x: &[f32]) -> Result<Vec<f32>, ModelError> {
@@ -443,16 +484,27 @@ impl GptOssModel {
         let mut out = vec![0.0f32; h];
         for (e, w) in route(&logits, self.cfg.used) {
             let ex = l
-                .bank
-                .get(e)
+                .cache
+                .get_or_load(e, || {
+                    let mut ex = l.bank.get(e)?;
+                    if let Some(a) = self.accel.as_ref().filter(|_| l.cache.cap() > 0) {
+                        ex.dev = [
+                            a.upload(&ex.gate, h),
+                            a.upload(&ex.up, h),
+                            a.upload(&ex.down, ff),
+                        ];
+                    }
+                    Ok::<_, GptOssError>(ex)
+                })
                 .map_err(|e| ModelError::Experts(e.to_string()))?;
+            let ac = self.accel.as_ref();
             let (mut g, mut u, mut d) = (vec![0.0; ff], vec![0.0; ff], vec![0.0; h]);
-            ex.gate.matvec(h, x, &mut g)?;
-            ex.up.matvec(h, x, &mut u)?;
+            mv_res(ac, &ex.gate, ex.dev[0].as_ref(), h, x, &mut g)?;
+            mv_res(ac, &ex.up, ex.dev[1].as_ref(), h, x, &mut u)?;
             for i in 0..ff {
                 g[i] = expert_act(g[i] + ex.gate_b[i], u[i] + ex.up_b[i]);
             }
-            ex.down.matvec(ff, &g, &mut d)?;
+            mv_res(ac, &ex.down, ex.dev[2].as_ref(), ff, &g, &mut d)?;
             out.iter_mut()
                 .zip(d.iter().zip(&ex.down_b))
                 .for_each(|(o, (d, b))| *o += w * (d + b));
@@ -869,6 +921,70 @@ mod tests {
             assert!((x - y).abs() < 1e-4);
         }
         assert!(!m.attach_backend(Odd::new(usize::MAX, 1.5, None)).active);
+    }
+
+    fn close(a: &[f32], b: &[f32]) {
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b) {
+            assert!((x - y).abs() < 1e-4, "{x} vs {y}");
+        }
+    }
+
+    #[test]
+    fn experts_run_on_the_device_and_match_the_cpu() {
+        use crate::accel::testbe::Odd;
+        let mut m = open(Opt::new(), false);
+        let cpu = run(&m, &TOKS);
+        let be = Odd::new(usize::MAX, 1.0, None);
+        let rep = m.attach_backend(be.clone());
+        assert!(rep.active && rep.note.contains("routed experts"), "{rep:?}");
+        let before = be.calls.load(Ordering::Relaxed);
+        close(&run(&m, &TOKS), &cpu);
+        let (n, bytes) = m.resident_experts();
+        assert!(n > 0 && bytes > 0, "{n} {bytes}");
+        // a second run reuses them: the same answer, no new uploads
+        close(&run(&m, &TOKS), &cpu);
+        assert_eq!(m.resident_experts(), (n, bytes));
+        assert!(be.calls.load(Ordering::Relaxed) - before > TOKS.len() * 9 * 2);
+        assert!(m.accel_failure().is_none());
+        // attaching again drops every device copy
+        m.attach_backend(Odd::new(usize::MAX, 1.5, None));
+        assert_eq!(m.resident_experts(), (0, 0));
+        assert_eq!(run(&m, &TOKS), cpu);
+    }
+
+    #[test]
+    fn experts_fall_back_when_the_device_dies_midway() {
+        use crate::accel::testbe::Odd;
+        let mut m = open(Opt::new(), false);
+        let cpu = run(&m, &TOKS);
+        for ok in [3, 20, 60, 150] {
+            m.attach_backend(Odd::new(ok, 1.0, None));
+            close(&run(&m, &TOKS), &cpu);
+            assert!(m.accel_failure().unwrap().contains("device lost"), "{ok}");
+            close(&run(&m, &TOKS), &cpu);
+        }
+    }
+
+    #[test]
+    fn small_device_memory_keeps_fewer_experts() {
+        use crate::accel::testbe::Odd;
+        let mut m = open(Opt::new(), false);
+        let cpu = run(&m, &TOKS);
+        let all = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        close(&run(&m, &TOKS), &cpu);
+        let (n_all, b_all) = m.resident_experts();
+        assert!(n_all > 0);
+        // room for the attention matrices and about half of the experts
+        let part = m.attach_backend(Odd::new(usize::MAX, 1.0, Some(all.bytes + b_all / 2)));
+        assert!(part.active);
+        close(&run(&m, &TOKS), &cpu);
+        let (_, b_part) = m.resident_experts();
+        assert!(b_part <= b_all / 2, "{b_part} {b_all}");
+        // no room beyond the attention matrices: experts stay on the CPU
+        m.attach_backend(Odd::new(usize::MAX, 1.0, Some(all.bytes)));
+        close(&run(&m, &TOKS), &cpu);
+        assert_eq!(m.resident_experts().1, 0);
     }
 
     #[test]

@@ -53,7 +53,9 @@ fn open(a: &Args, what: &str) -> Result<Encoder, String> {
             "{what}: `{p}` is not a folder (only Hugging Face BERT folders are supported)"
         ));
     }
-    Encoder::open(path).map_err(|e| e.to_string())
+    let mut e = Encoder::open(path).map_err(|e| e.to_string())?;
+    crate::gpu::accelerate_encoder(&mut e);
+    Ok(e)
 }
 
 fn f(x: f32) -> String {

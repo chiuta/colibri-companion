@@ -33,6 +33,18 @@ static DEV: RwLock<Option<Dev>> = RwLock::new(None);
 #[derive(Default)]
 pub struct Registration(Vec<(usize, usize)>);
 
+// A copy of a model has its weights at new addresses, so it starts with nothing registered.
+impl Clone for Registration {
+    fn clone(&self) -> Self {
+        Registration::default()
+    }
+}
+impl std::fmt::Debug for Registration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Registration({} matrices)", self.0.len())
+    }
+}
+
 impl Drop for Registration {
     fn drop(&mut self) {
         if self.0.is_empty() {
@@ -53,10 +65,12 @@ impl Drop for Registration {
 }
 
 impl Dev {
+    /// `out[t] = W · x[t]` for `batch` vectors (one product when `batch` is 1).
     fn run(
         &self,
         h: &WeightHandle,
         cols: usize,
+        batch: usize,
         x: &[f32],
         out: &mut [f32],
     ) -> Result<(), BackendError> {
@@ -70,14 +84,18 @@ impl Dev {
             }
         }
         let (bx, bo) = (&bufs[&(false, x.len())], &bufs[&(true, out.len())]);
-        if h.cols != cols || h.rows != out.len() {
+        if h.cols != cols || h.rows * batch != out.len() || x.len() != cols * batch {
             return Err(BackendError::Shape(format!(
-                "{}x{} vs {cols}",
+                "{}x{} vs {cols} (batch {batch})",
                 h.rows, h.cols
             )));
         }
         self.be.write(bx, x)?;
-        self.be.matvec(h, bx, bo)?;
+        if batch == 1 {
+            self.be.matvec(h, bx, bo)?;
+        } else {
+            self.be.matmat(h, bx, batch, bo)?;
+        }
         self.be.read(bo, out)
     }
 }
@@ -92,7 +110,11 @@ pub fn try_matvec(w: &[f32], cols: usize, x: &[f32], out: &mut [f32]) -> bool {
     let Some(h) = d.mats.get(&(w.as_ptr() as usize, w.len())) else {
         return false;
     };
-    match d.run(h, cols, x, out) {
+    guard(d, d.run(h, cols, 1, x, out), out)
+}
+
+fn guard(d: &Dev, r: Result<(), BackendError>, out: &[f32]) -> bool {
+    match r {
         Ok(()) if out.iter().all(|v| v.is_finite()) => true,
         r => {
             let why = match r {
@@ -106,6 +128,57 @@ pub fn try_matvec(w: &[f32], cols: usize, x: &[f32], out: &mut [f32]) -> bool {
             false
         }
     }
+}
+
+/// Most vectors sent to the device in one batched product.
+const BATCH: usize = 128;
+
+/// `out[t] = W · x[t] (+ bias)` for the `n` rows of `x`, on the device when `w` is registered and
+/// the device works (batched products, so a long sequence is not one round trip per token).
+/// `false` = nothing usable was written: do the whole product on the CPU.
+pub fn try_rows(
+    w: &[f32],
+    cols: usize,
+    x: &[f32],
+    n: usize,
+    bias: Option<&[f32]>,
+    out: &mut [f32],
+) -> bool {
+    if !ANY.load(Ordering::Acquire)
+        || OFF.load(Ordering::Relaxed)
+        || w.len() < MIN_LEN
+        || cols == 0
+        || n == 0
+    {
+        return false;
+    }
+    let rows = w.len() / cols;
+    if x.len() != n * cols || out.len() != n * rows || bias.is_some_and(|b| b.len() != rows) {
+        return false;
+    }
+    let Ok(g) = DEV.read() else { return false };
+    let Some(d) = g.as_ref() else { return false };
+    let Some(h) = d.mats.get(&(w.as_ptr() as usize, w.len())) else {
+        return false;
+    };
+    for (xs, os) in x.chunks(BATCH * cols).zip(out.chunks_mut(BATCH * rows)) {
+        let b = xs.len() / cols;
+        if !guard(d, d.run(h, cols, b, xs, os), os) {
+            return false;
+        }
+    }
+    if let Some(b) = bias {
+        for row in out.chunks_exact_mut(rows) {
+            row.iter_mut().zip(b).for_each(|(o, b)| *o += b);
+        }
+    }
+    true
+}
+
+/// `true` while some matrix is registered and the device has not failed: a cheap pre-check so
+/// callers do not allocate for a device path that cannot be taken.
+pub fn active() -> bool {
+    ANY.load(Ordering::Acquire) && !OFF.load(Ordering::Relaxed)
 }
 
 /// Why the device was switched off while running, if it was.
@@ -158,7 +231,7 @@ pub fn register(be: Arc<dyn Backend>, mats: &[(&[f32], usize)]) -> (Registration
                 bufs: Mutex::default(),
                 why: Mutex::default(),
             };
-            let ok = probe.run(&hd, hd.cols, &x, &mut a).is_ok();
+            let ok = probe.run(&hd, hd.cols, 1, &x, &mut a).is_ok();
             for (o, row) in b.iter_mut().zip(w.chunks_exact(*cols)) {
                 *o = row.iter().zip(&x).map(|(p, q)| p * q).sum();
             }
@@ -219,6 +292,88 @@ pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// A test device that is [`Odd`](crate::accel::testbe::Odd), but whose batched products can also
+/// start to fail after a number of calls.
+#[cfg(test)]
+pub(crate) mod testbe {
+    use crate::accel::testbe::Odd;
+    use crate::backend::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    pub struct Flaky {
+        inner: Arc<Odd>,
+        matmat_ok: AtomicUsize,
+    }
+    /// `matvec_ok` / `matmat_ok`: calls that work before the device starts to fail.
+    pub fn flaky(matvec_ok: usize, matmat_ok: usize) -> Arc<Flaky> {
+        Arc::new(Flaky {
+            inner: Odd::new(matvec_ok, 1.0, None),
+            matmat_ok: AtomicUsize::new(matmat_ok),
+        })
+    }
+    impl Backend for Flaky {
+        fn name(&self) -> String {
+            "flaky".into()
+        }
+        fn is_accelerator(&self) -> bool {
+            false
+        }
+        fn device_memory(&self) -> Option<u64> {
+            None
+        }
+        fn supports(&self, t: crate::quant::DType) -> bool {
+            self.inner.supports(t)
+        }
+        fn alloc(&self, len: usize) -> Result<Buf> {
+            self.inner.alloc(len)
+        }
+        fn write(&self, d: &Buf, s: &[f32]) -> Result<()> {
+            self.inner.write(d, s)
+        }
+        fn read(&self, s: &Buf, d: &mut [f32]) -> Result<()> {
+            self.inner.read(s, d)
+        }
+        fn upload(&self, w: WeightRef<'_>) -> Result<WeightHandle> {
+            self.inner.upload(w)
+        }
+        fn matvec(&self, w: &WeightHandle, x: &Buf, o: &Buf) -> Result<()> {
+            self.inner.matvec(w, x, o)
+        }
+        fn matmat(&self, w: &WeightHandle, x: &Buf, b: usize, o: &Buf) -> Result<()> {
+            let left = self.matmat_ok.load(Ordering::Relaxed);
+            if left == 0 {
+                return Err(BackendError::Device("device lost".into()));
+            }
+            if left != usize::MAX {
+                self.matmat_ok.store(left - 1, Ordering::Relaxed);
+            }
+            self.inner.matmat(w, x, b, o)
+        }
+        fn rmsnorm(&self, x: &Buf, w: &Buf, e: f32, o: &Buf) -> Result<()> {
+            self.inner.rmsnorm(x, w, e, o)
+        }
+        fn rope(&self, x: &Buf, n: usize, hd: usize, p: usize, t: f64) -> Result<()> {
+            self.inner.rope(x, n, hd, p, t)
+        }
+        fn silu_mul(&self, g: &Buf, u: &Buf) -> Result<()> {
+            self.inner.silu_mul(g, u)
+        }
+        fn add(&self, a: &Buf, b: &Buf) -> Result<()> {
+            self.inner.add(a, b)
+        }
+        fn kv_create(&self, k: usize, h: usize, c: usize) -> Result<Kv> {
+            self.inner.kv_create(k, h, c)
+        }
+        fn kv_append(&self, kv: &Kv, p: usize, k: &Buf, v: &Buf) -> Result<()> {
+            self.inner.kv_append(kv, p, k, v)
+        }
+        fn attention(&self, kv: &Kv, q: &Buf, o: &Buf, a: &AttnArgs) -> Result<()> {
+            self.inner.attention(kv, q, o, a)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +428,58 @@ mod tests {
         drop(reg);
         let (_r, rep) = register(Odd::new(usize::MAX, 1.5, None), &[(&w, 128)]);
         assert!(!rep.active, "{rep:?}");
+    }
+
+    #[test]
+    fn batched_rows_match_the_cpu_with_bias_and_fall_back_when_the_device_fails() {
+        let _g = test_lock();
+        let (rows, cols, n) = (40, 32, 300);
+        let w = mat(rows, cols);
+        let bias: Vec<f32> = (0..rows).map(|i| i as f32 * 0.01).collect();
+        let x: Vec<f32> = (0..n * cols).map(|i| (i as f32 * 0.37).sin()).collect();
+        let mut cpu = vec![0.0; n * rows];
+        for (xt, ot) in x.chunks(cols).zip(cpu.chunks_mut(rows)) {
+            crate::ops::matvec(&w, cols, xt, ot);
+            ot.iter_mut().zip(&bias).for_each(|(o, b)| *o += b);
+        }
+        let mut out = vec![0.0; n * rows];
+        assert!(
+            !try_rows(&w, cols, &x, n, Some(&bias), &mut out),
+            "not registered"
+        );
+        let (reg, rep) = register(testbe::flaky(usize::MAX, usize::MAX), &[(&w, cols)]);
+        assert!(rep.active, "{rep:?}");
+        assert!(try_rows(&w, cols, &x, n, Some(&bias), &mut out));
+        for (p, q) in out.iter().zip(&cpu) {
+            assert!((p - q).abs() < 1e-3);
+        }
+        // one row goes through the single-vector product
+        assert!(try_rows(&w, cols, &x[..cols], 1, None, &mut out[..rows]));
+        // wrong shapes are refused, not guessed at
+        assert!(!try_rows(
+            &w,
+            cols,
+            &x[..cols - 1],
+            1,
+            None,
+            &mut out[..rows]
+        ));
+        assert!(!try_rows(
+            &w,
+            cols,
+            &x[..cols],
+            1,
+            Some(&bias[..3]),
+            &mut out[..rows]
+        ));
+        drop(reg);
+        // the device dies in the third chunk of the batch: the caller is told to use the CPU
+        let (reg, rep) = register(testbe::flaky(usize::MAX, 2), &[(&w, cols)]);
+        assert!(rep.active);
+        assert!(!try_rows(&w, cols, &x, n, Some(&bias), &mut out));
+        assert!(failure().is_some());
+        // and the device is left alone for good
+        assert!(!try_rows(&w, cols, &x[..cols], 1, None, &mut out[..rows]));
+        drop(reg);
     }
 }

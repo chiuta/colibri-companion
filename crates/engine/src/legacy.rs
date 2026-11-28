@@ -9,7 +9,7 @@
 //! Written from the published architectures. Checked on small synthetic models (including that the
 //! three fused-QKV layouts give identical results for the same weights); **not** compared with real
 //! checkpoints. OPT is not here: it has no GGUF conversion.
-use crate::accel::{Accel, AttachReport, Item, key_of};
+use crate::accel::{Accel, AttachReport, Item, LruCache, Resident, key_of, mv_res, weight_bytes};
 use crate::arch::Act;
 use crate::backend::Backend;
 use crate::gguf::Gguf;
@@ -226,7 +226,15 @@ enum Ffn {
         names: [String; 3],
         ff: usize,
         mmap: bool,
+        /// experts kept between tokens while a device holds them (capacity 0 = read per token)
+        cache: LruCache<MoeExpert>,
     },
+}
+
+/// One routed expert (gate, up, down) and its device copies.
+struct MoeExpert {
+    w: [Weight; 3],
+    dev: [Option<Resident>; 3],
 }
 
 struct Layer {
@@ -455,6 +463,7 @@ impl LegacyModel {
                     ],
                     ff: cfg.ffn,
                     mmap: o.mmap,
+                    cache: LruCache::default(),
                 }
             } else {
                 let (up, ff) = mat(s, &n("ffn_up.weight"), h, o)?;
@@ -519,6 +528,11 @@ impl LegacyModel {
     /// Put the big matrices on `be` (see [`Accel::build`]); never fails, the CPU stays the fall-back.
     pub fn attach_backend(&mut self, be: Arc<dyn Backend>) -> AttachReport {
         self.accel = None;
+        for l in &self.layers {
+            if let Ffn::Moe { cache, .. } = &l.ffn {
+                cache.reset(0);
+            }
+        }
         let h = self.cfg.hidden;
         let qd = self.cfg.heads * self.cfg.head_dim;
         let mut items = vec![Item::new(
@@ -534,15 +548,87 @@ impl LegacyModel {
                 }
             }
             items.push(Item::new(&l.wo, qd, false));
-            // expert matrices are read per token and stay on the CPU
+            // routed experts are uploaded as they are used (see below)
             if let Ffn::Dense { up, down, .. } = &l.ffn {
                 items.push(Item::new(up, h, false));
                 items.push(Item::new(down, up.len() / h, false));
             }
         }
-        let (acc, rep) = Accel::build(be, &items);
+        let (acc, mut rep) = Accel::build(be, &items);
         self.accel = acc;
+        let first = self.layers.iter().find_map(|l| match &l.ffn {
+            Ffn::Moe {
+                src,
+                names,
+                ff,
+                mmap,
+                ..
+            } => Some((src, names, *ff, *mmap)),
+            _ => None,
+        });
+        if let (Some(a), Some((src, names, ff, mmap))) = (&self.accel, first)
+            && let Ok(ex) = self.expert(src, names, ff, mmap, 0)
+        {
+            let bytes = [(&ex.w[0], h), (&ex.w[1], h), (&ex.w[2], ff)]
+                .iter()
+                .map(|(w, c)| weight_bytes(w, *c))
+                .sum::<Option<u64>>()
+                .unwrap_or(0);
+            let n = self
+                .layers
+                .iter()
+                .filter(|l| matches!(l.ffn, Ffn::Moe { .. }))
+                .count();
+            let cap = a.expert_cap(bytes, n, self.cfg.experts, self.cfg.used);
+            for l in &self.layers {
+                if let Ffn::Moe { cache, .. } = &l.ffn {
+                    cache.reset(cap);
+                }
+            }
+            if cap > 0 {
+                let m = format!("up to {cap} routed experts per layer are kept on the device");
+                rep.note = if rep.note.is_empty() {
+                    m
+                } else {
+                    format!("{}; {m}", rep.note)
+                };
+            }
+        }
         rep
+    }
+
+    /// Expert `e` of a layer, read from the file (no device copies yet).
+    fn expert(
+        &self,
+        src: &Arc<dyn WeightFile>,
+        names: &[String; 3],
+        ff: usize,
+        mmap: bool,
+        e: usize,
+    ) -> Result<MoeExpert, ModelError> {
+        let h = self.cfg.hidden;
+        let get = |k: usize, rows: usize, cols: usize| {
+            crate::gptoss::slice_weight(src, &names[k], e * rows * cols, rows, cols, mmap)
+                .map_err(ModelError::Experts)
+        };
+        Ok(MoeExpert {
+            w: [get(0, ff, h)?, get(1, ff, h)?, get(2, h, ff)?],
+            dev: [None, None, None],
+        })
+    }
+
+    /// Experts held by the caches now and the device bytes they use (for tests and reports).
+    pub fn resident_experts(&self) -> (usize, u64) {
+        (
+            self.layers
+                .iter()
+                .map(|l| match &l.ffn {
+                    Ffn::Moe { cache, .. } => cache.len(),
+                    _ => 0,
+                })
+                .sum(),
+            self.accel.as_ref().map_or(0, Accel::resident_bytes),
+        )
     }
 
     pub fn config(&self) -> &LegacyConfig {
@@ -656,6 +742,7 @@ impl LegacyModel {
                 names,
                 ff,
                 mmap,
+                cache,
             } => {
                 let logits: Vec<f32> = router
                     .chunks_exact(h)
@@ -665,27 +752,27 @@ impl LegacyModel {
                     return Err(ModelError::Shape("the router produced a non-number".into()));
                 }
                 let ff = *ff;
+                let ac = self.accel.as_ref();
                 let mut out = vec![0.0f32; h];
                 for (e, w) in crate::gptoss::route(&logits, self.cfg.used) {
-                    let get = |k: usize, rows: usize, cols: usize| {
-                        crate::gptoss::slice_weight(
-                            src,
-                            &names[k],
-                            e * rows * cols,
-                            rows,
-                            cols,
-                            *mmap,
-                        )
-                        .map_err(ModelError::Experts)
-                    };
-                    let (gate, up, down) = (get(0, ff, h)?, get(1, ff, h)?, get(2, h, ff)?);
+                    let ex = cache.get_or_load(e, || {
+                        let mut ex = self.expert(src, names, ff, *mmap, e)?;
+                        if let Some(a) = ac.filter(|_| cache.cap() > 0) {
+                            ex.dev = [
+                                a.upload(&ex.w[0], h),
+                                a.upload(&ex.w[1], h),
+                                a.upload(&ex.w[2], ff),
+                            ];
+                        }
+                        Ok::<_, ModelError>(ex)
+                    })?;
                     let (mut g, mut u, mut d) = (vec![0.0; ff], vec![0.0; ff], vec![0.0; h]);
-                    gate.matvec(h, x, &mut g)?;
-                    up.matvec(h, x, &mut u)?;
+                    mv_res(ac, &ex.w[0], ex.dev[0].as_ref(), h, x, &mut g)?;
+                    mv_res(ac, &ex.w[1], ex.dev[1].as_ref(), h, x, &mut u)?;
                     g.iter_mut()
                         .zip(&u)
                         .for_each(|(g, u)| *g = activate(Act::Silu, *g) * u);
-                    down.matvec(ff, &g, &mut d)?;
+                    mv_res(ac, &ex.w[2], ex.dev[2].as_ref(), ff, &g, &mut d)?;
                     out.iter_mut().zip(&d).for_each(|(o, d)| *o += w * d);
                 }
                 Ok(out)
@@ -1166,6 +1253,62 @@ mod tests {
         let p = d.join("m.gguf");
         write_moe(false, 9, 0.0, 1.0, &p);
         assert!(family::load_any(&p).is_err());
+    }
+
+    fn near(a: &[f32], b: &[f32]) {
+        assert_eq!(a.len(), b.len());
+        assert!(spread(a, b) < 1e-4);
+    }
+
+    #[test]
+    fn moe_experts_run_on_the_device_and_match_the_cpu() {
+        use crate::accel::testbe::Odd;
+        for phi in [false, true] {
+            let mut m = open_moe(phi, 2, 0.0, 1.0);
+            let cpu = run(&m, &TOKS);
+            let be = Odd::new(usize::MAX, 1.0, None);
+            let rep = m.attach_backend(be.clone());
+            assert!(rep.active && rep.note.contains("routed experts"), "{rep:?}");
+            near(&run(&m, &TOKS), &cpu);
+            let (n, bytes) = m.resident_experts();
+            assert!(n > 0 && bytes > 0, "{n} {bytes}");
+            near(&run(&m, &TOKS), &cpu);
+            assert_eq!(m.resident_experts(), (n, bytes));
+            assert!(m.accel_failure().is_none());
+            m.attach_backend(Odd::new(usize::MAX, 1.5, None));
+            assert_eq!(m.resident_experts(), (0, 0));
+            assert_eq!(run(&m, &TOKS), cpu);
+        }
+    }
+
+    #[test]
+    fn moe_experts_fall_back_when_the_device_dies_midway() {
+        use crate::accel::testbe::Odd;
+        let mut m = open_moe(false, 2, 0.0, 1.0);
+        let cpu = run(&m, &TOKS);
+        for ok in [3, 20, 60] {
+            m.attach_backend(Odd::new(ok, 1.0, None));
+            near(&run(&m, &TOKS), &cpu);
+            assert!(m.accel_failure().unwrap().contains("device lost"), "{ok}");
+            near(&run(&m, &TOKS), &cpu);
+        }
+    }
+
+    #[test]
+    fn moe_small_device_memory_keeps_fewer_experts() {
+        use crate::accel::testbe::Odd;
+        let mut m = open_moe(false, 2, 0.0, 1.0);
+        let cpu = run(&m, &TOKS);
+        let all = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        near(&run(&m, &TOKS), &cpu);
+        let b_all = m.resident_experts().1;
+        assert!(b_all > 0);
+        m.attach_backend(Odd::new(usize::MAX, 1.0, Some(all.bytes + b_all / 2)));
+        near(&run(&m, &TOKS), &cpu);
+        assert!(m.resident_experts().1 <= b_all / 2);
+        m.attach_backend(Odd::new(usize::MAX, 1.0, Some(all.bytes)));
+        near(&run(&m, &TOKS), &cpu);
+        assert_eq!(m.resident_experts().1, 0);
     }
 
     #[test]

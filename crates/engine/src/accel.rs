@@ -5,11 +5,162 @@
 //! the CPU. After the first device error the device is left alone for good. Before anything is
 //! used, one product is compared with the CPU's, so a device that computes wrongly is refused.
 use crate::backend::{Backend, BackendError, Buf, WeightHandle, WeightRef};
-use crate::model::Weight;
-use std::collections::HashMap;
+use crate::model::{ModelError, Weight};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+
+/// Device memory left for matrices uploaded while the model runs (routed experts).
+struct Budget {
+    free: Mutex<Option<u64>>,
+    used: AtomicU64,
+}
+impl Budget {
+    fn take(&self, n: u64) -> bool {
+        let Ok(mut f) = self.free.lock() else {
+            return false;
+        };
+        if let Some(x) = f.as_mut() {
+            if n > *x {
+                return false;
+            }
+            *x -= n;
+        }
+        self.used.fetch_add(n, Ordering::Relaxed);
+        true
+    }
+    fn give(&self, n: u64) {
+        if let Ok(mut f) = self.free.lock()
+            && let Some(x) = f.as_mut()
+        {
+            *x = x.saturating_add(n);
+        }
+        self.used.fetch_sub(n, Ordering::Relaxed);
+    }
+}
+
+static OWNERS: AtomicUsize = AtomicUsize::new(1);
+
+/// A matrix uploaded while the model runs. It is owned by the host object it belongs to (an
+/// expert in a cache), so it lives exactly as long as that object: when the expert is evicted and
+/// dropped, the device copy is released and its memory is given back. There is no address key that
+/// could be taken for another matrix after a free.
+pub struct Resident {
+    h: WeightHandle,
+    owner: usize,
+    bytes: u64,
+    budget: Arc<Budget>,
+}
+impl Drop for Resident {
+    fn drop(&mut self) {
+        self.budget.give(self.bytes);
+    }
+}
+impl Resident {
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
+/// `out = W · x` on the device copy `r` when there is one that is valid for `acc` and the device
+/// still works, otherwise on the CPU (the same numbers as without a device).
+pub fn mv_res(
+    acc: Option<&Accel>,
+    w: &Weight,
+    r: Option<&Resident>,
+    cols: usize,
+    x: &[f32],
+    out: &mut [f32],
+) -> Result<(), ModelError> {
+    if let (Some(a), Some(r)) = (acc, r)
+        && a.try_resident(r, cols, x, out)
+    {
+        return Ok(());
+    }
+    w.matvec(cols, x, out)
+}
+
+/// A small least-recently-used cache of `Arc<T>` (keyed by expert number). Entries have stable
+/// addresses while anyone holds them. Capacity 0 stores nothing.
+/// Entries by key, and the keys from oldest to newest use.
+type LruInner<T> = (HashMap<usize, Arc<T>>, VecDeque<usize>);
+
+pub struct LruCache<T> {
+    cap: AtomicUsize,
+    inner: Mutex<LruInner<T>>,
+}
+impl<T> Default for LruCache<T> {
+    fn default() -> Self {
+        LruCache {
+            cap: AtomicUsize::new(0),
+            inner: Mutex::new((HashMap::new(), VecDeque::new())),
+        }
+    }
+}
+impl<T> LruCache<T> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, LruInner<T>> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    /// Empty the cache and set its capacity.
+    pub fn reset(&self, cap: usize) {
+        let old = {
+            let mut g = self.lock();
+            g.1.clear();
+            std::mem::take(&mut g.0)
+        };
+        drop(old);
+        self.cap.store(cap, Ordering::Relaxed);
+    }
+    pub fn cap(&self) -> usize {
+        self.cap.load(Ordering::Relaxed)
+    }
+    pub fn len(&self) -> usize {
+        self.lock().0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Entries now held (a snapshot).
+    pub fn entries(&self) -> Vec<Arc<T>> {
+        self.lock().0.values().cloned().collect()
+    }
+    pub fn get_or_load<E>(
+        &self,
+        k: usize,
+        load: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Arc<T>, E> {
+        if self.cap() == 0 {
+            return load().map(Arc::new);
+        }
+        {
+            let mut g = self.lock();
+            if let Some(a) = g.0.get(&k).cloned() {
+                g.1.retain(|q| *q != k);
+                g.1.push_back(k);
+                return Ok(a);
+            }
+        }
+        let v = Arc::new(load()?);
+        let mut gone = vec![];
+        let out = {
+            let mut g = self.lock();
+            if let Some(a) = g.0.get(&k).cloned() {
+                a
+            } else {
+                g.0.insert(k, v.clone());
+                g.1.push_back(k);
+                while g.0.len() > self.cap().max(1) {
+                    let Some(old) = g.1.pop_front() else { break };
+                    gone.extend(g.0.remove(&old));
+                }
+                v
+            }
+        };
+        drop(gone); // outside the lock: dropping releases the device copies
+        Ok(out)
+    }
+}
 
 /// A matrix to offer to the device: `cols` is its row length.
 pub struct Item<'a> {
@@ -53,6 +204,28 @@ pub struct Accel {
     bufs: Mutex<HashMap<(bool, usize), Buf>>,
     off: AtomicBool,
     why: Mutex<Option<String>>,
+    owner: usize,
+    budget: Arc<Budget>,
+}
+
+/// Bytes a matrix takes on a device, or `None` when it cannot be offered.
+pub fn weight_bytes(w: &Weight, cols: usize) -> Option<u64> {
+    weight_ref(w, cols, None)?.validate().ok()
+}
+
+fn weight_ref<'a>(w: &'a Weight, cols: usize, be: Option<&dyn Backend>) -> Option<WeightRef<'a>> {
+    match w {
+        Weight::Dense(v) if cols > 0 && !v.is_empty() && v.len() % cols == 0 => {
+            Some(WeightRef::dense(v.len() / cols, cols, v))
+        }
+        Weight::Quant(q) if be.is_none_or(|b| b.supports(q.dtype)) => Some(WeightRef::quant(
+            q.dtype,
+            q.rows,
+            q.cols,
+            q.bytes.as_slice(),
+        )),
+        _ => None,
+    }
 }
 
 impl Accel {
@@ -110,7 +283,63 @@ impl Accel {
             self.handles.get(&key)
         };
         let Some(h) = h else { return false };
-        match self.run(h, cols, x, out) {
+        self.finish(self.run(h, cols, x, out), out)
+    }
+
+    /// Multiply with a matrix uploaded by [`Accel::upload`] (see [`mv_res`]).
+    pub fn try_resident(&self, r: &Resident, cols: usize, x: &[f32], out: &mut [f32]) -> bool {
+        if self.off.load(Ordering::Relaxed) || r.owner != self.owner {
+            return false;
+        }
+        self.finish(self.run(&r.h, cols, x, out), out)
+    }
+
+    /// Upload one matrix now if the memory left after [`Accel::build`] holds it; the copy is
+    /// released when the returned value is dropped. `None` = keep it on the CPU.
+    pub fn upload(&self, w: &Weight, cols: usize) -> Option<Resident> {
+        if self.off.load(Ordering::Relaxed) {
+            return None;
+        }
+        let r = weight_ref(w, cols, Some(self.be.as_ref()))?;
+        let need = r.validate().ok()?;
+        if !self.budget.take(need) {
+            return None;
+        }
+        match self.be.upload(r) {
+            Ok(h) if h.cols == cols && (h.on_device || !self.be.is_accelerator()) => {
+                Some(Resident {
+                    h,
+                    owner: self.owner,
+                    bytes: need,
+                    budget: self.budget.clone(),
+                })
+            }
+            _ => {
+                self.budget.give(need);
+                None
+            }
+        }
+    }
+
+    /// Bytes of runtime uploads (experts) on the device now.
+    pub fn resident_bytes(&self) -> u64 {
+        self.budget.used.load(Ordering::Relaxed)
+    }
+
+    /// How many experts of `bytes` each a layer may keep on the device: its share of the memory
+    /// left, never more than `experts`; with no memory limit, a few times `used`. 0 = none.
+    pub fn expert_cap(&self, bytes: u64, layers: usize, experts: usize, used: usize) -> usize {
+        if bytes == 0 || layers == 0 {
+            return 0;
+        }
+        match *self.budget.free.lock().unwrap_or_else(|e| e.into_inner()) {
+            None => experts.min(used.max(1) * 4),
+            Some(f) => ((f / bytes) as usize / layers).min(experts),
+        }
+    }
+
+    fn finish(&self, r: Result<(), BackendError>, out: &mut [f32]) -> bool {
+        match r {
             Ok(()) if out.iter().all(|v| v.is_finite()) => true,
             Ok(()) => {
                 self.fail(&BackendError::Device("non-finite result".into()));
@@ -143,6 +372,11 @@ impl Accel {
             bufs: Mutex::default(),
             off: AtomicBool::new(false),
             why: Mutex::default(),
+            owner: OWNERS.fetch_add(1, Ordering::Relaxed),
+            budget: Arc::new(Budget {
+                free: Mutex::new(None),
+                used: AtomicU64::new(0),
+            }),
         };
         let mut checked = false;
         for it in items {
@@ -208,6 +442,9 @@ impl Accel {
             }
         }
         rep.active = rep.matrices > 0;
+        if let Ok(mut f) = acc.budget.free.lock() {
+            *f = free;
+        }
         if rep.active {
             if rep.note.is_empty() && rep.matrices < rep.total {
                 rep.note = "some matrices have no kernel on this device and stay on the CPU".into();
@@ -235,6 +472,8 @@ pub mod testbe {
         /// multiply every result by this
         scale: f32,
         memory: Option<u64>,
+        /// matvec calls made so far (good or not)
+        pub calls: std::sync::atomic::AtomicUsize,
     }
     impl Odd {
         pub fn new(ok_calls: usize, scale: f32, memory: Option<u64>) -> Arc<Odd> {
@@ -243,6 +482,7 @@ pub mod testbe {
                 ok_calls: std::sync::atomic::AtomicUsize::new(ok_calls),
                 scale,
                 memory,
+                calls: std::sync::atomic::AtomicUsize::new(0),
             })
         }
     }
@@ -275,6 +515,7 @@ pub mod testbe {
             self.inner.upload(w)
         }
         fn matvec(&self, w: &WeightHandle, x: &Buf, o: &Buf) -> R<()> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
             let left = self.ok_calls.load(Ordering::Relaxed);
             if left == 0 {
                 return Err(BackendError::Device("device lost".into()));
