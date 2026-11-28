@@ -334,6 +334,8 @@ enum FinalNorm {
 }
 
 pub struct SsmModel {
+    /// Declared first so it is dropped before the weights it points at.
+    reg: crate::slicegpu::Registration,
     cfg: FamilyConfig,
     hidden: usize,
     vocab: usize,
@@ -408,6 +410,31 @@ pub fn detect_naming(src: &dyn TensorSource) -> Option<SsmNaming> {
 }
 
 impl SsmModel {
+    /// Put the big matrices on `be`; never fails, the CPU stays the fall-back.
+    pub fn attach_backend(
+        &mut self,
+        be: Arc<dyn crate::backend::Backend>,
+    ) -> crate::accel::AttachReport {
+        self.reg = Default::default();
+        let h = self.hidden;
+        let mut mats: Vec<(&[f32], usize)> = vec![(self.head.as_deref().unwrap_or(&self.embed), h)];
+        match &self.stack {
+            Stack::Mamba { mixers, .. } => {
+                for m in mixers {
+                    match m {
+                        Mixer::M1(x) => mats.extend(x.matrices()),
+                        Mixer::M2(x) => mats.extend(x.matrices()),
+                    }
+                }
+            }
+            Stack::R6(ls) => ls.iter().for_each(|l| mats.extend(l.matrices())),
+            Stack::R7(ls) => ls.iter().for_each(|l| mats.extend(l.matrices())),
+        }
+        let (reg, rep) = crate::slicegpu::register(be, &mats);
+        self.reg = reg;
+        rep
+    }
+
     pub fn config(&self) -> &FamilyConfig {
         &self.cfg
     }
@@ -567,6 +594,7 @@ impl SsmModel {
             }
         };
         Ok(SsmModel {
+            reg: Default::default(),
             cfg,
             hidden: h,
             vocab,
@@ -1855,6 +1883,35 @@ mod tests {
         assert!(load_any(&e).is_err());
         std::fs::remove_dir_all(d).unwrap();
         std::fs::remove_dir_all(e).unwrap();
+    }
+
+    #[test]
+    fn state_space_models_use_the_accelerator_and_fall_back() {
+        use crate::accel::testbe::Odd;
+        let _g = crate::slicegpu::test_lock();
+        for kind in ["mamba1", "mamba2", "rwkv6", "rwkv7-fla"] {
+            let (d, _) = make(kind, 4);
+            let AnyModel::Ssm(mut m) = load_any(&d).unwrap() else {
+                panic!("{kind}")
+            };
+            let toks = [1usize, 5, 2, 9, 3, 7];
+            let cpu = m.forward_batch(&mut m.new_state(), &toks).unwrap();
+            let rep = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+            assert!(rep.active, "{kind}: {rep:?}");
+            let on = m.forward_batch(&mut m.new_state(), &toks).unwrap();
+            for (a, b) in on.iter().zip(&cpu) {
+                assert!((a - b).abs() < 1e-3 * (1.0 + b.abs()), "{kind}: {a} {b}");
+            }
+            let rep = m.attach_backend(Odd::new(3, 1.0, None));
+            assert!(rep.active);
+            let on = m.forward_batch(&mut m.new_state(), &toks).unwrap();
+            assert!(crate::slicegpu::failure().is_some(), "{kind}");
+            for (a, b) in on.iter().zip(&cpu) {
+                assert!((a - b).abs() < 1e-3 * (1.0 + b.abs()), "{kind}: {a} {b}");
+            }
+            drop(m);
+            std::fs::remove_dir_all(d).unwrap();
+        }
     }
 
     #[test]

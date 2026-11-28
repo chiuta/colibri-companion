@@ -64,6 +64,7 @@ pub mod sched;
 pub mod search;
 pub mod selfspec;
 pub mod simd;
+pub mod slicegpu;
 pub mod snapshot;
 pub mod spec;
 pub mod ssm;

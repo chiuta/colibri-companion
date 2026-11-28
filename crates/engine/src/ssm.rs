@@ -354,6 +354,16 @@ impl Mamba1State {
 }
 
 impl Mamba1 {
+    /// Big matrices and their row lengths, for [`crate::slicegpu`].
+    pub fn matrices(&self) -> Vec<(&[f32], usize)> {
+        let (dm, di, r) = (self.cfg.d_model, self.cfg.d_inner, self.cfg.dt_rank);
+        vec![
+            (&self.w.in_proj[..], dm),
+            (&self.w.x_proj[..], di),
+            (&self.w.dt_proj[..], r),
+            (&self.w.out_proj[..], di),
+        ]
+    }
     pub fn new(cfg: Mamba1Config, w: Mamba1Weights) -> Result<Self, SsmError> {
         cfg.validate()?;
         let (dm, di, n, k, r) = (
@@ -607,6 +617,13 @@ impl Mamba2State {
 }
 
 impl Mamba2 {
+    /// Big matrices and their row lengths, for [`crate::slicegpu`].
+    pub fn matrices(&self) -> Vec<(&[f32], usize)> {
+        vec![
+            (&self.w.in_proj[..], self.cfg.d_model),
+            (&self.w.out_proj[..], self.cfg.d_inner()),
+        ]
+    }
     pub fn new(cfg: Mamba2Config, w: Mamba2Weights) -> Result<Self, SsmError> {
         cfg.validate()?;
         let (dm, di, nh) = (cfg.d_model, cfg.d_inner(), cfg.n_heads);
@@ -964,6 +981,21 @@ fn layer_norm(x: &[f32], w: &[f32], b: &[f32], eps: f32) -> Vec<f32> {
 }
 
 impl Rwkv6Layer {
+    /// Big matrices and their row lengths, for [`crate::slicegpu`].
+    pub fn matrices(&self) -> Vec<(&[f32], usize)> {
+        let (d, f) = (self.cfg.hidden, self.cfg.ffn);
+        let (a, c) = (&self.att, &self.ffn);
+        vec![
+            (&a.wr[..], d),
+            (&a.wk[..], d),
+            (&a.wv[..], d),
+            (&a.wg[..], d),
+            (&a.wo[..], d),
+            (&c.wk[..], d),
+            (&c.wv[..], f),
+            (&c.wr[..], d),
+        ]
+    }
     pub fn new(
         cfg: Rwkv6Config,
         ln: [Vec<f32>; 4],
@@ -1403,6 +1435,19 @@ fn transpose(w: &[f32], rows: usize, cols: usize) -> Vec<f32> {
 }
 
 impl Rwkv7Layer {
+    /// Big matrices and their row lengths, for [`crate::slicegpu`].
+    pub fn matrices(&self) -> Vec<(&[f32], usize)> {
+        let (d, f) = (self.cfg.hidden, self.cfg.ffn);
+        let (a, c) = (&self.att, &self.ffn);
+        vec![
+            (&a.wr[..], d),
+            (&a.wk[..], d),
+            (&a.wv[..], d),
+            (&a.wo[..], d),
+            (&c.wk[..], d),
+            (&c.wv[..], f),
+        ]
+    }
     /// `first` marks layer 0: it stores its value vector as `v_first` and has no value residual.
     /// `ln0` is the extra layer norm in front of layer 0 (embedding norm), `ln` is `[ln1 w, ln1 b, ln2 w, ln2 b]`.
     pub fn new(

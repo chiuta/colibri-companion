@@ -92,6 +92,9 @@ pub fn matvec(w: &[f32], cols: usize, x: &[f32], out: &mut [f32]) {
         out.fill(0.0);
         return;
     }
+    if crate::slicegpu::try_matvec(w, cols, x, out) {
+        return;
+    }
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     if w.len() < (1 << 18) || threads == 1 || out.len() < 2 * threads {
         return rows_into(w, cols, x, out);

@@ -34,6 +34,7 @@ use crate::ssm::{
     Mamba1, Mamba1Config, Mamba1State, Mamba2, Mamba2Config, Mamba2State, MambaNames,
 };
 use serde_json::Value;
+use std::sync::Arc;
 
 /// Tokens per pass through the layers (bounds the scratch memory of a long prompt).
 const CHUNK: usize = 64;
@@ -363,6 +364,8 @@ struct SsmLayer {
 }
 
 pub struct HybridModel {
+    /// Declared first so it is dropped before the weights it points at.
+    reg: crate::slicegpu::Registration,
     cfg: HybridConfig,
     /// The attention layers (with their MLPs), the embedding table, the final norm and the head.
     attn: Model,
@@ -423,6 +426,34 @@ fn load_err(e: impl std::fmt::Display) -> FamilyError {
 }
 
 impl HybridModel {
+    /// Put the state-space layers' matrices (and their dense MLPs) on `be`; never fails. The
+    /// attention half is a dense [`Model`] and is offloaded through it.
+    pub fn attach_backend(
+        &mut self,
+        be: Arc<dyn crate::backend::Backend>,
+    ) -> crate::accel::AttachReport {
+        self.reg = Default::default();
+        let mut mats: Vec<(&[f32], usize)> = vec![];
+        for l in &self.ssm {
+            match &l.mixer {
+                Mixer::M1(x) => mats.extend(x.matrices()),
+                Mixer::M2(x) => mats.extend(x.matrices()),
+            }
+            let h = self.hidden;
+            for (w, cols) in [(&l.gate, h), (&l.up, h)] {
+                if let Weight::Dense(v) = w {
+                    mats.push((v, cols));
+                }
+            }
+            if let Weight::Dense(v) = &l.down {
+                mats.push((v, v.len() / h.max(1)));
+            }
+        }
+        let (reg, rep) = crate::slicegpu::register(be, &mats);
+        self.reg = reg;
+        rep
+    }
+
     pub fn config(&self) -> &HybridConfig {
         &self.cfg
     }
@@ -562,6 +593,7 @@ impl HybridModel {
             });
         }
         Ok(HybridModel {
+            reg: Default::default(),
             cfg,
             attn,
             ssm,
@@ -869,6 +901,24 @@ mod tests {
                 .all(|(x, y)| (x - y).abs() <= tol * (1.0 + y.abs()))
     }
     const TOKS: [usize; 9] = [3, 7, 1, 12, 5, 9, 19, 0, 4];
+
+    #[test]
+    fn hybrid_models_use_the_accelerator_and_fall_back() {
+        use crate::accel::testbe::Odd;
+        let _g = crate::slicegpu::test_lock();
+        for json in [JAMBA, BAMBA] {
+            let mut m = model(json, 3);
+            let cpu = m.forward_batch(&mut m.new_state(), &TOKS).unwrap();
+            let rep = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+            assert!(rep.active, "{rep:?}");
+            let on = m.forward_batch(&mut m.new_state(), &TOKS).unwrap();
+            assert!(close(&on, &cpu, 1e-3));
+            m.attach_backend(Odd::new(2, 1.0, None));
+            let on = m.forward_batch(&mut m.new_state(), &TOKS).unwrap();
+            assert!(close(&on, &cpu, 1e-3));
+            assert!(crate::slicegpu::failure().is_some());
+        }
+    }
 
     #[test]
     fn jamba_config_gives_the_layer_pattern_and_no_rope() {
