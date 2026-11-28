@@ -68,7 +68,7 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked -p colibri-companion --target ${{ matrix.target }}
       # corbul, Companion's own engine: runs the GGUF files colibri cannot import
-      - run: cargo build --release --locked -p colibri-rs-cli --bin corbul --target ${{ matrix.target }}
+      - run: cargo build --release --locked -p colibri-rs-cli --features wgpu --bin corbul --target ${{ matrix.target }}
       - name: Binary size (informational)
         shell: bash
         env:
@@ -129,7 +129,7 @@ jobs:
         continue-on-error: true
         env:
           RUST_TARGET: ${{ matrix.rust }}
-        run: cargo zigbuild --release --locked -p colibri-rs-cli --bin corbul --target "$RUST_TARGET.2.17"
+        run: cargo zigbuild --release --locked -p colibri-rs-cli --features wgpu --bin corbul --target "$RUST_TARGET.2.17"
       - name: Check the glibc baseline
         env:
           RUST_TARGET: ${{ matrix.rust }}
