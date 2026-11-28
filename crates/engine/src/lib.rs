@@ -18,6 +18,7 @@
     clippy::needless_late_init,
     clippy::single_element_loop
 )]
+pub mod accel;
 pub mod arch;
 pub mod audio;
 pub mod autoquant;

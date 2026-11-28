@@ -12,7 +12,7 @@
 //! It has been checked against its own invariants on small synthetic models; it has **not** been
 //! compared with a real Gemma 4 checkpoint.
 use crate::arch::{Act, Support};
-use crate::backend::{Backend, BackendError, Buf, WeightHandle, WeightRef};
+use crate::backend::Backend;
 use crate::gguf::{Gguf, Value};
 use crate::loader::{LoadOptions, TensorSource, WeightFile, load_weight};
 use crate::model::{ModelError, QWeight, Weight, activate};
@@ -571,86 +571,17 @@ impl Gemma4State {
 
 // ------------------------------------------------------------------------------ accelerator
 
-/// Big matrices of the model that live on a [`Backend`] (a GPU), found by the address of the
-/// host weight they were made from. Everything else, and any failure, runs on the CPU.
-struct Accel {
-    be: Arc<dyn Backend>,
-    handles: std::collections::HashMap<usize, WeightHandle>,
-    head: Option<WeightHandle>,
-    bufs: std::sync::Mutex<std::collections::HashMap<(bool, usize), Buf>>,
-    off: std::sync::atomic::AtomicBool,
-    why: std::sync::Mutex<Option<String>>,
-}
-
-/// What [`Gemma4Model::attach_backend`] did, in words a person can read.
-#[derive(Clone, Debug, Default)]
-pub struct AttachReport {
-    pub matrices: usize,
-    pub total: usize,
-    pub bytes: u64,
-    pub active: bool,
-    pub note: String,
-}
-
-fn qkey(w: &Weight) -> usize {
-    w as *const Weight as usize
-}
-
-impl Accel {
-    fn run(
-        &self,
-        h: &WeightHandle,
-        cols: usize,
-        x: &[f32],
-        out: &mut [f32],
-    ) -> Result<(), BackendError> {
-        let mut bufs = self
-            .bufs
-            .lock()
-            .map_err(|_| BackendError::Device("lock".into()))?;
-        for (is_out, len) in [(false, x.len()), (true, out.len())] {
-            if let std::collections::hash_map::Entry::Vacant(v) = bufs.entry((is_out, len)) {
-                v.insert(self.be.alloc(len)?);
-            }
-        }
-        let (bx, bo) = (&bufs[&(false, x.len())], &bufs[&(true, out.len())]);
-        if h.cols != cols || h.rows != out.len() {
-            return Err(BackendError::Shape(format!(
-                "{}x{} vs {cols}",
-                h.rows, h.cols
-            )));
-        }
-        self.be.write(bx, x)?;
-        self.be.matvec(h, bx, bo)?;
-        self.be.read(bo, out)
-    }
-    fn fail(&self, e: &BackendError) {
-        self.off.store(true, std::sync::atomic::Ordering::Relaxed);
-        if let Ok(mut w) = self.why.lock() {
-            w.get_or_insert_with(|| e.to_string());
-        }
-    }
-}
+pub use crate::accel::AttachReport;
+use crate::accel::{Accel, Item, key_of};
 
 impl Gemma4Model {
     /// `out = W · x`: on the device when the matrix was uploaded and the device still works,
     /// otherwise (and after the first device error, for good) on the CPU.
     fn mv(&self, w: &Weight, cols: usize, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
-        if let Some(a) = &self.accel
-            && !a.off.load(std::sync::atomic::Ordering::Relaxed)
-        {
-            let is_head = std::ptr::eq(w, self.head.as_ref().unwrap_or(&self.embed));
-            let h = if is_head {
-                a.head.as_ref()
-            } else {
-                a.handles.get(&qkey(w))
-            };
-            if let Some(h) = h {
-                match a.run(h, cols, x, out) {
-                    Ok(()) if out.iter().all(|v| v.is_finite()) => return Ok(()),
-                    Ok(()) => a.fail(&BackendError::Device("non-finite result".into())),
-                    Err(e) => a.fail(&e),
-                }
+        if let Some(a) = &self.accel {
+            let head = self.head.as_ref().unwrap_or(&self.embed);
+            if a.try_matvec(key_of(w), std::ptr::eq(w, head), cols, x, out) {
+                return Ok(());
             }
         }
         w.matvec(cols, x, out)
@@ -658,7 +589,7 @@ impl Gemma4Model {
 
     /// Why the accelerator was switched off while running, if it was.
     pub fn accel_failure(&self) -> Option<String> {
-        self.accel.as_ref().and_then(|a| a.why.lock().ok()?.clone())
+        self.accel.as_ref().and_then(Accel::failure)
     }
 
     /// Put the big matrices on `be`, as many as its memory holds, after checking one of them gives
@@ -666,103 +597,21 @@ impl Gemma4Model {
     /// and the report says why.
     pub fn attach_backend(&mut self, be: Arc<dyn Backend>) -> AttachReport {
         self.accel = None;
-        let mut rep = AttachReport::default();
         let h = self.cfg.hidden;
-        let mut list: Vec<(usize, &Weight, bool, usize)> = vec![];
-        for l in &self.layers {
-            let own = [(&l.wq, h), (&l.gate, h), (&l.up, h), (&l.down, l.ff)];
-            list.extend(own.map(|(w, c)| (qkey(w), w, false, c)));
-            list.push((qkey(&l.wo), &l.wo, false, l.nh * l.hd));
-            list.extend(
-                l.wk.iter()
-                    .chain(l.wv.iter())
-                    .map(|w| (qkey(w), w, false, h)),
-            );
-        }
+        let mut items: Vec<Item> = vec![];
         let head = self.head.as_ref().unwrap_or(&self.embed);
-        list.insert(0, (0, head, true, h));
-        rep.total = list.len();
-        let mut free = be.device_memory();
-        let mut acc = Accel {
-            be: be.clone(),
-            handles: Default::default(),
-            head: None,
-            bufs: Default::default(),
-            off: Default::default(),
-            why: Default::default(),
-        };
-        let mut checked = false;
-        for (key, w, is_head, dcols) in list {
-            let (rows, cols) = match w {
-                Weight::Dense(v) => (v.len().checked_div(dcols).unwrap_or(0), dcols),
-                Weight::Quant(q) => (q.rows, q.cols),
-            };
-            let r = match w {
-                Weight::Dense(v) if cols > 0 && rows * cols == v.len() => {
-                    WeightRef::dense(rows, cols, v)
-                }
-                Weight::Quant(q) if be.supports(q.dtype) => {
-                    WeightRef::quant(q.dtype, q.rows, q.cols, q.bytes.as_slice())
-                }
-                _ => continue,
-            };
-            let need = r.validate().unwrap_or(u64::MAX);
-            if let Some(f) = free
-                && need > f
-            {
-                rep.note = format!("device memory is full after {} matrices", rep.matrices);
-                break;
+        items.push(Item::new(head, h, true));
+        for l in &self.layers {
+            for (w, c) in [(&l.wq, h), (&l.gate, h), (&l.up, h), (&l.down, l.ff)] {
+                items.push(Item::new(w, c, false));
             }
-            let hd = match be.upload(r) {
-                Ok(x) => x,
-                Err(e) => {
-                    rep.note = format!("upload stopped: {e}");
-                    break;
-                }
-            };
-            if !hd.on_device && be.is_accelerator() {
-                continue;
-            }
-            if !checked {
-                checked = true;
-                let x: Vec<f32> = (0..hd.cols)
-                    .map(|i| ((i * 7 % 13) as f32 - 6.0) / 6.0)
-                    .collect();
-                let (mut a, mut b) = (vec![0.0; hd.rows], vec![0.0; hd.rows]);
-                let ok = acc.run(&hd, hd.cols, &x, &mut a).is_ok()
-                    && w.matvec(hd.cols, &x, &mut b).is_ok();
-                let scale = b.iter().fold(1e-6f32, |m, v| m.max(v.abs()));
-                let err = a
-                    .iter()
-                    .zip(&b)
-                    .fold(0f32, |m, (p, q)| m.max((p - q).abs()));
-                if !ok || err > 0.02 * scale {
-                    rep.note = format!(
-                        "the device gave a different answer from the CPU in the start-up check (error {err:.3e}); staying on the CPU"
-                    );
-                    return rep;
-                }
-            }
-            if let Some(f) = free.as_mut() {
-                *f = f.saturating_sub(need);
-            }
-            rep.matrices += 1;
-            rep.bytes += need;
-            if is_head {
-                acc.head = Some(hd);
-            } else {
-                acc.handles.insert(key, hd);
+            items.push(Item::new(&l.wo, l.nh * l.hd, false));
+            for w in l.wk.iter().chain(l.wv.iter()) {
+                items.push(Item::new(w, h, false));
             }
         }
-        rep.active = rep.matrices > 0;
-        if rep.active {
-            if rep.note.is_empty() && rep.matrices < rep.total {
-                rep.note = "some matrices have no kernel on this device and stay on the CPU".into();
-            }
-            self.accel = Some(acc);
-        } else if rep.note.is_empty() {
-            rep.note = "no matrix could be placed on the device; staying on the CPU".into();
-        }
+        let (acc, rep) = Accel::build(be, &items);
+        self.accel = acc;
         rep
     }
 }
@@ -1257,6 +1106,7 @@ pub mod demo {
 mod tests {
     use super::demo::{FF, H, HD_F, Opt, write};
     use super::*;
+    use crate::accel::testbe::Odd;
     use crate::family::{self, AnyModel, LanguageModel};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -1571,95 +1421,6 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(e.contains("blk.") || e.contains("per_layer"), "{e}");
-    }
-
-    /// A backend that is the CPU one, except for what the test breaks.
-    struct Odd {
-        inner: crate::backend::CpuBackend,
-        /// matvec calls that work before it starts to fail (`usize::MAX` = never)
-        ok_calls: std::sync::atomic::AtomicUsize,
-        /// multiply every result by this
-        scale: f32,
-        memory: Option<u64>,
-    }
-    impl Odd {
-        fn new(ok_calls: usize, scale: f32, memory: Option<u64>) -> Arc<Odd> {
-            Arc::new(Odd {
-                inner: crate::backend::CpuBackend::new(),
-                ok_calls: std::sync::atomic::AtomicUsize::new(ok_calls),
-                scale,
-                memory,
-            })
-        }
-    }
-    type R<T> = crate::backend::Result<T>;
-    impl Backend for Odd {
-        fn name(&self) -> String {
-            "odd".into()
-        }
-        fn is_accelerator(&self) -> bool {
-            false
-        }
-        fn device_memory(&self) -> Option<u64> {
-            self.memory
-        }
-        fn supports(&self, t: crate::quant::DType) -> bool {
-            self.inner.supports(t)
-        }
-        fn alloc(&self, len: usize) -> R<Buf> {
-            self.inner.alloc(len)
-        }
-        fn write(&self, d: &Buf, s: &[f32]) -> R<()> {
-            self.inner.write(d, s)
-        }
-        fn read(&self, s: &Buf, d: &mut [f32]) -> R<()> {
-            self.inner.read(s, d)?;
-            d.iter_mut().for_each(|v| *v *= self.scale);
-            Ok(())
-        }
-        fn upload(&self, w: WeightRef<'_>) -> R<WeightHandle> {
-            self.inner.upload(w)
-        }
-        fn matvec(&self, w: &WeightHandle, x: &Buf, o: &Buf) -> R<()> {
-            let left = self.ok_calls.load(Ordering::Relaxed);
-            if left == 0 {
-                return Err(BackendError::Device("device lost".into()));
-            }
-            if left != usize::MAX {
-                self.ok_calls.store(left - 1, Ordering::Relaxed);
-            }
-            self.inner.matvec(w, x, o)
-        }
-        fn matmat(&self, w: &WeightHandle, x: &Buf, b: usize, o: &Buf) -> R<()> {
-            self.inner.matmat(w, x, b, o)
-        }
-        fn rmsnorm(&self, x: &Buf, w: &Buf, e: f32, o: &Buf) -> R<()> {
-            self.inner.rmsnorm(x, w, e, o)
-        }
-        fn rope(&self, x: &Buf, n: usize, hd: usize, p: usize, t: f64) -> R<()> {
-            self.inner.rope(x, n, hd, p, t)
-        }
-        fn silu_mul(&self, g: &Buf, u: &Buf) -> R<()> {
-            self.inner.silu_mul(g, u)
-        }
-        fn add(&self, a: &Buf, b: &Buf) -> R<()> {
-            self.inner.add(a, b)
-        }
-        fn kv_create(&self, k: usize, h: usize, c: usize) -> R<crate::backend::Kv> {
-            self.inner.kv_create(k, h, c)
-        }
-        fn kv_append(&self, kv: &crate::backend::Kv, p: usize, k: &Buf, v: &Buf) -> R<()> {
-            self.inner.kv_append(kv, p, k, v)
-        }
-        fn attention(
-            &self,
-            kv: &crate::backend::Kv,
-            q: &Buf,
-            o: &Buf,
-            a: &crate::backend::AttnArgs,
-        ) -> R<()> {
-            self.inner.attention(kv, q, o, a)
-        }
     }
 
     fn owned(o: &Opt) -> Gemma4Model {

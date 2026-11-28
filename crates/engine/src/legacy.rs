@@ -9,7 +9,9 @@
 //! Written from the published architectures. Checked on small synthetic models (including that the
 //! three fused-QKV layouts give identical results for the same weights); **not** compared with real
 //! checkpoints. OPT is not here: it has no GGUF conversion.
+use crate::accel::{Accel, AttachReport, Item, key_of};
 use crate::arch::Act;
+use crate::backend::Backend;
 use crate::gguf::Gguf;
 use crate::loader::{LoadOptions, TensorSource, WeightFile, load_weight};
 use crate::model::{ModelError, Weight, activate};
@@ -205,6 +207,7 @@ pub struct LegacyModel {
     head: Option<Weight>,
     head_bias: Option<Vec<f32>>,
     vocab: usize,
+    accel: Option<Accel>,
 }
 
 #[derive(Default, Clone)]
@@ -406,7 +409,49 @@ impl LegacyModel {
             head,
             head_bias,
             vocab,
+            accel: None,
         })
+    }
+
+    fn mv(&self, w: &Weight, cols: usize, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
+        if let Some(a) = &self.accel {
+            let head = self.head.as_ref().unwrap_or(&self.embed);
+            if a.try_matvec(key_of(w), std::ptr::eq(w, head), cols, x, out) {
+                return Ok(());
+            }
+        }
+        w.matvec(cols, x, out)
+    }
+
+    /// Why the accelerator was switched off while running, if it was.
+    pub fn accel_failure(&self) -> Option<String> {
+        self.accel.as_ref().and_then(Accel::failure)
+    }
+
+    /// Put the big matrices on `be` (see [`Accel::build`]); never fails, the CPU stays the fall-back.
+    pub fn attach_backend(&mut self, be: Arc<dyn Backend>) -> AttachReport {
+        self.accel = None;
+        let h = self.cfg.hidden;
+        let qd = self.cfg.heads * self.cfg.head_dim;
+        let mut items = vec![Item::new(
+            self.head.as_ref().unwrap_or(&self.embed),
+            h,
+            true,
+        )];
+        for l in &self.layers {
+            match &l.qkv {
+                Proj::Fused(w) => items.push(Item::new(w, h, false)),
+                Proj::Split(a, b, c) => {
+                    items.extend([a, b, c].map(|w| Item::new(w, h, false)));
+                }
+            }
+            items.push(Item::new(&l.wo, qd, false));
+            items.push(Item::new(&l.up, h, false));
+            items.push(Item::new(&l.down, l.up.len() / h, false));
+        }
+        let (acc, rep) = Accel::build(be, &items);
+        self.accel = acc;
+        rep
     }
 
     pub fn config(&self) -> &LegacyConfig {
@@ -452,9 +497,9 @@ impl LegacyModel {
         match &l.qkv {
             Proj::Split(wq, wk, wv) => {
                 let (mut q, mut k, mut v) = (vec![0.0; qd], vec![0.0; kd], vec![0.0; kd]);
-                wq.matvec(h, a, &mut q)?;
-                wk.matvec(h, a, &mut k)?;
-                wv.matvec(h, a, &mut v)?;
+                self.mv(wq, h, a, &mut q)?;
+                self.mv(wk, h, a, &mut k)?;
+                self.mv(wv, h, a, &mut v)?;
                 if let Some(b) = &l.qkv_b {
                     q.iter_mut().zip(&b[..qd]).for_each(|(a, b)| *a += b);
                     k.iter_mut().zip(&b[qd..qd + kd]).for_each(|(a, b)| *a += b);
@@ -464,7 +509,7 @@ impl LegacyModel {
             }
             Proj::Fused(w) => {
                 let mut f = vec![0.0; qd + 2 * kd];
-                w.matvec(h, a, &mut f)?;
+                self.mv(w, h, a, &mut f)?;
                 add_bias(&mut f, &l.qkv_b);
                 let (mut q, mut k, mut v) = (
                     Vec::with_capacity(qd),
@@ -495,11 +540,11 @@ impl LegacyModel {
     fn mlp(&self, l: &Layer, x: &[f32]) -> Result<Vec<f32>, ModelError> {
         let ff = l.up.len() / self.cfg.hidden;
         let mut u = vec![0.0; ff];
-        l.up.matvec(self.cfg.hidden, x, &mut u)?;
+        self.mv(&l.up, self.cfg.hidden, x, &mut u)?;
         add_bias(&mut u, &l.bup);
         u.iter_mut().for_each(|v| *v = activate(self.cfg.act, *v));
         let mut o = vec![0.0; self.cfg.hidden];
-        l.down.matvec(ff, &u, &mut o)?;
+        self.mv(&l.down, ff, &u, &mut o)?;
         add_bias(&mut o, &l.bdown);
         Ok(o)
     }
@@ -578,7 +623,7 @@ impl LegacyModel {
                 }
             }
             let mut proj = vec![0.0; h];
-            l.wo.matvec(nh * hd, &att, &mut proj)?;
+            self.mv(&l.wo, nh * hd, &att, &mut proj)?;
             add_bias(&mut proj, &l.bo);
             if c.parallel {
                 let m_in = match &l.n2 {
@@ -604,10 +649,12 @@ impl LegacyModel {
         }
         let xn = layer_norm(&x, &self.out_norm, c.eps);
         let mut logits = vec![0.0; self.vocab];
-        self.head
-            .as_ref()
-            .unwrap_or(&self.embed)
-            .matvec(h, &xn, &mut logits)?;
+        self.mv(
+            self.head.as_ref().unwrap_or(&self.embed),
+            h,
+            &xn,
+            &mut logits,
+        )?;
         add_bias(&mut logits, &self.head_bias);
         Ok(logits)
     }
@@ -852,5 +899,26 @@ mod tests {
         let mut st = g.new_state();
         let long: Vec<usize> = (0..40).map(|i| i % V).collect();
         assert!(g.forward_batch(&mut st, &long).is_err());
+    }
+
+    #[test]
+    fn accelerator_matches_and_falls_back() {
+        use crate::accel::testbe::Odd;
+        let mut m = open("gptneox", NH, Qkv::Grouped, true);
+        let cpu = run(&m, &TOKS);
+        let rep = m.attach_backend(Odd::new(usize::MAX, 1.0, None));
+        assert!(rep.active, "{rep:?}");
+        for (x, y) in run(&m, &TOKS).iter().zip(&cpu) {
+            assert!((x - y).abs() < 1e-4);
+        }
+        let mut m = open("gpt2", NH, Qkv::Contiguous, false);
+        let cpu = run(&m, &TOKS);
+        m.attach_backend(Odd::new(6, 1.0, None));
+        for (x, y) in run(&m, &TOKS).iter().zip(&cpu) {
+            assert!((x - y).abs() < 1e-4);
+        }
+        assert!(m.accel_failure().is_some());
+        let rep = m.attach_backend(Odd::new(usize::MAX, 2.0, None));
+        assert!(!rep.active);
     }
 }

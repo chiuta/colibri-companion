@@ -48,6 +48,7 @@ pub mod famrun;
 pub mod famserve;
 pub mod fast;
 pub mod genloop;
+pub mod gpu;
 pub mod http;
 pub mod kvfit_cmd;
 pub mod kvmap_cmd;

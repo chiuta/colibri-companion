@@ -196,15 +196,18 @@ impl Prepared {
             expert_cache: None,
             prefetch: true,
         };
-        load_model(
-            self.spec.clone(),
-            self.src.clone(),
-            self.naming,
-            self.permuted,
-            self.options(cfg),
-            moe,
-        )
-        .map_err(|e| e.to_string())
+        let build = || {
+            load_model(
+                self.spec.clone(),
+                self.src.clone(),
+                self.naming,
+                self.permuted,
+                self.options(cfg),
+                moe,
+            )
+            .map_err(|e| e.to_string())
+        };
+        crate::gpu::accelerate_dense(build()?, &build)
     }
 
     pub fn into_loaded(self, cfg: &LoadCfg) -> Result<Loaded, String> {
