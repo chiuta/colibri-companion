@@ -17,4 +17,4 @@ Eszközhívás, strukturált kimenet, több válasz kérésenként, beágyazáso
 Minden **kis szintetikus modelleken** van tesztelve (saját invariánsok: a gyorsítótár egyenlő az újraszámolással, csúszóablakok, megosztott K/V, útválasztás, kvantált szakértők, a HTTP-válaszok). **Valódi Gemma 4 fájllal semmit sem hasonlítottunk össze.** Ha egy valódi fájl válaszai hibásnak tűnnek, futtasd magad a `corbul serve FÁJL.gguf` parancsot, és küldd el a kimenetét; először a csúszó/globális mintát és a RoPE-táblákat kell ellenőrizni.
 
 ## Még nem támogatott
-OPT, gpt-oss, GraniteMoE, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, a teljes DeepSeek modell, MiniMax, Zamba, kódoló–dekódoló modellek. A corbul néven nevezi őket, és nem találgat.
+OPT, gpt-oss, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, a teljes DeepSeek modell, MiniMax, Zamba, kódoló–dekódoló modellek. A corbul néven nevezi őket, és nem találgat.

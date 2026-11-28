@@ -130,6 +130,10 @@ pub struct Spec {
     pub rope_long: Vec<f64>,
     /// Attention score multiplier; 0 = `1/sqrt(head_dim)`.
     pub attn_scale: f64,
+    /// Granite: multiplier on what attention and the MLP add to the residual stream; 1 = none.
+    pub residual_scale: f64,
+    /// Granite: the final logits are divided by this; 1 = none.
+    pub logit_scale: f64,
     // ---- mixture of experts ----
     /// Intermediate size of one routed expert; 0 = same as `ffn` (Mixtral).
     pub moe_ffn: u64,
@@ -189,6 +193,8 @@ impl Spec {
             rope_short: vec![],
             rope_long: vec![],
             attn_scale: 0.0,
+            residual_scale: 1.0,
+            logit_scale: 1.0,
             moe_ffn: 0,
             norm_topk_prob: false,
             routed_scale: 1.0,
@@ -291,7 +297,7 @@ pub fn classify(name: &str) -> Support {
         "llama" | "mistral" | "qwen" | "qwen2" | "qwen3" | "gemma" | "gemma2" | "gemma3"
         | "gemma3_text" | "phi" | "phi3" | "olmo" | "olmo2" | "granite" | "cohere" | "cohere2"
         | "command-r" | "internlm2" | "yi" | "smollm3" | "stablelm" | "starcoder2" | "exaone"
-        | "glm" | "glm4" | "baichuan" | "minicpm" => Support::Standard,
+        | "glm" | "glm4" | "baichuan" | "minicpm" | "granitemoe" => Support::Standard,
         "falcon" | "gpt_neox" | "gptneox" | "gpt2" | "gptj" | "bloom" | "mpt" => {
             Support::Native("GPT-2 / GPT-J / GPT-NeoX / Falcon / BLOOM / MPT (own model, GGUF)")
         }
@@ -301,10 +307,8 @@ pub fn classify(name: &str) -> Support {
         "gpt_oss" | "gpt-oss" | "gptoss" => {
             Support::Planned("MXFP4 experts with clamped SwiGLU and expert biases")
         }
-        "granitemoe" | "phimoe" | "dbrx" | "arctic" | "jamba_moe" | "llama4" | "glm4_moe"
-        | "hunyuan_moe" | "ernie4_5_moe" | "grok" => {
-            Support::Planned("this mixture-of-experts layout")
-        }
+        "phimoe" | "dbrx" | "arctic" | "jamba_moe" | "llama4" | "glm4_moe" | "hunyuan_moe"
+        | "ernie4_5_moe" | "grok" => Support::Planned("this mixture-of-experts layout"),
         // multi-head latent attention exists as a module (mla.rs), the DeepSeek model around it does not
         "deepseek_v2" | "deepseek_v3" | "deepseek2" | "kimi_k2" => Support::Partial(
             "multi-head latent attention is implemented (mla.rs, absorbed and naive), but the full DeepSeek model — MLA layers, dense first layers, shared and routed experts — is not assembled or loadable yet",
@@ -628,6 +632,9 @@ pub fn from_hf_config(json: &str) -> Result<Spec, SpecError> {
         .unwrap_or(4096),
     );
     s.support = match classify(&family) {
+        Support::Standard if family == "granitemoe" => Support::Planned(
+            "GraniteMoE safetensors keep the experts fused (input_linear); convert the model to GGUF",
+        ),
         Support::Standard if experts > 1 => Support::Moe,
         x => x,
     };
@@ -768,7 +775,30 @@ pub fn from_hf_config(json: &str) -> Result<Spec, SpecError> {
         .and_then(Value::as_f64)
         .filter(|v| *v > 0.0)
         .map_or(0.0, |v| 1.0 / v.sqrt());
+    granite_multipliers_hf(c, &mut s);
     Ok(s)
+}
+
+/// Granite's four multipliers (`embedding_multiplier`, `attention_multiplier`,
+/// `residual_multiplier`, `logits_scaling`), from a `config.json`.
+fn granite_multipliers_hf(c: &Value, s: &mut Spec) {
+    let pos = |k: &str| {
+        c.get(k)
+            .and_then(Value::as_f64)
+            .filter(|v| *v > 0.0 && v.is_finite())
+    };
+    if let Some(v) = pos("embedding_multiplier") {
+        s.embed_scale = v;
+    }
+    if let Some(v) = pos("attention_multiplier") {
+        s.attn_scale = v;
+    }
+    if let Some(v) = pos("residual_multiplier") {
+        s.residual_scale = v;
+    }
+    if let Some(v) = pos("logits_scaling") {
+        s.logit_scale = v;
+    }
 }
 
 /// Build a [`Spec`] from GGUF metadata.
@@ -830,7 +860,7 @@ pub fn from_gguf(g: &Gguf) -> Result<Spec, SpecError> {
     // llama.cpp renormalises for Mixtral-style `llama` files unless the file says otherwise
     s.norm_topk_prob = match g.meta.get(&format!("{family}.expert_weights_norm")) {
         Some(crate::gguf::Value::Bool(b)) => *b,
-        _ => family == "llama" && experts > 1,
+        _ => matches!(family.as_str(), "llama" | "granitemoe") && experts > 1,
     };
     s.routed_scale = g
         .get_f64("expert_weights_scale")
@@ -851,6 +881,19 @@ pub fn from_gguf(g: &Gguf) -> Result<Spec, SpecError> {
     s.qkv_bias = t.qkv_bias;
     s.post_norms = t.post_norms;
     s.parallel_residual = t.parallel;
+    let pos = |k: &str| g.get_f64(k).filter(|v| *v > 0.0 && v.is_finite());
+    if let Some(v) = pos("embedding_scale") {
+        s.embed_scale = v;
+    }
+    if let Some(v) = pos("attention.scale") {
+        s.attn_scale = v;
+    }
+    if let Some(v) = pos("residual_scale") {
+        s.residual_scale = v;
+    }
+    if let Some(v) = pos("logit_scale") {
+        s.logit_scale = v;
+    }
     s.attn_softcap = g.get_f64("attn_logit_softcapping").unwrap_or(0.0);
     s.final_softcap = g.get_f64("final_logit_softcapping").unwrap_or(0.0);
     s.sliding_window = g.get_u64("attention.sliding_window").unwrap_or(0);
@@ -1469,5 +1512,51 @@ mod tests {
             (8.0, 30.0, 16)
         );
         assert_eq!(s.sliding_layers, [true, false, true, false, true, false]);
+    }
+
+    #[test]
+    fn granite_multipliers_are_read_from_config_and_gguf() {
+        let s = from_hf_config(r#"{"model_type":"granite","hidden_size":64,"num_hidden_layers":2,"num_attention_heads":4,"intermediate_size":128,"vocab_size":100,"embedding_multiplier":12.0,"attention_multiplier":0.015625,"residual_multiplier":0.22,"logits_scaling":8.0}"#).unwrap();
+        assert_eq!(
+            (s.embed_scale, s.attn_scale, s.residual_scale, s.logit_scale),
+            (12.0, 0.015625, 0.22, 8.0)
+        );
+        let plain = from_hf_config(r#"{"model_type":"llama","hidden_size":64,"num_hidden_layers":2,"num_attention_heads":4,"intermediate_size":128,"vocab_size":100}"#).unwrap();
+        assert_eq!((plain.residual_scale, plain.logit_scale), (1.0, 1.0));
+    }
+
+    #[test]
+    fn gguf_granitemoe_is_a_moe_with_the_granite_multipliers() {
+        let mut g = Gguf::parse(&crate::gguf::tests::sample()[..]).unwrap();
+        g.meta.insert(
+            "general.architecture".into(),
+            crate::gguf::Value::Str("granitemoe".into()),
+        );
+        for (k, v) in [
+            ("block_count", 4u64),
+            ("embedding_length", 64),
+            ("attention.head_count", 4),
+            ("expert_count", 8),
+            ("expert_used_count", 2),
+        ] {
+            g.meta
+                .insert(format!("granitemoe.{k}"), crate::gguf::Value::U64(v));
+        }
+        for (k, v) in [
+            ("embedding_scale", 12.0),
+            ("residual_scale", 0.22),
+            ("logit_scale", 8.0),
+            ("attention.scale", 0.015625),
+        ] {
+            g.meta
+                .insert(format!("granitemoe.{k}"), crate::gguf::Value::F64(v));
+        }
+        let s = from_gguf(&g).unwrap();
+        assert_eq!(s.support, Support::Moe);
+        assert!(s.norm_topk_prob);
+        assert_eq!(
+            (s.embed_scale, s.residual_scale, s.logit_scale, s.attn_scale),
+            (12.0, 0.22, 8.0, 0.015625)
+        );
     }
 }

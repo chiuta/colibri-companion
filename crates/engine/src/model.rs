@@ -1982,6 +1982,9 @@ impl Model {
         let mut logits = vec![0.0; s.vocab as usize];
         head.matvec_nt(h, &xl, &mut logits, self.threads)?;
         add_bias(&mut logits, &self.w.lm_head_b);
+        if s.logit_scale != 1.0 {
+            logits.iter_mut().for_each(|l| *l /= s.logit_scale as f32);
+        }
         if s.final_softcap > 0.0 {
             logits
                 .iter_mut()
@@ -2290,6 +2293,9 @@ impl Model {
                     norm(s, pr, pn, None, tmp);
                     pr.copy_from_slice(tmp);
                 }
+                if s.residual_scale != 1.0 {
+                    pr.iter_mut().for_each(|v| *v *= s.residual_scale as f32);
+                }
                 let xt = &mut x[t * h..(t + 1) * h];
                 // MLP input: the block input (parallel residual) or the residual stream after attention (sequential)
                 if !s.parallel_residual {
@@ -2357,6 +2363,9 @@ impl Model {
                 if let Some(pn) = &l.post_ffn_norm {
                     norm(s, m, pn, None, tmp);
                     m.copy_from_slice(tmp);
+                }
+                if s.residual_scale != 1.0 {
+                    m.iter_mut().for_each(|v| *v *= s.residual_scale as f32);
                 }
                 let xt = &mut x[t * h..(t + 1) * h];
                 if s.parallel_residual {
@@ -2656,6 +2665,7 @@ impl Model {
             && !s.qkv_bias
             && !s.post_norms
             && !s.parallel_residual
+            && s.residual_scale == 1.0
             && s.attn_softcap == 0.0
             && s.rotary_dim == s.head_dim
             && rope_ok
@@ -3799,6 +3809,7 @@ pub(crate) mod tests {
                 if let Some(pn) = &l.post_attn_norm {
                     o = nm(&o, pn, None);
                 }
+                o.iter_mut().for_each(|v| *v *= s.residual_scale as f32);
                 let resid_after_attn: Vec<f32> = xs[p].iter().zip(&o).map(|(a, b)| a + b).collect();
                 let mlp_in = nm(
                     if s.parallel_residual {
@@ -3824,6 +3835,7 @@ pub(crate) mod tests {
                 if let Some(pn) = &l.post_ffn_norm {
                     d = nm(&d, pn, None);
                 }
+                d.iter_mut().for_each(|v| *v *= s.residual_scale as f32);
                 new_xs[p] = if s.parallel_residual {
                     (0..h).map(|i| xs[p][i] + o[i] + d[i]).collect()
                 } else {
@@ -3844,6 +3856,7 @@ pub(crate) mod tests {
                 .as_dense()
                 .unwrap();
         let mut out = mv(head, h, &xb, &m.w.lm_head_b);
+        out.iter_mut().for_each(|l| *l /= s.logit_scale as f32);
         if s.final_softcap > 0.0 {
             out.iter_mut().for_each(|l| {
                 *l = s.final_softcap as f32 * crate::simd::rmath::tanh(*l / s.final_softcap as f32)
@@ -4044,6 +4057,40 @@ pub(crate) mod tests {
             ("window", Box::new(|s| s.sliding_layers = vec![false; 3])),
             ("local theta", Box::new(|s| s.rope_theta_local = 0.0)),
             ("scale", Box::new(|s| s.attn_scale = 0.0)),
+        ] {
+            let b = without(&m, &*f);
+            let d = decode(&m)
+                .iter()
+                .zip(decode(&b))
+                .flat_map(|(x, y)| {
+                    x.iter()
+                        .zip(y)
+                        .map(|(a, b)| (a - b).abs())
+                        .collect::<Vec<_>>()
+                })
+                .fold(0.0, f32::max);
+            assert!(d > 1e-4, "{what} had no effect ({d})");
+        }
+    }
+
+    #[test]
+    fn granite_multipliers_are_applied_and_match_the_reference() {
+        let mut sp = base_spec(4, 2, true);
+        sp.family = "granite".into();
+        sp.embed_scale = 12.0;
+        sp.attn_scale = 0.2;
+        sp.residual_scale = 0.22;
+        sp.logit_scale = 8.0;
+        let m = model_of(sp, false);
+        check("granite", &m, None);
+        for (what, f) in [
+            (
+                "residual",
+                Box::new(|s: &mut Spec| s.residual_scale = 1.0) as Box<dyn Fn(&mut Spec)>,
+            ),
+            ("logits", Box::new(|s| s.logit_scale = 1.0)),
+            ("embedding", Box::new(|s| s.embed_scale = 1.0)),
+            ("attention", Box::new(|s| s.attn_scale = 0.0)),
         ] {
             let b = without(&m, &*f);
             let d = decode(&m)

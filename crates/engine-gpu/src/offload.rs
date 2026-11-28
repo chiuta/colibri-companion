@@ -60,6 +60,7 @@ pub fn eligible_layers(s: &Spec) -> Vec<bool> {
         && !s.qkv_bias
         && !s.post_norms
         && !s.parallel_residual
+        && s.residual_scale == 1.0
         && s.attn_softcap == 0.0
         && s.rotary_dim == s.head_dim
         && s.experts <= 1

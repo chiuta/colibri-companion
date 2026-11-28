@@ -17,4 +17,4 @@ Tool calls, structured output, several answers per request, embeddings, context 
 All of it is tested on **small synthetic models** (their own invariants: caching equals recomputing, sliding windows, shared K/V, routing, quantised experts, the HTTP replies). **Nothing was compared with a real Gemma 4 file.** If the answers of a real file look wrong, run `corbul serve FILE.gguf` yourself and send its output; the first thing to check is the sliding/global pattern and the RoPE tables.
 
 ## Still not supported
-OPT, gpt-oss, GraniteMoE, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, the full DeepSeek model, MiniMax, Zamba, encoder-decoder models. For them corbul says so by name and does not guess.
+OPT, gpt-oss, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, the full DeepSeek model, MiniMax, Zamba, encoder-decoder models. For them corbul says so by name and does not guess.

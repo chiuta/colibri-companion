@@ -17,4 +17,4 @@ Appels d'outils, sortie structurée, plusieurs réponses par requête, embedding
 Tout est testé sur de **petits modèles synthétiques** (invariants propres : cache égal au recalcul, fenêtres glissantes, K/V partagé, routage, experts quantifiés, réponses HTTP). **Rien n'a été comparé à un vrai fichier Gemma 4.** Si les réponses d'un vrai fichier semblent fausses, lance toi-même `corbul serve FICHIER.gguf` et envoie la sortie ; on vérifie d'abord le motif glissant/global et les tables RoPE.
 
 ## Pas encore pris en charge
-OPT, gpt-oss, GraniteMoE, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, le modèle DeepSeek complet, MiniMax, Zamba, modèles encodeur-décodeur. corbul les nomme et ne devine pas.
+OPT, gpt-oss, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, le modèle DeepSeek complet, MiniMax, Zamba, modèles encodeur-décodeur. corbul les nomme et ne devine pas.
