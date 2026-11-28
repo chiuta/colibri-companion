@@ -655,6 +655,37 @@ fn router_names(n: Naming, i: usize) -> Vec<String> {
         Naming::Gguf => vec![format!("blk.{i}.ffn_gate_inp.weight")],
     }
 }
+/// How a layer's router follows from the model's [`Spec`].
+fn router_config(
+    spec: &Spec,
+    hidden: usize,
+    experts: usize,
+    selection_bias: Option<Vec<f32>>,
+) -> RouterConfig {
+    RouterConfig {
+        hidden,
+        experts,
+        top_k: spec.experts_used as usize,
+        scoring: if spec.moe_sigmoid {
+            Scoring::Sigmoid
+        } else {
+            Scoring::Softmax
+        },
+        renormalise: spec.norm_topk_prob,
+        routed_scale: spec.routed_scale as f32,
+        groups: (spec.moe_groups.0 > 1)
+            .then_some((spec.moe_groups.0 as usize, spec.moe_groups.1 as usize)),
+        selection_bias,
+    }
+}
+
+/// The per-expert bias that only steers which experts are picked (DeepSeek-V3, GLM-4.5).
+fn router_bias_names(n: Naming, i: usize) -> Vec<String> {
+    match n {
+        Naming::Hf => vec![format!("model.layers.{i}.mlp.gate.e_score_correction_bias")],
+        Naming::Gguf => vec![format!("blk.{i}.exp_probs_b.bias")],
+    }
+}
 /// Shared-expert tensors; `part` is `gate`, `up`, `down` or `gate_inp` (the sigmoid gate on their output).
 fn shared_names(n: Naming, i: usize, part: &str) -> Vec<String> {
     match n {
@@ -951,16 +982,7 @@ pub(crate) fn build_layer(
         } else {
             rw.len() / h.max(1)
         };
-        let cfg = RouterConfig {
-            hidden: h,
-            experts,
-            top_k: spec.experts_used as usize,
-            scoring: Scoring::Softmax,
-            renormalise: spec.norm_topk_prob,
-            routed_scale: spec.routed_scale as f32,
-            groups: None,
-            selection_bias: None,
-        };
+        let cfg = router_config(spec, h, experts, opt(src, &router_bias_names(naming, i))?);
         let router = Router::new(cfg, rw).map_err(|e| LoadError::Format(format!("{rn}: {e}")))?;
         let mut shared = vec![];
         let gate_names = shared_names(naming, i, "gate");
@@ -1170,6 +1192,30 @@ fn make_provider(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn router_follows_the_spec_sigmoid_bias_and_groups() {
+        let mut sp = Spec::dense("glm4moe", 2, 8, 2, 2, 4, 16, 10, 64);
+        sp.experts = 8;
+        sp.experts_used = 2;
+        sp.norm_topk_prob = true;
+        sp.routed_scale = 1.8;
+        let plain = super::router_config(&sp, 8, 8, None);
+        assert_eq!(plain.scoring, crate::moe::Scoring::Softmax);
+        assert!(plain.groups.is_none() && plain.selection_bias.is_none());
+        sp.moe_sigmoid = true;
+        sp.moe_groups = (4, 2);
+        let bias: Vec<f32> = (0..8).map(|i| if i == 5 { 10.0 } else { 0.0 }).collect();
+        let c = super::router_config(&sp, 8, 8, Some(bias));
+        assert_eq!(c.scoring, crate::moe::Scoring::Sigmoid);
+        assert_eq!((c.groups, c.routed_scale, c.top_k), (Some((4, 2)), 1.8, 2));
+        // the bias steers selection (expert 5 wins) but is not part of the weights
+        let router = crate::moe::Router::new(c, vec![0.1; 64]).unwrap();
+        let r = router.route(&[1.0; 8]).unwrap();
+        assert_eq!(r[0].0, 5);
+        let sum: f32 = r.iter().map(|p| p.1).sum();
+        assert!((sum - 1.8).abs() < 1e-4, "{sum}");
+    }
+
     use super::*;
     use crate::arch::{Act, NormKind};
     use crate::model::tests::{base_spec, model_of, requantise, tiny};

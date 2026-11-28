@@ -17,4 +17,4 @@ Werkzeugaufrufe, strukturierte Ausgabe, mehrere Antworten je Anfrage, Embeddings
 Alles ist an **kleinen synthetischen Modellen** getestet (eigene Invarianten: Cache gleich Neuberechnung, gleitende Fenster, geteiltes K/V, Routing, quantisierte Experten, die HTTP-Antworten). **Nichts wurde mit einer echten Gemma-4-Datei verglichen.** Wirken die Antworten einer echten Datei falsch, führe `corbul serve DATEI.gguf` selbst aus und schicke die Ausgabe; zuerst prüft man das Muster gleitend/global und die RoPE-Tabellen.
 
 ## Noch nicht unterstützt
-OPT, gpt-oss, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, das vollständige DeepSeek-Modell, MiniMax, Zamba, Encoder-Decoder-Modelle. corbul nennt sie beim Namen und rät nicht.
+OPT, gpt-oss, PhiMoE, DBRX, Llama 4, Hunyuan, Ernie-MoE, Grok, das vollständige DeepSeek-Modell, MiniMax, Zamba, Encoder-Decoder-Modelle. corbul nennt sie beim Namen und rät nicht.

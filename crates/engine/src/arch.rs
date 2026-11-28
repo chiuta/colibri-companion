@@ -141,6 +141,10 @@ pub struct Spec {
     pub norm_topk_prob: bool,
     /// Multiplier on the routing weights (`routed_scaling_factor`); 1 = none.
     pub routed_scale: f64,
+    /// Router scores are sigmoids, not a softmax (DeepSeek-V3, GLM-4.5).
+    pub moe_sigmoid: bool,
+    /// `(groups, groups kept)` for group-limited routing; `(0, 0)` = none.
+    pub moe_groups: (u64, u64),
 }
 
 impl Spec {
@@ -198,6 +202,8 @@ impl Spec {
             moe_ffn: 0,
             norm_topk_prob: false,
             routed_scale: 1.0,
+            moe_sigmoid: false,
+            moe_groups: (0, 0),
         }
     }
     /// Width of one routed expert.
@@ -297,7 +303,9 @@ pub fn classify(name: &str) -> Support {
         "llama" | "mistral" | "qwen" | "qwen2" | "qwen3" | "gemma" | "gemma2" | "gemma3"
         | "gemma3_text" | "phi" | "phi3" | "olmo" | "olmo2" | "granite" | "cohere" | "cohere2"
         | "command-r" | "internlm2" | "yi" | "smollm3" | "stablelm" | "starcoder2" | "exaone"
-        | "glm" | "glm4" | "baichuan" | "minicpm" | "granitemoe" => Support::Standard,
+        | "glm" | "glm4" | "baichuan" | "minicpm" | "granitemoe" | "glm4moe" | "glm4_moe" => {
+            Support::Standard
+        }
         "falcon" | "gpt_neox" | "gptneox" | "gpt2" | "gptj" | "bloom" | "mpt" => {
             Support::Native("GPT-2 / GPT-J / GPT-NeoX / Falcon / BLOOM / MPT (own model, GGUF)")
         }
@@ -307,8 +315,8 @@ pub fn classify(name: &str) -> Support {
         "gpt_oss" | "gpt-oss" | "gptoss" => {
             Support::Planned("MXFP4 experts with clamped SwiGLU and expert biases")
         }
-        "phimoe" | "dbrx" | "arctic" | "jamba_moe" | "llama4" | "glm4_moe" | "hunyuan_moe"
-        | "ernie4_5_moe" | "grok" => Support::Planned("this mixture-of-experts layout"),
+        "phimoe" | "dbrx" | "arctic" | "jamba_moe" | "llama4" | "hunyuan_moe" | "ernie4_5_moe"
+        | "grok" => Support::Planned("this mixture-of-experts layout"),
         // multi-head latent attention exists as a module (mla.rs), the DeepSeek model around it does not
         "deepseek_v2" | "deepseek_v3" | "deepseek2" | "kimi_k2" => Support::Partial(
             "multi-head latent attention is implemented (mla.rs, absorbed and naive), but the full DeepSeek model — MLA layers, dense first layers, shared and routed experts — is not assembled or loadable yet",
@@ -632,6 +640,9 @@ pub fn from_hf_config(json: &str) -> Result<Spec, SpecError> {
         .unwrap_or(4096),
     );
     s.support = match classify(&family) {
+        Support::Standard if family == "glm4_moe" => {
+            Support::Planned("GLM-4.5 safetensors are not read; use the GGUF")
+        }
         Support::Standard if family == "granitemoe" => Support::Planned(
             "GraniteMoE safetensors keep the experts fused (input_linear); convert the model to GGUF",
         ),
@@ -810,6 +821,8 @@ pub fn from_gguf(g: &Gguf) -> Result<Spec, SpecError> {
     let layers = g
         .get_u64("block_count")
         .ok_or(SpecError::Missing("block_count"))?;
+    // GLM-4.5 appends next-token-prediction blocks to the file; they are not part of the decoder
+    let layers = layers.saturating_sub(g.get_u64("nextn_predict_layers").unwrap_or(0));
     if layers > MAX_LAYERS {
         return Err(SpecError::Absurd("block_count"));
     }
@@ -877,10 +890,23 @@ pub fn from_gguf(g: &Gguf) -> Result<Spec, SpecError> {
     s.gated_mlp = t.gated;
     s.act = t.act;
     s.embed_scale = if t.gemma { (hidden as f64).sqrt() } else { 1.0 };
-    s.qk_norm = t.qk_norm;
-    s.qkv_bias = t.qkv_bias;
+    s.qk_norm = t.qk_norm
+        || (family == "glm4moe"
+            && g.tensors
+                .iter()
+                .any(|x| x.name.ends_with("attn_q_norm.weight")));
+    s.qkv_bias = t.qkv_bias || family == "glm4moe";
     s.post_norms = t.post_norms;
     s.parallel_residual = t.parallel;
+    s.moe_sigmoid = g.get_u64("expert_gating_func") == Some(2);
+    if let (Some(n), Some(k)) = (
+        g.get_u64("expert_group_count"),
+        g.get_u64("expert_group_used_count"),
+    ) && n > 1
+        && k > 0
+    {
+        s.moe_groups = (n, k);
+    }
     let pos = |k: &str| g.get_f64(k).filter(|v| *v > 0.0 && v.is_finite());
     if let Some(v) = pos("embedding_scale") {
         s.embed_scale = v;
@@ -1558,5 +1584,34 @@ mod tests {
             (s.embed_scale, s.residual_scale, s.logit_scale, s.attn_scale),
             (12.0, 0.22, 8.0, 0.015625)
         );
+    }
+
+    #[test]
+    fn gguf_glm4moe_reads_sigmoid_groups_and_skips_nextn_blocks() {
+        let mut g = Gguf::parse(&crate::gguf::tests::sample()[..]).unwrap();
+        g.meta.insert(
+            "general.architecture".into(),
+            crate::gguf::Value::Str("glm4moe".into()),
+        );
+        for (k, v) in [
+            ("block_count", 5u64),
+            ("nextn_predict_layers", 1),
+            ("embedding_length", 64),
+            ("attention.head_count", 4),
+            ("expert_count", 8),
+            ("expert_used_count", 2),
+            ("expert_gating_func", 2),
+            ("expert_group_count", 4),
+            ("expert_group_used_count", 2),
+        ] {
+            g.meta
+                .insert(format!("glm4moe.{k}"), crate::gguf::Value::U64(v));
+        }
+        let s = from_gguf(&g).unwrap();
+        assert_eq!(s.layers, 4);
+        assert_eq!(s.support, Support::Moe);
+        assert!(s.moe_sigmoid && s.qkv_bias);
+        assert_eq!(s.moe_groups, (4, 2));
+        assert!(!s.qk_norm);
     }
 }

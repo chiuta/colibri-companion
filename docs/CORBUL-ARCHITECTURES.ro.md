@@ -17,4 +17,4 @@ Apeluri de unelte, ieșire structurată, mai multe răspunsuri per cerere, embed
 Totul e testat pe **modele sintetice mici** (invariante proprii: cache egal cu recalculare, ferestre glisante, K/V partajat, rutare, experți cuantizați, răspunsurile HTTP). **Nimic nu a fost comparat cu un fișier Gemma 4 real.** Dacă răspunsurile unui fișier real par greșite, rulează singur `corbul serve FIȘIER.gguf` și trimite ieșirea; primul lucru de verificat sunt tiparul glisant/global și tabelele RoPE.
 
 ## Încă nesuportate
-OPT, gpt-oss, PhiMoE, DBRX, Llama 4, GLM-4-MoE, Hunyuan, Ernie-MoE, Grok, modelul DeepSeek complet, MiniMax, Zamba, modelele encoder-decoder. Pentru ele corbul spune pe nume că nu merg și nu ghicește.
+OPT, gpt-oss, PhiMoE, DBRX, Llama 4, Hunyuan, Ernie-MoE, Grok, modelul DeepSeek complet, MiniMax, Zamba, modelele encoder-decoder. Pentru ele corbul spune pe nume că nu merg și nu ghicește.
