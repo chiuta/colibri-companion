@@ -38,6 +38,12 @@ pub struct Mail {
 
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8000";
 
+/// The estimates for the GGUF files found, with the machine they were made for.
+pub struct Scouted {
+    pub machine: companion_engine::scout::Machine,
+    pub rows: Vec<Result<companion_engine::scout::Entry, (PathBuf, String)>>,
+}
+
 #[allow(clippy::large_enum_variant)]
 pub enum Event {
     Python(Option<PythonCmd>),
@@ -139,6 +145,8 @@ pub enum Event {
     },
     Installed(Vec<InstalledModel>),
     GgufFound(Vec<companion_core::models::GgufFile>),
+    /// What the headers of the found files say, and the estimates for this computer.
+    GgufScouted(Box<Scouted>),
     Resources(Box<ResView>),
     Npu(Option<String>),
     UpdateChecked {
@@ -432,6 +440,7 @@ pub struct CompanionApp {
     pub installed: Vec<InstalledModel>,
     /// GGUF files found in the model folders (not converted yet).
     pub gguf_found: Vec<companion_core::models::GgufFile>,
+    pub gguf_scout: Option<Scouted>,
     pub gguf_scanning: bool,
     pub gguf_scanned: bool,
     /// The folder typed in "Load models from a folder".
@@ -551,6 +560,7 @@ impl CompanionApp {
             sheets: Default::default(),
             existing_path: String::new(),
             gguf_found: Vec::new(),
+            gguf_scout: None,
             gguf_scanning: false,
             gguf_scanned: false,
             folder_input: String::new(),
@@ -1524,7 +1534,16 @@ impl CompanionApp {
             &self.s.extra_model_dirs,
         );
         self.spawn(move |tx| {
-            let _ = tx.send(Event::GgufFound(models::find_gguf(&roots, 3)));
+            let found = models::find_gguf(&roots, 3);
+            let firsts: Vec<PathBuf> = found.iter().map(|g| g.first.clone()).collect();
+            let _ = tx.send(Event::GgufFound(found));
+            let hw = companion_engine::hw::HardwareProfile::detect(
+                firsts.first().and_then(|p| p.parent()),
+            );
+            let m =
+                companion_engine::scout::machine(&hw, companion_engine::scout::measure_ram_gbs());
+            let rows = companion_engine::scout::survey(&firsts, &m, 4096);
+            let _ = tx.send(Event::GgufScouted(Box::new(Scouted { machine: m, rows })));
         });
     }
 
@@ -2847,6 +2866,7 @@ impl CompanionApp {
                 self.gguf_scanning = false;
                 self.gguf_scanned = true;
             }
+            Event::GgufScouted(s) => self.gguf_scout = Some(*s),
             Event::Npu(n) => self.npu = n,
             Event::Attached { name, result } => self.attached(name, result),
             Event::Picture(r) => self.picture_done(r),

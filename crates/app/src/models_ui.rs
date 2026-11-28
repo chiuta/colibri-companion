@@ -292,6 +292,26 @@ impl CompanionApp {
                     "colibri converts them into a model folder beside them; it needs about as much free space as the model and can take a while.",
                 ),
             );
+            if let Some(sc) = &self.gguf_scout {
+                let m = &sc.machine;
+                let card = m.gpu.as_ref().map_or("—".to_string(), |g| {
+                    format!(
+                        "{} ({})",
+                        g.name,
+                        g.vram.map_or("?".to_string(), |v| fmt_gb(v as f64 / 1e9))
+                    )
+                });
+                muted(
+                    ui,
+                    &p,
+                    &format!(
+                        "CPU {} threads · RAM {} · {:.0} GB/s · GPU {card}",
+                        m.threads,
+                        m.ram_total.map_or("?".to_string(), |v| fmt_gb(v as f64 / 1e9)),
+                        m.cpu_gbs
+                    ),
+                );
+            }
             for g in &found {
                 card(ui, &p, |ui| {
                     ui.set_width(ui.available_width());
@@ -317,6 +337,7 @@ impl CompanionApp {
                             .replacen("{}", &g.missing.join(", "), 1);
                         ui.label(RichText::new(m).small().color(p.warn));
                     }
+                    self.scout_lines(ui, &g.first);
                     ui.add_enabled_ui(!busy && g.missing.is_empty(), |ui| {
                         if primary_button(ui, &p, self.t("Convertește și folosește", "Convert and use"))
                             .clicked()
@@ -345,6 +366,173 @@ impl CompanionApp {
             }
         });
         ui.add_space(6.0);
+    }
+
+    /// What the file's header says and how it should run here: engine support, fit, and the
+    /// estimated decoding speed on the processor and with the card.
+    fn scout_lines(&self, ui: &mut Ui, file: &std::path::Path) {
+        use companion_engine::arch::Support;
+        use companion_engine::scout::Fit;
+        let p = self.p;
+        let Some(sc) = &self.gguf_scout else {
+            if self.gguf_scanning {
+                muted(ui, &p, self.t("Citesc antetele…", "Reading the headers…"));
+            }
+            return;
+        };
+        let Some(row) = sc.rows.iter().find(|r| match r {
+            Ok(e) => e.facts.path == file,
+            Err((q, _)) => q == file,
+        }) else {
+            return;
+        };
+        let e = match row {
+            Ok(e) => e,
+            Err((_, why)) => {
+                ui.label(RichText::new(why).small().color(p.warn));
+                return;
+            }
+        };
+        let (f, a) = (&e.facts, &e.assessment);
+        let mut head = format!(
+            "{} · {:.1}B · {} ({:.1} bit) · ctx {}",
+            f.arch,
+            f.params_b(),
+            f.quant,
+            f.bits_per_weight,
+            f.context
+        );
+        if f.is_moe() {
+            head.push_str(&format!(
+                " · {:.1}B / {} din {}",
+                f.active_params_b(),
+                f.used,
+                f.experts
+            ));
+        }
+        ui.label(RichText::new(head).small().color(p.muted));
+        let mut caps: Vec<&str> = vec![];
+        if f.chat_template {
+            caps.push(self.t("șablon de chat", "chat template"));
+        }
+        if f.tools {
+            caps.push(self.t("apeluri de unelte", "tool calls"));
+        }
+        if f.is_moe() {
+            caps.push(self.t("mixtură de experți", "mixture of experts"));
+        }
+        if f.vision {
+            caps.push(self.t("proiector de viziune alături", "vision projector beside it"));
+        }
+        if !caps.is_empty() {
+            ui.label(
+                RichText::new(format!(
+                    "{} {}",
+                    self.t("Poate:", "Can do:"),
+                    caps.join(", ")
+                ))
+                .small()
+                .color(p.muted),
+            );
+        }
+        match &f.support {
+            Support::Partial(w) | Support::Planned(w) => {
+                let m = self
+                    .t("Încă nesuportat: {}", "Not supported yet: {}")
+                    .replacen("{}", w, 1);
+                ui.label(RichText::new(m).small().color(p.warn));
+            }
+            _ => {
+                ui.label(
+                    RichText::new(self.t("Rulează cu corbul", "Runs with corbul"))
+                        .small()
+                        .color(p.muted),
+                );
+            }
+        }
+        let need = self
+            .t(
+                "Are nevoie de {} la {} tokeni de context",
+                "Needs {} at {} tokens of context",
+            )
+            .replacen("{}", &fmt_gb(a.need_bytes as f64 / 1e9), 1)
+            .replacen("{}", &a.ctx.to_string(), 1);
+        let fit = match a.fit {
+            Fit::Gpu => self.t("Încape în placa video", "Fits the graphics card"),
+            Fit::Ram => self.t("Încape în memorie", "Fits in memory"),
+            Fit::Disk => self.t(
+                "Mai mare decât memoria liberă: citește de pe disc",
+                "Larger than free memory: reads from the disk",
+            ),
+        };
+        let warn = a.fit == Fit::Disk;
+        ui.label(
+            RichText::new(format!("{need} · {fit}"))
+                .small()
+                .color(if warn { p.warn } else { p.muted }),
+        );
+        let rng = |r: companion_engine::scout::Range| {
+            if r.high < 10.0 {
+                format!("{:.1}–{:.1}", r.low, r.high)
+            } else {
+                format!("{:.0}–{:.0}", r.low, r.high)
+            }
+        };
+        let gpu = match a.gpu {
+            Some(g) => {
+                let mut s = format!("GPU {}", rng(g));
+                if a.gpu_share < 1.0 {
+                    s.push_str(&format!(
+                        " ({})",
+                        self.t(
+                            "{} din greutăți încap pe placă",
+                            "{} of the weights fit on the card"
+                        )
+                        .replacen(
+                            "{}",
+                            &format!("{:.0}%", a.gpu_share * 100.0),
+                            1
+                        )
+                    ));
+                }
+                s
+            }
+            None => format!(
+                "GPU: {}",
+                self.t("fără placă video utilizabilă", "no usable graphics card")
+            ),
+        };
+        ui.label(
+            RichText::new(format!(
+                "{} CPU {} · {}",
+                self.t(
+                    "Viteză estimată, tokeni pe secundă:",
+                    "Estimated speed, tokens per second:"
+                ),
+                rng(a.cpu),
+                gpu
+            ))
+            .small()
+            .semibold(),
+        );
+        if a.gpu_wins {
+            muted(
+                ui,
+                &p,
+                self.t(
+                    "Placa video e probabil mai rapidă.",
+                    "The graphics card is likely faster.",
+                ),
+            );
+        }
+        muted(
+            ui,
+            &p,
+            self.t(
+                "Estimare din lățimea de bandă a memoriei, nu o măsurătoare a acestui model.",
+                "An estimate from memory bandwidth, not a measurement of this model.",
+            ),
+        );
     }
 
     fn installed_row(&mut self, ui: &mut Ui, m: &InstalledModel, active: Option<&str>, busy: bool) {

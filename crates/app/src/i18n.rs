@@ -14813,6 +14813,182 @@ static TABLE: &[(&str, [&str; 6])] = &[
             "Olyan fájlokhoz, amelyeket a colibri nem tud importálni (például Gemma). Nagy modelleknél lassabb a colibrinél.",
         ],
     ),
+    (
+        "Runs with corbul",
+        [
+            "Fonctionne avec corbul",
+            "Funziona con corbul",
+            "Funciona con corbul",
+            "Funciona com o corbul",
+            "Läuft mit corbul",
+            "Fut a corbullal",
+        ],
+    ),
+    (
+        "Not supported yet: {}",
+        [
+            "Pas encore pris en charge : {}",
+            "Non ancora supportato: {}",
+            "Aún no compatible: {}",
+            "Ainda não suportado: {}",
+            "Noch nicht unterstützt: {}",
+            "Még nem támogatott: {}",
+        ],
+    ),
+    (
+        "Needs {} at {} tokens of context",
+        [
+            "Nécessite {} pour {} jetons de contexte",
+            "Richiede {} con {} token di contesto",
+            "Necesita {} con {} tokens de contexto",
+            "Precisa de {} com {} tokens de contexto",
+            "Benötigt {} bei {} Token Kontext",
+            "{} kell {} token kontextushoz",
+        ],
+    ),
+    (
+        "Fits the graphics card",
+        [
+            "Tient dans la carte graphique",
+            "Sta nella scheda video",
+            "Cabe en la tarjeta gráfica",
+            "Cabe na placa gráfica",
+            "Passt in die Grafikkarte",
+            "Elfér a videókártyán",
+        ],
+    ),
+    (
+        "Fits in memory",
+        [
+            "Tient en mémoire",
+            "Sta in memoria",
+            "Cabe en la memoria",
+            "Cabe na memória",
+            "Passt in den Speicher",
+            "Elfér a memóriában",
+        ],
+    ),
+    (
+        "Larger than free memory: reads from the disk",
+        [
+            "Plus grand que la mémoire libre : lit le disque",
+            "Più grande della memoria libera: legge dal disco",
+            "Mayor que la memoria libre: lee del disco",
+            "Maior que a memória livre: lê do disco",
+            "Größer als der freie Speicher: liest von der Platte",
+            "Nagyobb a szabad memóriánál: a lemezről olvas",
+        ],
+    ),
+    (
+        "Estimated speed, tokens per second:",
+        [
+            "Vitesse estimée, jetons par seconde :",
+            "Velocità stimata, token al secondo:",
+            "Velocidad estimada, tokens por segundo:",
+            "Velocidade estimada, tokens por segundo:",
+            "Geschätzte Geschwindigkeit, Token pro Sekunde:",
+            "Becsült sebesség, token másodpercenként:",
+        ],
+    ),
+    (
+        "no usable graphics card",
+        [
+            "aucune carte graphique utilisable",
+            "nessuna scheda video utilizzabile",
+            "ninguna tarjeta gráfica utilizable",
+            "nenhuma placa gráfica utilizável",
+            "keine nutzbare Grafikkarte",
+            "nincs használható videókártya",
+        ],
+    ),
+    (
+        "An estimate from memory bandwidth, not a measurement of this model.",
+        [
+            "Une estimation d'après la bande passante mémoire, pas une mesure de ce modèle.",
+            "Una stima dalla banda di memoria, non una misura di questo modello.",
+            "Una estimación a partir del ancho de banda de memoria, no una medición de este modelo.",
+            "Uma estimativa a partir da largura de banda da memória, não uma medição deste modelo.",
+            "Eine Schätzung aus der Speicherbandbreite, keine Messung dieses Modells.",
+            "A memória sávszélességéből számolt becslés, nem ennek a modellnek a mérése.",
+        ],
+    ),
+    (
+        "mixture of experts",
+        [
+            "mélange d'experts",
+            "miscela di esperti",
+            "mezcla de expertos",
+            "mistura de especialistas",
+            "Mixture of Experts",
+            "szakértők keveréke",
+        ],
+    ),
+    (
+        "chat template",
+        [
+            "modèle de conversation",
+            "modello di chat",
+            "plantilla de chat",
+            "modelo de conversa",
+            "Chat-Vorlage",
+            "csevegősablon",
+        ],
+    ),
+    (
+        "tool calls",
+        [
+            "appels d'outils",
+            "chiamate a strumenti",
+            "llamadas a herramientas",
+            "chamadas de ferramentas",
+            "Werkzeugaufrufe",
+            "eszközhívások",
+        ],
+    ),
+    (
+        "vision projector beside it",
+        [
+            "projecteur de vision à côté",
+            "proiettore visivo accanto",
+            "proyector de visión al lado",
+            "projetor de visão ao lado",
+            "Vision-Projektor daneben",
+            "látásprojektor mellette",
+        ],
+    ),
+    (
+        "Can do:",
+        [
+            "Peut :",
+            "Può:",
+            "Puede:",
+            "Pode:",
+            "Kann:",
+            "Képes:",
+        ],
+    ),
+    (
+        "The graphics card is likely faster.",
+        [
+            "La carte graphique est probablement plus rapide.",
+            "La scheda video è probabilmente più veloce.",
+            "La tarjeta gráfica probablemente es más rápida.",
+            "A placa gráfica provavelmente é mais rápida.",
+            "Die Grafikkarte ist wahrscheinlich schneller.",
+            "A videókártya valószínűleg gyorsabb.",
+        ],
+    ),
+    (
+        "{} of the weights fit on the card",
+        [
+            "{} des poids tiennent sur la carte",
+            "{} dei pesi sta sulla scheda",
+            "{} de los pesos caben en la tarjeta",
+            "{} dos pesos cabem na placa",
+            "{} der Gewichte passen auf die Karte",
+            "A súlyok {}-a elfér a kártyán",
+        ],
+    ),
 ];
 
 fn index(lang: Lang) -> Option<usize> {

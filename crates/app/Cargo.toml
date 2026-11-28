@@ -8,6 +8,7 @@ description.workspace = true
 
 [dependencies]
 companion-core = { path = "../core" }
+companion-engine = { path = "../engine" }
 companion-scholar = { path = "../scholar" }
 # OpenGL renderer (works on old GPUs and in virtual machines); AccessKit is on for screen readers.
 eframe = { version = "0.37", default-features = false, features = [

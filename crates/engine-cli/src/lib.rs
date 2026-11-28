@@ -63,6 +63,7 @@ pub mod quotes;
 pub mod rag_cmd;
 pub mod registry;
 pub mod runner;
+pub mod scan_cmd;
 pub mod search_cmd;
 pub mod serve;
 pub mod shutdown;

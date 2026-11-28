@@ -690,6 +690,7 @@ name = "colibri-companion"
 version = "0.1.0-alpha.18"
 dependencies = [
  "companion-core",
+ "companion-engine",
  "companion-scholar",
  "eframe",
  "egui",

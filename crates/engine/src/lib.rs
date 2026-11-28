@@ -61,6 +61,7 @@ pub mod rag;
 pub mod receipt;
 pub mod sampling;
 pub mod sched;
+pub mod scout;
 pub mod search;
 pub mod selfspec;
 pub mod simd;

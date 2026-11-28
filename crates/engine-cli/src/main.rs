@@ -38,6 +38,7 @@ USAGE
   corbul merge    <config.json> [--out F.safetensors] [--dry-run]         merge models (linear, slerp, task, TIES, DARE, slices)
   corbul steer    train|apply|lens <model> …                              control vectors and a logit lens
   corbul packs    MODEL --session DIR --pack FILE… [--question Q] [--check]   reuse the work done on texts that come back in a new order
+  corbul scan     [FOLDER…] [--ctx 2048] [--depth 4] [--json]            find .gguf models, say what they are, whether they fit this computer, estimated CPU vs GPU tokens/s
   corbul kvfit    MODEL --text FILE --question Q [--budget 0.25]          measure what shrinking the cache costs, with and without refitting values
   corbul map-fit  SRC DST --text FILE --out MAP [--rows 1024]            learn a map from the cache rows of one model to another
   corbul map-check SRC DST --map MAP --text FILE --question Q             measure what the mapped cache does to the answer
@@ -153,6 +154,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         "merge" => corbul::merge_cmd::cmd(&args),
         "packs" => corbul::packs_cmd::cmd(&args),
         "kvfit" => corbul::kvfit_cmd::cmd(&args),
+        "scan" => corbul::scan_cmd::cmd(&args),
         "map-fit" => corbul::kvmap_cmd::fit_cmd(&args),
         "map-check" => corbul::kvmap_cmd::check_cmd(&args),
         "rag" => corbul::rag_cmd::cmd(&args),
